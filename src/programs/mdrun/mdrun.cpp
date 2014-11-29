@@ -240,7 +240,12 @@ int gmx_mdrun(int argc, char *argv[])
         { efTOP, "-mp",     "membed",   ffOPTRD },
         { efNDX, "-mn",     "membed",   ffOPTRD },
         { efXVG, "-if",     "imdforces", ffOPTWR },
-        { efXVG, "-swap",   "swapions", ffOPTWR }
+        { efXVG, "-swap",   "swapions", ffOPTWR },
+        /*
+         * PETTER
+         *
+         * Modifications for average data maps */
+        { efDAT, "-flow",   "flowmap",  ffOPTWR }
     };
 #define NFILE asize(fnm)
 

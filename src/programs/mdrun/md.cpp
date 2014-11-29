@@ -116,6 +116,8 @@
 #include "membed.h"
 #include "repl_ex.h"
 
+#include "md_petter.h"
+
 #ifdef GMX_FAHCORE
 #include "corewrap.h"
 #endif
@@ -669,6 +671,15 @@ double do_md(FILE *fplog, t_commrec *cr, int nfile, const t_filenm fnm[],
      *             Loop over MD steps
      *
      ************************************************************/
+
+    // Prepare for flow field calculations / PETTER
+    t_flowFieldData *flowFieldData = malloc(sizeof(t_flowFieldData));
+    flowFieldData->bData = FALSE;
+
+    if (opt2bSet("-flow", nfile, fnm))
+    {
+        prepare_flow_field_data(flowFieldData, cr, nfile, fnm, ir, state);
+    }
 
     /* if rerunMD then read coordinates and velocities from input trajectory */
     if (bRerunMD)
@@ -1694,6 +1705,17 @@ double do_md(FILE *fplog, t_commrec *cr, int nfile, const t_filenm fnm[],
         bInitStep        = FALSE;
         bStartingFromCpt = FALSE;
 
+        // Collect and output data at specified steps / PETTER
+        if (do_per_step(step, flowFieldData->dataStep[Collect]) && flowFieldData->bData)
+        {
+            collect_flow_data(flowFieldData, cr, mdatoms, state, groups);
+
+            if (do_per_step(step, flowFieldData->dataStep[Output]) && step > 0)
+            {
+                output_flow_data(flowFieldData, cr, step);
+            }
+        }
+
         /* #######  SET VARIABLES FOR NEXT ITERATION IF THEY STILL NEED IT ###### */
         /* With all integrators, except VV, we need to retain the pressure
          * at the current step for coupling at the next step.
@@ -1846,6 +1868,9 @@ double do_md(FILE *fplog, t_commrec *cr, int nfile, const t_filenm fnm[],
     }
     /* End of main MD loop */
     debug_gmx();
+
+    // Free memory after run / PETTER
+    free(flowFieldData);
 
     /* Closing TNG files can include compressing data. Therefore it is good to do that
      * before stopping the time measurements. */
