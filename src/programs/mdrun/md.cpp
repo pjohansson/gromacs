@@ -672,13 +672,13 @@ double do_md(FILE *fplog, t_commrec *cr, int nfile, const t_filenm fnm[],
      *
      ************************************************************/
 
-    // Prepare for flow field calculations / PETTER
-    t_flowFieldData *flowFieldData = malloc(sizeof(t_flowFieldData));
-    flowFieldData->bData = FALSE;
-
+    // PETTER
+    t_flowdata *flow_data;
+    gmx_bool bFlow = FALSE;
     if (opt2bSet("-flow", nfile, fnm))
     {
-        prepare_flow_field_data(flowFieldData, cr, nfile, fnm, ir, state);
+        flow_data = prepare_flow_field_data(cr, nfile, fnm, ir, state);
+        bFlow = TRUE;
     }
 
     /* if rerunMD then read coordinates and velocities from input trajectory */
@@ -1706,14 +1706,9 @@ double do_md(FILE *fplog, t_commrec *cr, int nfile, const t_filenm fnm[],
         bStartingFromCpt = FALSE;
 
         // Collect and output data at specified steps / PETTER
-        if (do_per_step(step, flowFieldData->dataStep[Collect]) && flowFieldData->bData)
+        if (bFlow)
         {
-            collect_flow_data(flowFieldData, cr, mdatoms, state, groups);
-
-            if (do_per_step(step, flowFieldData->dataStep[Output]) && step > 0)
-            {
-                output_flow_data(flowFieldData, cr, step);
-            }
+            check_flow_data_out(step, flow_data, cr, mdatoms, state, groups);
         }
 
         /* #######  SET VARIABLES FOR NEXT ITERATION IF THEY STILL NEED IT ###### */
@@ -1870,7 +1865,10 @@ double do_md(FILE *fplog, t_commrec *cr, int nfile, const t_filenm fnm[],
     debug_gmx();
 
     // Free memory after run / PETTER
-    free(flowFieldData);
+    if (bFlow)
+    {
+        free(flow_data);
+    }
 
     /* Closing TNG files can include compressing data. Therefore it is good to do that
      * before stopping the time measurements. */

@@ -1,78 +1,11 @@
-#ifdef HAVE_CONFIG_H
-#include <config.h>
-#endif
-
-#include "typedefs.h"
-#include "gromacs/utility/smalloc.h"
-#include "sysstuff.h"
-#include "vec.h"
-#include "vcm.h"
-#include "mdebin.h"
-#include "nrnb.h"
-#include "calcmu.h"
-#include "index.h"
-#include "vsite.h"
-#include "update.h"
-#include "ns.h"
-#include "mdrun.h"
-#include "md_support.h"
-#include "md_logging.h"
-#include "network.h"
-#include "xvgr.h"
-#include "physics.h"
-#include "names.h"
-#include "force.h"
-#include "disre.h"
-#include "orires.h"
-#include "pme.h"
-#include "mdatoms.h"
-#include "repl_ex.h"
-#include "deform.h"
-#include "qmmm.h"
-#include "domdec.h"
-#include "domdec_network.h"
-#include "gromacs/gmxlib/topsort.h"
-#include "coulomb.h"
-#include "constr.h"
-#include "shellfc.h"
-#include "gromacs/gmxpreprocess/compute_io.h"
-#include "checkpoint.h"
-#include "mtop_util.h"
-#include "sighandler.h"
-#include "txtdump.h"
-#include "gromacs/utility/cstringutil.h"
-#include "pme_loadbal.h"
-#include "bondf.h"
-#include "membed.h"
-#include "types/nlistheuristics.h"
-#include "types/iteratedconstraints.h"
-#include "nbnxn_cuda_data_mgmt.h"
-
-#include "gromacs/utility/gmxmpi.h"
-#include "gromacs/fileio/confio.h"
-#include "gromacs/fileio/trajectory_writing.h"
-#include "gromacs/fileio/trnio.h"
-#include "gromacs/fileio/trxio.h"
-#include "gromacs/fileio/xtcio.h"
-#include "gromacs/timing/wallcycle.h"
-#include "gromacs/timing/walltime_accounting.h"
-#include "gromacs/pulling/pull.h"
-#include "gromacs/swap/swapcoords.h"
-#include "gromacs/imd/imd.h"
-
 #ifndef MD_PETTER
 #define MD_PETTER
 
-enum {
-    NumBinDim = 2
-};
-
 typedef enum {
-    Collect,
-    Output,
-    Ratio,
-    NumStepVars
-} DataStepIndex;
+    xi,
+    zi,
+    ni
+} Axes;
 
 typedef enum {
     CollectFlowXX,
@@ -94,77 +27,92 @@ typedef enum {
     OutputLength
 } OutputIndex;
 
-typedef struct flowFieldData t_flowFieldData;
+typedef enum {
+    FlowUU,
+    FlowVV,
+    Temp,
+    Num,
+    Mass,
+    PosXX,
+    PosZZ
+} Index;
+static const int NumCollect = 5;
+static const int OutStart = 2;
+static const int NumOutput = 7;
 
-struct flowFieldData {
-    gmx_bool bData;                     // Flag for if -flow is set
+typedef struct flowdata {
+    char    fnbase[STRLEN];
 
-    char    fnDataBase[STRLEN];
+    int     step_collect,
+            step_output,
+            step_ratio,
+            num_bins[ni];   // Number of bins in X and Z
 
-    int     dataStep[NumStepVars],      // Step multiples for collection and output
-            numBins[NumBinDim];         // Number of bins in XX and YY
+    float   bin_size[ni],    // Bin sizes in X and Z
+            inv_bin_size[ni]; // Inverted bin sizes for grid calculations
 
-    float   binSize[NumBinDim],         // Bin sizes in XX and YY
-            invBinSize[NumBinDim];      // Inverted bin sizes for grid calculations
-
-    double  *dataGrid;                  // A 2D grid is represented by this 1D array
-};
+    double  *data;          // A 2D grid is represented by this 1D array
+} t_flowdata;
 
 // Prepare data for flow field calculations
-void prepare_flow_field_data(t_flowFieldData *flowFieldData, t_commrec *cr,
-                             int nfile, const t_filenm fnm[], t_inputrec *ir,
-                             t_state *state)
+t_flowdata* prepare_flow_field_data(t_commrec *cr, int nfile,
+        const t_filenm fnm[], t_inputrec *ir, t_state *state)
 {
     int     var,
-            dataStep[NumStepVars] =
-            {
-                ir->userint1,
-                ir->userint2
-            },
-            numBins[NumBinDim] =
+            step_collect = ir->userint1,
+            step_output = ir->userint2,
+            num_bins[ni] =
             {
                 ir->userint3,
                 ir->userint4
             };
 
-    float   binSize[NumBinDim] =
+    float   bin_size[ni] =
             {
-                state->box[XX][XX]/numBins[XX],
-                state->box[ZZ][ZZ]/numBins[YY]
+                state->box[XX][XX]/num_bins[xi],
+                state->box[ZZ][ZZ]/num_bins[zi]
             },
-            invBinSize[NumBinDim] =
+            inv_bin_size[ni] =
             {
-                1/binSize[XX],
-                1/binSize[YY]
+                1/bin_size[xi],
+                1/bin_size[zi]
             };
 
     // Control userargs
-    if (numBins[XX] <= 0 || numBins[YY] <= 0)
+    if (num_bins[xi] <= 0 || num_bins[zi] <= 0)
     {
-        gmx_fatal(FARGS, "Number of bins in x (userint3) and z "
-                "(userint4) required for flow calculations are "
-                "not set in the preprocessor.");
+        gmx_fatal(FARGS,
+                "Number of bins in x (userint3, %d) and z (userint4, %d) "
+                "for flow data calculation and output must be larger than 0.",
+                num_bins[xi], num_bins[zi]);
     }
 
-    if (dataStep[Collect] <= 0 || dataStep[Output] <= 0)
+    if (step_collect <= 0 || step_output <= 0)
     {
-        gmx_fatal(FARGS, "Steps for which multiples of data for flow "
-                "field calculations will be collected (userint1) and "
-                "output (userint2) on are not set in the preprocessor.");
+        gmx_fatal(FARGS,
+                "Number of steps that elapse between collection (userint1, %d) "
+                "and output (userint2, %d) of flow data must be larger than 0.",
+                step_collect, step_output);
     }
-    else if (dataStep[Output] % dataStep[Collect] != 0)
+    else if (step_collect > step_output)
     {
-        gmx_fatal(FARGS, "Steps for which multiples of data for flow "
-                "field calculations are output at (userint2) is required "
-                "to be a multiple of steps to collect data at (userint1).");
+        gmx_fatal(FARGS,
+                "Number of steps elapsing between output (userint2, %d) "
+                "must be larger than steps between collection (userint1, %d).",
+                step_output, step_collect, step_output);
     }
-    else
+    else if (step_output % step_collect != 0)
     {
-        dataStep[Ratio] = dataStep[Output]/dataStep[Collect];
+        int new_step_output = round(step_output/step_collect)*step_collect;
+        gmx_warning("Steps for outputting flow data (userint2, %d) not "
+                "multiple of steps for collecting (userint1, %d). "
+                "Setting number of steps that elapse between output to %d.",
+                step_output, step_collect, new_step_output);
+        step_output = new_step_output;
     }
 
-    // Set flag
-    flowFieldData->bData = TRUE;
+    // Allocate memory for flow data
+    t_flowdata *flow_data = (t_flowdata*) malloc(sizeof(t_flowdata));
 
     // Print output information to user
     if (MASTER(cr))
@@ -172,43 +120,46 @@ void prepare_flow_field_data(t_flowFieldData *flowFieldData, t_commrec *cr,
         fprintf(stderr, "\nData for flow field maps will be collected every %g ps "
                 "(%d steps). It will be\naveraged and output to data "
                 " maps every %g ps (%d steps).\n",
-                dataStep[Collect]*ir->delta_t, dataStep[Collect],
-                dataStep[Output]*ir->delta_t, dataStep[Output]);
+                step_collect*ir->delta_t, step_collect,
+                step_output*ir->delta_t, step_output);
 
         fprintf(stderr, "The system has been divided into %d x %d bins "
-                "of sizes %g x %g nm^2 \nin x and z respectively.\n",
-               numBins[XX], numBins[YY], binSize[XX], binSize[YY]);
+                "of sizes %g x %g nm^2 \nin x and z.\n",
+               num_bins[xi], num_bins[zi], bin_size[xi], bin_size[zi]);
         fprintf(stderr, "Have a nice day.\n\n");
     }
 
     // Set options to allocated struct
-    for (var = XX; var <= YY; var++)
+    for (var = xi; var <= zi; var++)
     {
-        flowFieldData->dataStep[var]    = dataStep[var];
-        flowFieldData->numBins[var]     = numBins[var];
-        flowFieldData->binSize[var]     = binSize[var];
-        flowFieldData->invBinSize[var]  = invBinSize[var];
+        flow_data->num_bins[var]     = num_bins[var];
+        flow_data->bin_size[var]     = bin_size[var];
+        flow_data->inv_bin_size[var]  = inv_bin_size[var];
     }
 
-    flowFieldData->dataStep[Ratio] = dataStep[Ratio];
+    flow_data->step_collect = step_collect;
+    flow_data->step_output = step_output;
+    flow_data->step_ratio = step_output/step_collect;
 
     // Allocate memory for data collection
-    snew(flowFieldData->dataGrid, numBins[XX]*numBins[YY]*CollectNumvar);
+    snew(flow_data->data, num_bins[xi]*num_bins[zi]*CollectNumvar);
 
     // Get name base of output datamaps
-    strcpy(flowFieldData->fnDataBase, opt2fn("-flow", nfile, fnm));
-    flowFieldData->fnDataBase[strlen(flowFieldData->fnDataBase)
+    strcpy(flow_data->fnbase, opt2fn("-flow", nfile, fnm));
+    flow_data->fnbase[strlen(flow_data->fnbase)
         - strlen(ftp2ext(efDAT)) - 1] = '\0';
+
+    return flow_data;
 }
 
 // Collect flow field data to the grid
-void collect_flow_data(t_flowFieldData *flowFieldData, t_commrec *cr,
+void collect_flow_data(t_flowdata *flow_data, t_commrec *cr,
                        t_mdatoms *mdatoms, t_state *state,
                        gmx_groups_t *groups)
 {
     int     i, j,
-            bin1DPos,                   // Corresponding position in 1D *dataGrid
-            bin2DPos[NumBinDim];        // Current bin position in 2D system
+            array_ind,                  // Corresponding position in 1D *data
+            bin_position[ni];        // Current bin position in 2D system
 
     for (i = 0; i < mdatoms->homenr; i++)
     {
@@ -224,44 +175,44 @@ void collect_flow_data(t_flowFieldData *flowFieldData, t_commrec *cr,
         // Check for match to input group
         if (ggrpnr(groups, egcUser1, j) == 0)
         {
-            // Calculate atom position in dataGrid
-            bin2DPos[XX] = ((int) (state->x[i][XX]*flowFieldData->invBinSize[XX]
-                        + flowFieldData->numBins[XX] - 1))
-                    % flowFieldData->numBins[XX];
-            bin2DPos[YY] = ((int) (state->x[i][ZZ]*flowFieldData->invBinSize[YY]
-                        + flowFieldData->numBins[YY] - 1))
-                    % flowFieldData->numBins[YY];
-            bin1DPos = (flowFieldData->numBins[XX]*bin2DPos[YY]
-                    + bin2DPos[XX])*CollectNumvar;
+            // Calculate atom position in data grid
+            bin_position[xi] = ((int) (state->x[i][xi]*flow_data->inv_bin_size[xi]
+                        + flow_data->num_bins[xi] - 1))
+                    % flow_data->num_bins[xi];
+            bin_position[zi] = ((int) (state->x[i][ZZ]*flow_data->inv_bin_size[zi]
+                        + flow_data->num_bins[zi] - 1))
+                    % flow_data->num_bins[zi];
+            array_ind = (flow_data->num_bins[xi]*bin_position[zi]
+                    + bin_position[xi])*CollectNumvar;
 
             // Add atom data to collection
-            flowFieldData->dataGrid[bin1DPos + CollectFlowXX]
-                += mdatoms->massT[i]*state->v[i][XX];
-            flowFieldData->dataGrid[bin1DPos + CollectFlowYY]
+            flow_data->data[array_ind + CollectFlowXX]
+                += mdatoms->massT[i]*state->v[i][xi];
+            flow_data->data[array_ind + CollectFlowYY]
                 += mdatoms->massT[i]*state->v[i][ZZ];
-            flowFieldData->dataGrid[bin1DPos + CollectTemp]
+            flow_data->data[array_ind + CollectTemp]
                 += mdatoms->massT[i]*norm2(state->v[i]);
-            flowFieldData->dataGrid[bin1DPos + CollectN]
+            flow_data->data[array_ind + CollectN]
                 += 1;
-            flowFieldData->dataGrid[bin1DPos + CollectMass]
+            flow_data->data[array_ind + CollectMass]
                 += mdatoms->massT[i];
         }
     }
 }
 
 // Finalise and output the data to specified maps
-void output_flow_data(t_flowFieldData *flowFieldData, t_commrec *cr, gmx_int64_t step)
+void output_flow_data(t_flowdata *flow_data, t_commrec *cr, gmx_int64_t step)
 {
-    FILE    *fpData;
+    FILE    *fp;
 
-    char    fnDataMap[STRLEN];          // Final file name of output map
+    char    fnout[STRLEN];          // Final file name of output map
 
     int     i, j,
-            bin1DPos,                   // Corresponding osition in 1D *dataGrid
-            numDataMap;                 // Number of data map to output
+            array_ind,              // Bin position in 1d data array
+            num_out;             // Number of data map to output
 
-    float   binCenter[NumBinDim],       // Center position of bin
-            outData[OutputLength];      // Array for output data
+    float   bin_center[ni],       // Center position of bin
+            bin_data[OutputLength];      // Array for output data
 
     // Reduce data from MPI processing elements
     // Raise warning if MPI_IN_PLACE does not run on platform
@@ -269,16 +220,16 @@ void output_flow_data(t_flowFieldData *flowFieldData, t_commrec *cr, gmx_int64_t
     {
 #if defined(MPI_IN_PLACE_EXISTS)
         /* Master collects data from all PE's and prints */
-        MPI_Reduce(MASTER(cr) ? MPI_IN_PLACE : flowFieldData->dataGrid,
-                MASTER(cr) ? flowFieldData->dataGrid : NULL,
-                flowFieldData->numBins[XX]*flowFieldData->numBins[YY]*CollectNumvar,
+        MPI_Reduce(MASTER(cr) ? MPI_IN_PLACE : flow_data->data,
+                MASTER(cr) ? flow_data->data : NULL,
+                flow_data->num_bins[xi]*flow_data->num_bins[zi]*CollectNumvar,
                 MPI_DOUBLE, MPI_SUM, MASTERRANK(cr),
                 cr->mpi_comm_mygroup);
 #else
 #warning "MPI_IN_PLACE not available on platform"
-        MPI_Reduce(MASTER(cr) ? MPI_IN_PLACE : flowFieldData->dataGrid,
-                MASTER(cr) ? flowFieldData->dataGrid : NULL,
-                flowFieldData->numBins[XX]*flowFieldData->numBins[YY]*CollectNumvar,
+        MPI_Reduce(MASTER(cr) ? MPI_IN_PLACE : flow_data->data,
+                MASTER(cr) ? flow_data->data : NULL,
+                flow_data->num_bins[xi]*flow_data->num_bins[zi]*CollectNumvar,
                 MPI_DOUBLE, MPI_SUM, MASTERRANK(cr),
                 cr->mpi_comm_mygroup);
 #endif
@@ -286,11 +237,11 @@ void output_flow_data(t_flowFieldData *flowFieldData, t_commrec *cr, gmx_int64_t
 
     if (MASTER(cr))
     {
-        numDataMap = (int) (step/flowFieldData->dataStep[Output]);
+        num_out = (int) (step/flow_data->step_output);
 
-        sprintf(fnDataMap, "%s_%05d.%s",
-                flowFieldData->fnDataBase, numDataMap, ftp2ext(efDAT));
-        fpData = gmx_ffopen(fnDataMap, "wb");
+        sprintf(fnout, "%s_%05d.%s",
+                flow_data->fnbase, num_out, ftp2ext(efDAT));
+        fp = gmx_ffopen(fnout, "wb");
 
         /* Calculate and output to data maps:
          *   Positions of bin centers in X and Y
@@ -299,68 +250,85 @@ void output_flow_data(t_flowFieldData *flowFieldData, t_commrec *cr, gmx_int64_t
          *   Mass, average over steps
          *   Flow U and V in X and Y respectively
          */
-        for (i = 0; i < flowFieldData->numBins[XX]; i++)
+        for (i = 0; i < flow_data->num_bins[xi]; i++)
         {
-            binCenter[XX] = (i + 0.5)*flowFieldData->binSize[XX];
+            bin_center[xi] = (i + 0.5)*flow_data->bin_size[xi];
 
-            for (j = 0; j < flowFieldData->numBins[YY]; j++)
+            for (j = 0; j < flow_data->num_bins[zi]; j++)
             {
-                binCenter[YY] = (j + 0.5)*flowFieldData->binSize[YY];
-                bin1DPos = (flowFieldData->numBins[XX]*j + i)*CollectNumvar;
+                bin_center[zi] = (j + 0.5)*flow_data->bin_size[zi];
+                array_ind = (flow_data->num_bins[xi]*j + i)*CollectNumvar;
 
                 /* Average U and V over accumulated
                  * mass in bins
                  */
-                if (flowFieldData->dataGrid[bin1DPos + CollectMass] > 0.0)
+                if (flow_data->data[array_ind + CollectMass] > 0.0)
                 {
-                    flowFieldData->dataGrid[bin1DPos + CollectFlowXX]
-                        /= flowFieldData->dataGrid[bin1DPos + CollectMass];
-                    flowFieldData->dataGrid[bin1DPos + CollectFlowYY]
-                        /= flowFieldData->dataGrid[bin1DPos + CollectMass];
+                    flow_data->data[array_ind + CollectFlowXX]
+                        /= flow_data->data[array_ind + CollectMass];
+                    flow_data->data[array_ind + CollectFlowYY]
+                        /= flow_data->data[array_ind + CollectMass];
                 }
                 else
                 {
-                    flowFieldData->dataGrid[bin1DPos + CollectFlowXX] = 0.0;
-                    flowFieldData->dataGrid[bin1DPos + CollectFlowYY] = 0.0;
+                    flow_data->data[array_ind + CollectFlowXX] = 0.0;
+                    flow_data->data[array_ind + CollectFlowYY] = 0.0;
                 }
 
                 /* T calculated here, output with density */
-                if (flowFieldData->dataGrid[bin1DPos + CollectN] > 0)
+                if (flow_data->data[array_ind + CollectN] > 0)
                 {
-                    flowFieldData->dataGrid[bin1DPos + CollectTemp]
-                        /= (2*BOLTZ*flowFieldData->dataGrid[bin1DPos + CollectN]);
+                    flow_data->data[array_ind + CollectTemp]
+                        /= (2*BOLTZ*flow_data->data[array_ind + CollectN]);
                 }
                 else
                 {
-                    flowFieldData->dataGrid[bin1DPos + CollectTemp] = 0.0;
+                    flow_data->data[array_ind + CollectTemp] = 0.0;
                 }
 
                 // Prepare output data array
-                outData[OutputXX] = binCenter[XX];
-                outData[OutputYY] = binCenter[YY];
-                outData[OutputN] = flowFieldData->dataGrid[bin1DPos + CollectN]
-                    /(flowFieldData->dataStep[Ratio]);
-                outData[OutputTemp] = flowFieldData->dataGrid[bin1DPos + CollectTemp];
-                outData[OutputMass] = flowFieldData->dataGrid[bin1DPos + CollectMass]
-                    /(flowFieldData->dataStep[Ratio]);
-                outData[OutputFlowXX] = flowFieldData->dataGrid[bin1DPos + CollectFlowXX];
-                outData[OutputFlowYY] = flowFieldData->dataGrid[bin1DPos + CollectFlowYY];
+                bin_data[OutputXX] = bin_center[xi];
+                bin_data[OutputYY] = bin_center[zi];
+                bin_data[OutputN] = flow_data->data[array_ind + CollectN]
+                    /(flow_data->step_ratio);
+                bin_data[OutputTemp] = flow_data->data[array_ind + CollectTemp];
+                bin_data[OutputMass] = flow_data->data[array_ind + CollectMass]
+                    /(flow_data->step_ratio);
+                bin_data[OutputFlowXX] = flow_data->data[array_ind + CollectFlowXX];
+                bin_data[OutputFlowYY] = flow_data->data[array_ind + CollectFlowYY];
 
-                // Output to fpData
-                fwrite(&outData, sizeof(outData[OutputXX]), OutputLength,
-                        fpData);
+                // Output to fp
+                fwrite(&bin_data, sizeof(bin_data[0]), OutputLength,
+                        fp);
             }
         }
 
-        fclose(fpData);
+        fclose(fp);
     }
 
     /* Reset calculated quantities on all nodes after output */
-    for (i = 0;
-            i < flowFieldData->numBins[XX]*flowFieldData->numBins[YY]*CollectNumvar;
-            i++)
+    for (
+            i = 0;
+            i < flow_data->num_bins[xi]*flow_data->num_bins[zi]*CollectNumvar;
+            i++
+            )
     {
-        flowFieldData->dataGrid[i] = 0;
+        flow_data->data[i] = 0;
+    }
+}
+
+// Collect and output flow field data at specified steps
+void check_flow_data_out(gmx_int64_t step, t_flowdata *flow_data, t_commrec *cr,
+        t_mdatoms *mdatoms, t_state *state, gmx_groups_t *groups)
+{
+    if (do_per_step(step, flow_data->step_collect))
+    {
+        collect_flow_data(flow_data, cr, mdatoms, state, groups);
+
+        if (do_per_step(step, flow_data->step_output) && step > 0)
+        {
+            output_flow_data(flow_data, cr, step);
+        }
     }
 }
 
