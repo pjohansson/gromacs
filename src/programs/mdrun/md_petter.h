@@ -18,16 +18,13 @@ typedef enum {
 
 typedef struct flowdata {
     char    fnbase[STRLEN];
-
     int     step_collect,
             step_output,
             step_ratio,
-            num_bins[ni];   // Number of bins in X and Z
-
-    float   bin_size[ni],    // Bin sizes in X and Z
-            inv_bin_size[ni]; // Inverted bin sizes for grid calculations
-
-    double  *data;          // A 2D grid is represented by this 1D array
+            num_bins[ni];     // Number of bins in X and Z
+    float   bin_size[ni],     // Bin sizes in X and Z
+            inv_bin[ni];      // Inverted bin sizes for grid calculations
+    double  *data;            // A 2D grid is represented by this 1D array
 } t_flowdata;
 
 // Prepare data for flow field calculations
@@ -48,7 +45,7 @@ t_flowdata* prepare_flow_field_data(t_commrec *cr, int nfile,
                 state->box[XX][XX]/num_bins[xi],
                 state->box[ZZ][ZZ]/num_bins[zi]
             },
-            inv_bin_size[ni] =
+            inv_bin[ni] =
             {
                 1/bin_size[xi],
                 1/bin_size[zi]
@@ -95,12 +92,10 @@ t_flowdata* prepare_flow_field_data(t_commrec *cr, int nfile,
     {
         fprintf(stderr,
                 "\nData for flow field maps will be collected every %g ps "
-                "(%d steps).\n",
-                step_collect*ir->delta_t, step_collect);
+                "(%d steps).\n", step_collect*ir->delta_t, step_collect);
         fprintf(stderr,
                 "It will be averaged and output to data maps every %g ps "
-                "(%d steps).\n",
-                step_output*ir->delta_t, step_output);
+                "(%d steps).\n", step_output*ir->delta_t, step_output);
         fprintf(stderr,
                 "The system has been divided into %d x %d bins "
                 "of size %g x %g nm^2 \nin x and z.\n",
@@ -111,9 +106,9 @@ t_flowdata* prepare_flow_field_data(t_commrec *cr, int nfile,
     // Set options to allocated struct
     for (var = xi; var <= zi; var++)
     {
-        flow_data->num_bins[var]     = num_bins[var];
-        flow_data->bin_size[var]     = bin_size[var];
-        flow_data->inv_bin_size[var]  = inv_bin_size[var];
+        flow_data->num_bins[var] = num_bins[var];
+        flow_data->bin_size[var] = bin_size[var];
+        flow_data->inv_bin[var]  = inv_bin[var];
     }
 
     flow_data->step_collect = step_collect;
@@ -125,8 +120,7 @@ t_flowdata* prepare_flow_field_data(t_commrec *cr, int nfile,
 
     // Get name base of output datamaps
     strcpy(flow_data->fnbase, opt2fn("-flow", nfile, fnm));
-    flow_data->fnbase[strlen(flow_data->fnbase)
-        - strlen(ftp2ext(efDAT)) - 1] = '\0';
+    flow_data->fnbase[strlen(flow_data->fnbase) - strlen(ftp2ext(efDAT)) - 1] = '\0';
 
     return flow_data;
 }
@@ -155,26 +149,21 @@ void collect_flow_data(t_flowdata *flow_data, t_commrec *cr,
         if (ggrpnr(groups, egcUser1, j) == 0)
         {
             // Calculate atom position in data grid
-            bin_position[xi] = ((int) (state->x[i][xi]*flow_data->inv_bin_size[xi]
+            bin_position[xi] = ((int) (state->x[i][XX]*flow_data->inv_bin[xi]
                         + flow_data->num_bins[xi] - 1))
                     % flow_data->num_bins[xi];
-            bin_position[zi] = ((int) (state->x[i][ZZ]*flow_data->inv_bin_size[zi]
+            bin_position[zi] = ((int) (state->x[i][ZZ]*flow_data->inv_bin[zi]
                         + flow_data->num_bins[zi] - 1))
                     % flow_data->num_bins[zi];
             index_bin = (flow_data->num_bins[xi]*bin_position[zi]
                     + bin_position[xi])*NumVar;
 
             // Add atom data to collection
-            flow_data->data[index_bin + FlowUU]
-                += mdatoms->massT[i]*state->v[i][xi];
-            flow_data->data[index_bin + FlowVV]
-                += mdatoms->massT[i]*state->v[i][ZZ];
-            flow_data->data[index_bin + Temp]
-                += mdatoms->massT[i]*norm2(state->v[i]);
-            flow_data->data[index_bin + NumAtoms]
-                += 1;
-            flow_data->data[index_bin + Mass]
-                += mdatoms->massT[i];
+            flow_data->data[index_bin + NumAtoms] += 1;
+            flow_data->data[index_bin + Temp] += mdatoms->massT[i]*norm2(state->v[i]);
+            flow_data->data[index_bin + Mass]   += mdatoms->massT[i];
+            flow_data->data[index_bin + FlowUU] += mdatoms->massT[i]*state->v[i][xi];
+            flow_data->data[index_bin + FlowVV] += mdatoms->massT[i]*state->v[i][ZZ];
         }
     }
 }
@@ -225,9 +214,9 @@ void output_flow_data(t_flowdata *flow_data, t_commrec *cr, gmx_int64_t step)
 
         /* Calculate and output to data maps:
          *   Positions of bin centers in X and Z
-         *   Accumulated number of atoms
+         *   Number of atoms, sample average
          *   Temperature
-         *   Mass, average over steps
+         *   Mass, sample average
          *   Flow U and V
          */
         for (i = 0; i < flow_data->num_bins[xi]; i++)
