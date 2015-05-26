@@ -1,19 +1,20 @@
 #ifndef MD_PETTER
 #define MD_PETTER
-#endif
 
+// Indices for X and Z axes, to not confuse with XX and YY
 typedef enum {
     xi,
     zi,
     ni
 } Axes;
 
+// Indices for different data in array
 typedef enum {
     NumAtoms,
     Temp,
     Mass,
-    FlowUU,
-    FlowVV,
+    UU,         // Mass flow along XX
+    VV,         //             and ZZ
     NumVar
 } Index;
 
@@ -26,19 +27,32 @@ typedef struct flowdata {
     float   bin_size[ni],     // Bin sizes in X and Z
             inv_bin[ni];      // Inverted bin sizes for grid calculations
     double  *data;            // A 2D grid is represented by this 1D array
-} t_flowdata;
+} t_flow_container;
 
-t_flowdata*
-prepare_flow_field_data(t_commrec *cr, int nfile, const t_filenm fnm[],
-			t_inputrec *ir, t_state *state);
+// Prepare and return a container for flow field data
+t_flow_container*
+get_flow_container(const t_commrec *cr, const int nfile, const t_filenm fnm[],
+	        	   const t_inputrec *ir, const t_state *state);
 
+// Collect data from current state in container
+static void
+collect_flow_data(t_flow_container *flowcr, const t_commrec *cr,
+                  const t_mdatoms *mdatoms, const t_state *state,
+                  const gmx_groups_t *groups);
+
+// Output collected data of container
+static void
+output_flow_data(const t_flow_container *flowcr, const t_commrec *cr,
+                 const gmx_int64_t step);
+
+// Reset the collected data array
+static void
+reset_flow_data(t_flow_container *flowcr);
+
+// If at a collection or output step, perform actions
 void
-collect_flow_data(t_flowdata *flow_data, t_commrec *cr, t_mdatoms *mdatoms,
-		  t_state *state, gmx_groups_t *groups);
+flow_collect_or_output(t_flow_container *flowcr, const gmx_int64_t step,
+                       const t_commrec *cr, const t_mdatoms *mdatoms,
+                       const t_state *state, const gmx_groups_t *groups);
 
-void
-output_flow_data(t_flowdata *flow_data, t_commrec *cr, gmx_int64_t step);
-
-void
-check_flow_data_out(gmx_int64_t step, t_flowdata *flow_data, t_commrec *cr,
-        	    t_mdatoms *mdatoms, t_state *state, gmx_groups_t *groups);
+#endif

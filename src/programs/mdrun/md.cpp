@@ -673,11 +673,11 @@ double do_md(FILE *fplog, t_commrec *cr, int nfile, const t_filenm fnm[],
      ************************************************************/
 
     // PETTER
-    t_flowdata *flow_data;
+    t_flow_container *flowcr;
     gmx_bool bFlow = FALSE;
     if (opt2bSet("-flow", nfile, fnm))
     {
-        flow_data = prepare_flow_field_data(cr, nfile, fnm, ir, state);
+        flowcr = get_flow_container(cr, nfile, fnm, ir, state);
         bFlow = TRUE;
     }
 
@@ -1708,7 +1708,7 @@ double do_md(FILE *fplog, t_commrec *cr, int nfile, const t_filenm fnm[],
         // Collect and output data at specified steps / PETTER
         if (bFlow)
         {
-            check_flow_data_out(step, flow_data, cr, mdatoms, state, groups);
+            flow_collect_or_output(flowcr, step, cr, mdatoms, state, groups);
         }
 
         /* #######  SET VARIABLES FOR NEXT ITERATION IF THEY STILL NEED IT ###### */
@@ -1867,7 +1867,8 @@ double do_md(FILE *fplog, t_commrec *cr, int nfile, const t_filenm fnm[],
     // Free memory after run / PETTER
     if (bFlow)
     {
-        free(flow_data);
+        sfree(flowcr->data);
+        sfree(flowcr);
     }
 
     /* Closing TNG files can include compressing data. Therefore it is good to do that

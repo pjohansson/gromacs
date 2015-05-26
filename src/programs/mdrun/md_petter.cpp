@@ -9,6 +9,7 @@
 #include "gromacs/legacyheaders/types/commrec.h"
 #include "gromacs/math/vec.h"
 #include "gromacs/math/units.h"
+#include "gromacs/topology/topology.h"
 #include "gromacs/utility/basedefinitions.h"
 #include "gromacs/utility/futil.h"
 #include "gromacs/utility/gmxmpi.h"
@@ -16,32 +17,28 @@
 
 #include "md_petter.h"
 
-// Prepare data for flow field calculations
-t_flowdata*
-prepare_flow_field_data(t_commrec *cr, int nfile, const t_filenm fnm[],
-                        t_inputrec *ir, t_state *state)
+t_flow_container*
+get_flow_container(const t_commrec *cr, const int nfile, const t_filenm fnm[],
+                   const t_inputrec *ir, const t_state *state)
 {
     int     var,
             step_collect = ir->userint1,
             step_output = ir->userint2,
-            num_bins[ni] =
-            {
+            num_bins[ni] = {
                 ir->userint3,
                 ir->userint4
             };
 
-    float   bin_size[ni] =
-            {
+    float   bin_size[ni] = {
                 state->box[XX][XX]/num_bins[xi],
                 state->box[ZZ][ZZ]/num_bins[zi]
             },
-            inv_bin[ni] =
-            {
+            inv_bin[ni] = {
                 1/bin_size[xi],
                 1/bin_size[zi]
             };
 
-    // Control userargs
+    // Control userargs, although this should be done during pre-processing
     if (num_bins[xi] <= 0 || num_bins[zi] <= 0)
     {
         gmx_fatal(FARGS,
@@ -75,7 +72,7 @@ prepare_flow_field_data(t_commrec *cr, int nfile, const t_filenm fnm[],
     }
 
     // Allocate memory for flow data
-    t_flowdata *flow_data = (t_flowdata*) malloc(sizeof(t_flowdata));
+    t_flow_container *flowcr = (t_flow_container*) malloc(sizeof(t_flow_container));
 
     // Print output information to user
     if (MASTER(cr))
@@ -94,35 +91,37 @@ prepare_flow_field_data(t_commrec *cr, int nfile, const t_filenm fnm[],
     }
 
     // Set options to allocated struct
-    for (var = xi; var <= zi; var++)
+    for (var = 0; var < ni; var++)
     {
-        flow_data->num_bins[var] = num_bins[var];
-        flow_data->bin_size[var] = bin_size[var];
-        flow_data->inv_bin[var]  = inv_bin[var];
+        flowcr->num_bins[var] = num_bins[var];
+        flowcr->bin_size[var] = bin_size[var];
+        flowcr->inv_bin[var]  = inv_bin[var];
     }
 
-    flow_data->step_collect = step_collect;
-    flow_data->step_output = step_output;
-    flow_data->step_ratio = step_output/step_collect;
+    flowcr->step_collect = step_collect;
+    flowcr->step_output  = step_output;
+    flowcr->step_ratio   = step_output/step_collect;
 
     // Allocate memory for data collection
-    snew(flow_data->data, num_bins[xi]*num_bins[zi]*NumVar);
+    snew(flowcr->data, num_bins[xi]*num_bins[zi]*NumVar);
 
     // Get name base of output datamaps
-    strcpy(flow_data->fnbase, opt2fn("-flow", nfile, fnm));
-    flow_data->fnbase[strlen(flow_data->fnbase) - strlen(ftp2ext(efDAT)) - 1] = '\0';
+    strcpy(flowcr->fnbase, opt2fn("-flow", nfile, fnm));
+    flowcr->fnbase[strlen(flowcr->fnbase) - strlen(ftp2ext(efDAT)) - 1] = '\0';
 
-    return flow_data;
+    return flowcr;
 }
 
-// Collect flow field data to the grid
-void collect_flow_data(t_flowdata *flow_data, t_commrec *cr,
-                       t_mdatoms *mdatoms, t_state *state,
-                       gmx_groups_t *groups)
+static void
+collect_flow_data(t_flow_container *flowcr, const t_commrec *cr,
+                  const t_mdatoms *mdatoms, const t_state *state,
+                  const gmx_groups_t *groups)
 {
     int     i, j,
-            index_bin,        // Corresponding position in 1D *data
-            bin_position[ni]; // Current bin position in 2D system
+            bin,                  // Corresponding bin index in 1D *data array
+            grid_position[ni];    // Current bin position in 2D grid
+
+    double *fdata = flowcr->data; // Shorthand to the data array
 
     for (i = 0; i < mdatoms->homenr; i++)
     {
@@ -139,39 +138,40 @@ void collect_flow_data(t_flowdata *flow_data, t_commrec *cr,
         if (ggrpnr(groups, egcUser1, j) == 0)
         {
             // Calculate atom position in data grid
-            bin_position[xi] = ((int) (state->x[i][XX]*flow_data->inv_bin[xi]
-                        + flow_data->num_bins[xi] - 1))
-                    % flow_data->num_bins[xi];
-            bin_position[zi] = ((int) (state->x[i][ZZ]*flow_data->inv_bin[zi]
-                        + flow_data->num_bins[zi] - 1))
-                    % flow_data->num_bins[zi];
-            index_bin = (flow_data->num_bins[xi]*bin_position[zi]
-                    + bin_position[xi])*NumVar;
+            grid_position[xi] = ((int) (state->x[i][XX]*flowcr->inv_bin[xi]
+                        + flowcr->num_bins[xi] - 1))
+                    % flowcr->num_bins[xi];
+            grid_position[zi] = ((int) (state->x[i][ZZ]*flowcr->inv_bin[zi]
+                        + flowcr->num_bins[zi] - 1))
+                    % flowcr->num_bins[zi];
+            bin = (flowcr->num_bins[xi]*grid_position[zi] + grid_position[xi])*NumVar;
 
-            // Add atom data to collection
-            flow_data->data[index_bin + NumAtoms] += 1;
-            flow_data->data[index_bin + Temp] += mdatoms->massT[i]*norm2(state->v[i]);
-            flow_data->data[index_bin + Mass]   += mdatoms->massT[i];
-            flow_data->data[index_bin + FlowUU] += mdatoms->massT[i]*state->v[i][xi];
-            flow_data->data[index_bin + FlowVV] += mdatoms->massT[i]*state->v[i][ZZ];
+            // Add atom data to bin at index
+            fdata[bin + NumAtoms] += 1;
+            fdata[bin +     Temp] += mdatoms->massT[i]*norm2(state->v[i]);
+            fdata[bin +     Mass] += mdatoms->massT[i];
+            fdata[bin +       UU] += mdatoms->massT[i]*state->v[i][XX];
+            fdata[bin +       VV] += mdatoms->massT[i]*state->v[i][ZZ];
         }
     }
 }
 
-// Finalise and output the data to specified maps
-void output_flow_data(t_flowdata *flow_data, t_commrec *cr, gmx_int64_t step)
+static void
+output_flow_data(const t_flow_container *flowcr, const t_commrec *cr,
+                 const gmx_int64_t step)
 {
     FILE    *fp;
 
-    char    fnout[STRLEN];    // Final file name of output map
+    char    fnout[STRLEN];        // Final file name of output map
 
     int     i, j,
-            index_bin,        // Bin position in 1d data array
-            num_out,          // Number of data map to output
-            var;
+            bin,                  // Bin position in 1d data array
+            num_out;              // Number of data map to output
 
-    float   bin_center[ni],   // Center position of bin
-            bin_data[NumVar]; // Array for output data
+    float   bin_center[ni],       // Center position of bin
+            write_array[NumVar];  // Array for output data
+
+    double *fdata = flowcr->data; // Shorthand to the data array
 
     // Reduce data from MPI processing elements
     // Raise warning if MPI_IN_PLACE does not run on platform
@@ -179,16 +179,16 @@ void output_flow_data(t_flowdata *flow_data, t_commrec *cr, gmx_int64_t step)
     {
 #if defined(MPI_IN_PLACE_EXISTS)
         /* Master collects data from all PE's and prints */
-        MPI_Reduce(MASTER(cr) ? MPI_IN_PLACE : flow_data->data,
-                MASTER(cr) ? flow_data->data : NULL,
-                flow_data->num_bins[xi]*flow_data->num_bins[zi]*NumVar,
+        MPI_Reduce(MASTER(cr) ? MPI_IN_PLACE : flowcr->data,
+                MASTER(cr) ? flowcr->data : NULL,
+                flowcr->num_bins[xi]*flowcr->num_bins[zi]*NumVar,
                 MPI_DOUBLE, MPI_SUM, MASTERRANK(cr),
                 cr->mpi_comm_mygroup);
 #else
 #warning "MPI_IN_PLACE not available on platform"
-        MPI_Reduce(MASTER(cr) ? MPI_IN_PLACE : flow_data->data,
-                MASTER(cr) ? flow_data->data : NULL,
-                flow_data->num_bins[xi]*flow_data->num_bins[zi]*NumVar,
+        MPI_Reduce(MASTER(cr) ? MPI_IN_PLACE : flowcr->data,
+                MASTER(cr) ? flowcr->data : NULL,
+                flowcr->num_bins[xi]*flowcr->num_bins[zi]*NumVar,
                 MPI_DOUBLE, MPI_SUM, MASTERRANK(cr),
                 cr->mpi_comm_mygroup);
 #endif
@@ -196,10 +196,9 @@ void output_flow_data(t_flowdata *flow_data, t_commrec *cr, gmx_int64_t step)
 
     if (MASTER(cr))
     {
-        num_out = (int) (step/flow_data->step_output);
-
-        sprintf(fnout, "%s_%05d.%s",
-                flow_data->fnbase, num_out, ftp2ext(efDAT));
+        // Construct output file name
+        num_out = (int) (step/flowcr->step_output);
+        sprintf(fnout, "%s_%05d.%s", flowcr->fnbase, num_out, ftp2ext(efDAT));
         fp = gmx_ffopen(fnout, "wb");
 
         /* Calculate and output to data maps:
@@ -209,81 +208,71 @@ void output_flow_data(t_flowdata *flow_data, t_commrec *cr, gmx_int64_t step)
          *   Mass, sample average
          *   Flow U and V
          */
-        for (i = 0; i < flow_data->num_bins[xi]; i++)
+        for (i = 0; i < flowcr->num_bins[xi]; i++)
         {
-            bin_center[xi] = (i + 0.5)*flow_data->bin_size[xi];
+            bin_center[xi] = (i + 0.5)*flowcr->bin_size[xi];
 
-            for (j = 0; j < flow_data->num_bins[zi]; j++)
+            for (j = 0; j < flowcr->num_bins[zi]; j++)
             {
-                bin_center[zi] = (j + 0.5)*flow_data->bin_size[zi];
-                index_bin = (flow_data->num_bins[xi]*j + i)*NumVar;
-
-                /* Average U and V over accumulated mass in bins */
-                if (flow_data->data[index_bin + Mass] > 0.0)
-                {
-                    flow_data->data[index_bin + FlowUU]
-                        /= flow_data->data[index_bin + Mass];
-                    flow_data->data[index_bin + FlowVV]
-                        /= flow_data->data[index_bin + Mass];
-                }
-                else
-                {
-                    flow_data->data[index_bin + FlowUU] = 0.0;
-                    flow_data->data[index_bin + FlowVV] = 0.0;
-                }
-
-                /* Calculate sample average temperature */
-                if (flow_data->data[index_bin + NumAtoms] > 0)
-                {
-                    flow_data->data[index_bin + Temp]
-                        /= (2*BOLTZ*flow_data->data[index_bin + NumAtoms]);
-                }
-                else
-                {
-                    flow_data->data[index_bin + Temp] = 0.0;
-                }
+                bin_center[zi] = (j + 0.5)*flowcr->bin_size[zi];
+                bin = (flowcr->num_bins[xi]*j + i)*NumVar;
 
                 // Sample average mass and number density
-                flow_data->data[index_bin + Mass] /= flow_data->step_ratio;
-                flow_data->data[index_bin + NumAtoms] /= flow_data->step_ratio;
+                write_array[NumAtoms] = fdata[bin + NumAtoms]/flowcr->step_ratio;
+                write_array[Mass] = fdata[bin + Mass]/flowcr->step_ratio;
 
-                // Write bin position
-                fwrite(&bin_center, sizeof(float), ni, fp);
-
-                // Output data
-                for (var = 0; var < NumVar; var++)
+                /* Sample average temperature */
+                if (fdata[bin + NumAtoms] > 0)
                 {
-                    bin_data[var] = flow_data->data[index_bin + var];
+                    write_array[Temp] = fdata[bin + Temp]/(2*BOLTZ*fdata[bin + NumAtoms]);
                 }
-                fwrite(&bin_data, sizeof(float), NumVar, fp);
+                else
+                {
+                    write_array[Temp] = 0.0;
+                }
+
+                /* Average U and V over accumulated mass in bins */
+                if (fdata[bin + Mass] > 0.0)
+                {
+                    write_array[UU] = fdata[bin + UU]/fdata[bin + Mass];
+                    write_array[VV] = fdata[bin + VV]/fdata[bin + Mass];
+                }
+                else
+                {
+                    write_array[UU] = 0.0;
+                    write_array[VV] = 0.0;
+                }
+
+                // Write bin center position and sampled data
+                fwrite(&bin_center, sizeof(float), ni, fp);
+                fwrite(&write_array, sizeof(float), NumVar, fp);
             }
         }
 
-        fclose(fp);
-    }
-
-    /* Reset calculated quantities on all nodes after output */
-    for (
-            i = 0;
-            i < flow_data->num_bins[xi]*flow_data->num_bins[zi]*NumVar;
-            i++
-            )
-    {
-        flow_data->data[i] = 0;
+        gmx_ffclose(fp);
     }
 }
 
-// Collect and output flow field data at specified steps
-void check_flow_data_out(gmx_int64_t step, t_flowdata *flow_data, t_commrec *cr,
-        t_mdatoms *mdatoms, t_state *state, gmx_groups_t *groups)
+static void
+reset_flow_data(t_flow_container *flowcr)
 {
-    if (do_per_step(step, flow_data->step_collect))
-    {
-        collect_flow_data(flow_data, cr, mdatoms, state, groups);
+    sfree(flowcr->data);
+    snew(flowcr->data, flowcr->num_bins[xi]*flowcr->num_bins[zi]*NumVar);
+}
 
-        if (do_per_step(step, flow_data->step_output) && step > 0)
+void
+flow_collect_or_output(t_flow_container *flowcr, const gmx_int64_t step,
+                       const t_commrec *cr, const t_mdatoms *mdatoms,
+                       const t_state *state, const gmx_groups_t *groups)
+{
+    if (do_per_step(step, flowcr->step_collect))
+    {
+        collect_flow_data(flowcr, cr, mdatoms, state, groups);
+
+        if (do_per_step(step, flowcr->step_output) && step > 0)
         {
-            output_flow_data(flow_data, cr, step);
+            output_flow_data(flowcr, cr, step);
+            reset_flow_data(flowcr);
         }
     }
 }
