@@ -674,11 +674,11 @@ double do_md(FILE *fplog, t_commrec *cr, int nfile, const t_filenm fnm[],
 
     // PETTER
     t_flow_container *flowcr;
-    gmx_bool bFlow = FALSE;
-    if (opt2bSet("-flow", nfile, fnm))
+    gmx_bool bFlowOutput = opt2bSet("-flow", nfile, fnm);
+
+    if (bFlowOutput)
     {
         flowcr = get_flow_container(cr, nfile, fnm, ir, state);
-        bFlow = TRUE;
     }
 
     /* if rerunMD then read coordinates and velocities from input trajectory */
@@ -1706,9 +1706,9 @@ double do_md(FILE *fplog, t_commrec *cr, int nfile, const t_filenm fnm[],
         bStartingFromCpt = FALSE;
 
         // Collect and output data at specified steps / PETTER
-        if (bFlow)
+        if (bFlowOutput)
         {
-            flow_collect_or_output(flowcr, step, cr, mdatoms, state, groups);
+            flow_collect_or_output(flowcr, step, cr, ir, mdatoms, state, groups);
         }
 
         /* #######  SET VARIABLES FOR NEXT ITERATION IF THEY STILL NEED IT ###### */
@@ -1865,7 +1865,7 @@ double do_md(FILE *fplog, t_commrec *cr, int nfile, const t_filenm fnm[],
     debug_gmx();
 
     // Free memory after run / PETTER
-    if (bFlow)
+    if (bFlowOutput)
     {
         sfree(flowcr->data);
         sfree(flowcr);

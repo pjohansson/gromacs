@@ -32,7 +32,7 @@ typedef struct flowdata {
 // Prepare and return a container for flow field data
 t_flow_container*
 get_flow_container(const t_commrec *cr, const int nfile, const t_filenm fnm[],
-	        	   const t_inputrec *ir, const t_state *state);
+	           const t_inputrec *ir, const t_state *state);
 
 // Collect data from current state in container
 static void
@@ -52,7 +52,8 @@ reset_flow_data(t_flow_container *flowcr);
 // If at a collection or output step, perform actions
 void
 flow_collect_or_output(t_flow_container *flowcr, const gmx_int64_t step,
-                       const t_commrec *cr, const t_mdatoms *mdatoms,
-                       const t_state *state, const gmx_groups_t *groups);
+                       const t_commrec *cr, const t_inputrec *ir,
+		       const t_mdatoms *mdatoms, const t_state *state,
+		       const gmx_groups_t *groups);
 
 #endif

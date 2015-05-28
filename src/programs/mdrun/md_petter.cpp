@@ -7,6 +7,7 @@
 #include "gromacs/legacyheaders/sim_util.h"
 #include "gromacs/legacyheaders/typedefs.h"
 #include "gromacs/legacyheaders/types/commrec.h"
+#include "gromacs/legacyheaders/types/inputrec.h"
 #include "gromacs/math/vec.h"
 #include "gromacs/math/units.h"
 #include "gromacs/topology/topology.h"
@@ -37,6 +38,8 @@ get_flow_container(const t_commrec *cr, const int nfile, const t_filenm fnm[],
                 1/bin_size[xi],
                 1/bin_size[zi]
             };
+
+    t_flow_container *flowcr;
 
     // Control userargs, although this should be done during pre-processing
     if (num_bins[xi] <= 0 || num_bins[zi] <= 0)
@@ -72,7 +75,7 @@ get_flow_container(const t_commrec *cr, const int nfile, const t_filenm fnm[],
     }
 
     // Allocate memory for flow data
-    t_flow_container *flowcr = (t_flow_container*) malloc(sizeof(t_flow_container));
+    snew(flowcr, sizeof(t_flow_container));
 
     // Print output information to user
     if (MASTER(cr))
@@ -262,14 +265,15 @@ reset_flow_data(t_flow_container *flowcr)
 
 void
 flow_collect_or_output(t_flow_container *flowcr, const gmx_int64_t step,
-                       const t_commrec *cr, const t_mdatoms *mdatoms,
-                       const t_state *state, const gmx_groups_t *groups)
+                       const t_commrec *cr, const t_inputrec *ir,
+                       const t_mdatoms *mdatoms, const t_state *state,
+                       const gmx_groups_t *groups)
 {
     if (do_per_step(step, flowcr->step_collect))
     {
         collect_flow_data(flowcr, cr, mdatoms, state, groups);
 
-        if (do_per_step(step, flowcr->step_output) && step > 0)
+        if (do_per_step(step, flowcr->step_output) && step != ir->init_step)
         {
             output_flow_data(flowcr, cr, step);
             reset_flow_data(flowcr);
