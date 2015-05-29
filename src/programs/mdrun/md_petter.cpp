@@ -165,16 +165,15 @@ output_flow_data(const t_flow_container *flowcr, const t_commrec *cr,
 {
     FILE    *fp;
 
-    char    fnout[STRLEN];        // Final file name of output map
+    char    fnout[STRLEN];             // Final file name of output map
 
     int     i, j,
-            bin,                  // Bin position in 1d data array
-            num_out;              // Number of data map to output
+            bin,                       // Bin position in 1d data array
+            num_out;                   // Number of data map to output
 
-    float   bin_center[ni],       // Center position of bin
-            write_array[NumVar];  // Array for output data
+    float   write_array[ni + NumVar];  // Array for output data
 
-    double *fdata = flowcr->data; // Shorthand to the data array
+    double *fdata = flowcr->data;      // Shorthand to the data array
 
     // Reduce data from MPI processing elements
     // Raise warning if MPI_IN_PLACE does not run on platform
@@ -210,45 +209,45 @@ output_flow_data(const t_flow_container *flowcr, const t_commrec *cr,
          *   Temperature
          *   Mass, sample average
          *   Flow U and V
+         *
+         * Data is collected in write_array before outputting
          */
         for (i = 0; i < flowcr->num_bins[xi]; i++)
         {
-            bin_center[xi] = (i + 0.5)*flowcr->bin_size[xi];
+            write_array[xi] = (i + 0.5)*flowcr->bin_size[xi];
 
             for (j = 0; j < flowcr->num_bins[zi]; j++)
             {
-                bin_center[zi] = (j + 0.5)*flowcr->bin_size[zi];
-                bin = (flowcr->num_bins[xi]*j + i)*NumVar;
+                write_array[zi] = (j + 0.5)*flowcr->bin_size[zi];
+                bin = (i + flowcr->num_bins[xi]*j)*NumVar;
 
                 // Sample average mass and number density
-                write_array[NumAtoms] = fdata[bin + NumAtoms]/flowcr->step_ratio;
-                write_array[Mass] = fdata[bin + Mass]/flowcr->step_ratio;
+                write_array[ni + NumAtoms] = fdata[bin + NumAtoms]/flowcr->step_ratio;
+                write_array[ni +     Mass] = fdata[bin + Mass]/flowcr->step_ratio;
 
                 /* Sample average temperature */
-                if (fdata[bin + NumAtoms] > 0)
+                if (fdata[bin + NumAtoms] > 0.0)
                 {
-                    write_array[Temp] = fdata[bin + Temp]/(2*BOLTZ*fdata[bin + NumAtoms]);
+                    write_array[ni + Temp] = fdata[bin + Temp]/(2*BOLTZ*fdata[bin + NumAtoms]);
                 }
                 else
                 {
-                    write_array[Temp] = 0.0;
+                    write_array[ni + Temp] = 0.0;
                 }
 
                 /* Average U and V over accumulated mass in bins */
                 if (fdata[bin + Mass] > 0.0)
                 {
-                    write_array[UU] = fdata[bin + UU]/fdata[bin + Mass];
-                    write_array[VV] = fdata[bin + VV]/fdata[bin + Mass];
+                    write_array[ni + UU] = fdata[bin + UU]/fdata[bin + Mass];
+                    write_array[ni + VV] = fdata[bin + VV]/fdata[bin + Mass];
                 }
                 else
                 {
-                    write_array[UU] = 0.0;
-                    write_array[VV] = 0.0;
+                    write_array[ni + UU] = 0.0;
+                    write_array[ni + VV] = 0.0;
                 }
 
-                // Write bin center position and sampled data
-                fwrite(&bin_center, sizeof(float), ni, fp);
-                fwrite(&write_array, sizeof(float), NumVar, fp);
+                fwrite(&write_array, sizeof(float), ni + NumVar, fp);
             }
         }
 
