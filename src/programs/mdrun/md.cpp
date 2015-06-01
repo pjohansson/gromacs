@@ -986,6 +986,16 @@ double do_md(FILE *fplog, t_commrec *cr, int nfile, const t_filenm fnm[],
         bCPT = (((gs.set[eglsCHKPT] && (bNS || ir->nstlist == 0)) ||
                  (bLastStep && (Flags & MD_CONFOUT))) &&
                 step > ir->init_step && !bRerunMD);
+
+        /* Modify checkpoint condition if flow fields are output:
+         * Instead of at an NS step, at a flow output step. / PETTER
+         */
+        if (bFlowOutput)
+        {
+            bCPT = (gs.set[eglsCHKPT] && step % flowcr->step_output == 0 &&
+                    step > ir->init_step && !bRerunMD);
+        }
+
         if (bCPT)
         {
             gs.set[eglsCHKPT] = 0;
