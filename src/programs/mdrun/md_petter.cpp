@@ -18,13 +18,17 @@
 
 #include "md_petter.h"
 
-t_flow_container*
-get_flow_container(const t_commrec *cr, const int nfile, const t_filenm fnm[],
-                   const t_inputrec *ir, const t_state *state)
+
+t_flow_container *
+get_flow_container(const t_commrec  *cr,
+                   const int         nfile,
+                   const t_filenm    fnm[],
+                   const t_inputrec *ir,
+                   const t_state    *state)
 {
     int     var,
             step_collect = ir->userint1,
-            step_output = ir->userint2,
+            step_output  = ir->userint2,
             num_bins[ni] = {
                 ir->userint3,
                 ir->userint4
@@ -45,32 +49,32 @@ get_flow_container(const t_commrec *cr, const int nfile, const t_filenm fnm[],
     if (num_bins[xi] <= 0 || num_bins[zi] <= 0)
     {
         gmx_fatal(FARGS,
-                "Number of bins in x (userint3, %d) and z (userint4, %d) "
-                "for flow data calculation and output must be larger than 0.",
-                num_bins[xi], num_bins[zi]);
+                  "Number of bins in x (userint3, %d) and z (userint4, %d) "
+                  "for flow data calculation and output must be larger than 0.",
+                  num_bins[xi], num_bins[zi]);
     }
 
     if (step_collect <= 0 || step_output <= 0)
     {
         gmx_fatal(FARGS,
-                "Number of steps that elapse between collection (userint1, %d) "
-                "and output (userint2, %d) of flow data must be larger than 0.",
-                step_collect, step_output);
+                  "Number of steps that elapse between collection (userint1, %d) "
+                  "and output (userint2, %d) of flow data must be larger than 0.",
+                  step_collect, step_output);
     }
     else if (step_collect > step_output)
     {
         gmx_fatal(FARGS,
-                "Number of steps elapsing between output (userint2, %d) "
-                "must be larger than steps between collection (userint1, %d).",
-                step_output, step_collect, step_output);
+                  "Number of steps elapsing between output (userint2, %d) "
+                  "must be larger than steps between collection (userint1, %d).",
+                  step_output, step_collect, step_output);
     }
     else if (step_output % step_collect != 0)
     {
         int new_step_output = round(step_output/step_collect)*step_collect;
         gmx_warning("Steps for outputting flow data (userint2, %d) not "
-                "multiple of steps for collecting (userint1, %d). "
-                "Setting number of steps that elapse between output to %d.",
-                step_output, step_collect, new_step_output);
+                    "multiple of steps for collecting (userint1, %d). "
+                    "Setting number of steps that elapse between output to %d.",
+                    step_output, step_collect, new_step_output);
         step_output = new_step_output;
     }
 
@@ -115,9 +119,12 @@ get_flow_container(const t_commrec *cr, const int nfile, const t_filenm fnm[],
     return flowcr;
 }
 
+
 static void
-collect_flow_data(t_flow_container *flowcr, const t_commrec *cr,
-                  const t_mdatoms *mdatoms, const t_state *state,
+collect_flow_data(t_flow_container   *flowcr,
+                  const t_commrec    *cr,
+                  const t_mdatoms    *mdatoms,
+                  const t_state      *state,
                   const gmx_groups_t *groups)
 {
     int     i, j,
@@ -151,17 +158,19 @@ collect_flow_data(t_flow_container *flowcr, const t_commrec *cr,
 
             // Add atom data to bin at index
             fdata[bin + NumAtoms] += 1;
-            fdata[bin +     Temp] += mdatoms->massT[i]*norm2(state->v[i]);
-            fdata[bin +     Mass] += mdatoms->massT[i];
-            fdata[bin +       UU] += mdatoms->massT[i]*state->v[i][XX];
-            fdata[bin +       VV] += mdatoms->massT[i]*state->v[i][ZZ];
+            fdata[bin + Temp]     += mdatoms->massT[i]*norm2(state->v[i]);
+            fdata[bin + Mass]     += mdatoms->massT[i];
+            fdata[bin + UU]       += mdatoms->massT[i]*state->v[i][XX];
+            fdata[bin + VV]       += mdatoms->massT[i]*state->v[i][ZZ];
         }
     }
 }
 
+
 static void
-output_flow_data(const t_flow_container *flowcr, const t_commrec *cr,
-                 const gmx_int64_t step)
+output_flow_data(const t_flow_container *flowcr,
+                 const t_commrec        *cr,
+                 const gmx_int64_t       step)
 {
     FILE    *fp;
 
@@ -223,7 +232,7 @@ output_flow_data(const t_flow_container *flowcr, const t_commrec *cr,
 
                 // Sample average mass and number density
                 write_array[ni + NumAtoms] = fdata[bin + NumAtoms]/flowcr->step_ratio;
-                write_array[ni +     Mass] = fdata[bin + Mass]/flowcr->step_ratio;
+                write_array[ni + Mass]     = fdata[bin + Mass]/flowcr->step_ratio;
 
                 /* Sample average temperature */
                 if (fdata[bin + NumAtoms] > 0.0)
@@ -255,6 +264,7 @@ output_flow_data(const t_flow_container *flowcr, const t_commrec *cr,
     }
 }
 
+
 static void
 reset_flow_data(t_flow_container *flowcr)
 {
@@ -262,10 +272,14 @@ reset_flow_data(t_flow_container *flowcr)
     snew(flowcr->data, flowcr->num_bins[xi]*flowcr->num_bins[zi]*NumVar);
 }
 
+
 void
-flow_collect_or_output(t_flow_container *flowcr, const gmx_int64_t step,
-                       const t_commrec *cr, const t_inputrec *ir,
-                       const t_mdatoms *mdatoms, const t_state *state,
+flow_collect_or_output(t_flow_container   *flowcr,
+                       const gmx_int64_t   step,
+                       const t_commrec    *cr,
+                       const t_inputrec   *ir,
+                       const t_mdatoms    *mdatoms,
+                       const t_state      *state,
                        const gmx_groups_t *groups)
 {
     if (do_per_step(step, flowcr->step_collect))
@@ -279,3 +293,4 @@ flow_collect_or_output(t_flow_container *flowcr, const gmx_int64_t step,
         }
     }
 }
+
