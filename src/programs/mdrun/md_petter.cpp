@@ -3,15 +3,18 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include "gromacs/fileio/filenm.h"
-#include "gromacs/legacyheaders/sim_util.h"
-#include "gromacs/legacyheaders/typedefs.h"
-#include "gromacs/legacyheaders/types/commrec.h"
-#include "gromacs/legacyheaders/types/inputrec.h"
+#include "gromacs/commandline/filenm.h"
+#include "gromacs/domdec/domdec.h"
+#include "gromacs/domdec/domdec_struct.h"
+#include "gromacs/mdlib/sim_util.h"
+#include "gromacs/mdtypes/commrec.h"
+#include "gromacs/mdtypes/inputrec.h"
 #include "gromacs/math/vec.h"
 #include "gromacs/math/units.h"
 #include "gromacs/topology/topology.h"
 #include "gromacs/utility/basedefinitions.h"
+#include "gromacs/utility/cstringutil.h"
+#include "gromacs/utility/fatalerror.h"
 #include "gromacs/utility/futil.h"
 #include "gromacs/utility/gmxmpi.h"
 #include "gromacs/utility/smalloc.h"
