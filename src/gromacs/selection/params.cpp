@@ -44,6 +44,7 @@
 #include <algorithm>
 #include <string>
 
+#include "gromacs/math/units.h"
 #include "gromacs/math/vec.h"
 #include "gromacs/selection/position.h"
 #include "gromacs/utility/cstringutil.h"
@@ -396,7 +397,7 @@ parse_values_range(const SelectionParserValueList &values,
         qsort(rdata, n, 2*sizeof(real), &cmp_real_range);
         for (i = j = 2; i < 2*n; i += 2)
         {
-            if (rdata[j-1]+1 >= rdata[i])
+            if (rdata[j-1] >= rdata[i])
             {
                 if (rdata[i+1] > rdata[j-1])
                 {

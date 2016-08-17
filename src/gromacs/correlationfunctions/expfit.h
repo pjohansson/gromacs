@@ -1,7 +1,7 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2014, by the GROMACS development team, led by
+ * Copyright (c) 2014,2015, by the GROMACS development team, led by
  * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
  * and including many others, as listed in the AUTHORS file in the
  * top-level source directory and at http://www.gromacs.org.
@@ -44,19 +44,22 @@
 #ifndef GMX_EXPFIT_H
 #define GMX_EXPFIT_H
 
-#include "gromacs/legacyheaders/oenv.h"
+#include "gromacs/utility/basedefinitions.h"
 #include "gromacs/utility/real.h"
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
+struct gmx_output_env_t;
+
 /*! \brief
  * Enum to select fitting functions
  */
 enum {
-    effnNONE, effnEXP1, effnEXP2, effnEXP3,   effnVAC,
-    effnEXP5, effnEXP7, effnEXP9, effnERF, effnERREST, effnPRES, effnNR
+    effnNONE, effnEXP1, effnEXP2, effnEXPEXP,
+    effnEXP5, effnEXP7, effnEXP9,
+    effnVAC,  effnERF,  effnERREST, effnPRES, effnNR
 };
 
 /*! \brief
@@ -94,7 +97,7 @@ int sffn2effn(const char **sffn);
  * \param[in] x The value of x
  * \return the value of the fit
  */
-double fit_function(int eFitFn, double *parm, double x);
+double fit_function(const int eFitFn, const double parm[], const double x);
 
 /*! \brief
  * Use Levenberg-Marquardt method to fit to a nfitparm parameter exponential
@@ -103,22 +106,30 @@ double fit_function(int eFitFn, double *parm, double x);
  * If x == NULL, the timestep dt will be used to create a time axis.
  * \param[in] ndata Number of data points
  * \param[in] c1 The data points
- * \param[in] sig The standard deviation in the points
+ * \param[in] sig The standard deviation in the points (can be NULL)
  * \param[in] dt The time step
- * \param[in] x The X-axis (may be NULL, see above)
+ * \param[in] x0 The X-axis (may be NULL, see above)
  * \param[in] begintimefit Starting time for fitting
  * \param[in] endtimefit Ending time for fitting
  * \param[in] oenv Output formatting information
  * \param[in] bVerbose Should the routine write to console?
  * \param[in] eFitFn Fitting function (0 .. effnNR)
- * \param[out] fitparms[]
+ * \param[inout] fitparms[] Fitting parameters, see printed manual for a
+ * detailed description. Note that in all implemented cases the parameters
+ * corresponding to time constants will be generated with increasing values.
+ * Such input parameters should therefore be provided in increasing order.
+ * If this is not the case or if subsequent time parameters differ by less than
+ * a factor of 2, they will be modified to ensure tau_i+1 >= 2 tau_i.
  * \param[in] fix Constrains fit parameter i at it's starting value, when the i'th bit
- * of fix is set.
+ * of fix is set. This works only when the N last parameters are fixed
+ * but not when a parameter somewhere in the middle needs to be fixed.
+ * \param[in] fn_fitted If not NULL file to print the data and fitted curve to
  * \return integral.
  */
-real do_lmfit(int ndata, real c1[], real sig[], real dt, real *x,
-              real begintimefit, real endtimefit, const output_env_t oenv,
-              gmx_bool bVerbose, int eFitFn, double fitparms[], int fix);
+real do_lmfit(int ndata, real c1[], real sig[], real dt, real *x0,
+              real begintimefit, real endtimefit, const gmx_output_env_t *oenv,
+              gmx_bool bVerbose, int eFitFn, double fitparms[], int fix,
+              const char *fn_fitted);
 
 /*! \brief
  * Fit an autocorrelation function to a pre-defined functional form
@@ -132,10 +143,10 @@ real do_lmfit(int ndata, real c1[], real sig[], real dt, real *x,
  * \param[in] tendfit Ending time for fitting
  * \param[in] dt The time step
  * \param[in] c1 The data points
- * \param[out] fit The fitting parameters
+ * \param[inout] fit The fitting parameters
  * \return the integral over the autocorrelation function?
  */
-real fit_acf(int ncorr, int fitfn, const output_env_t oenv, gmx_bool bVerbose,
+real fit_acf(int ncorr, int fitfn, const gmx_output_env_t *oenv, gmx_bool bVerbose,
              real tbeginfit, real tendfit, real dt, real c1[], real *fit);
 
 #ifdef __cplusplus

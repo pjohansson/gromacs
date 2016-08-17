@@ -1,7 +1,7 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2014, by the GROMACS development team, led by
+ * Copyright (c) 2014,2015,2016, by the GROMACS development team, led by
  * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
  * and including many others, as listed in the AUTHORS file in the
  * top-level source directory and at http://www.gromacs.org.
@@ -46,14 +46,14 @@
 
 #include <cmath>
 
+#include <memory>
+
 #include <gtest/gtest.h>
 
 #include "gromacs/correlationfunctions/expfit.h"
 #include "gromacs/fft/fft.h"
-#include "gromacs/legacyheaders/oenv.h"
 #include "gromacs/utility/gmxassert.h"
 #include "gromacs/utility/smalloc.h"
-#include "gromacs/utility/uniqueptr.h"
 
 #include "testutils/refdata.h"
 #include "testutils/testasserts.h"
@@ -67,7 +67,7 @@ namespace
 {
 
 //! Definition of pointer to class containing test data.
-typedef gmx_unique_ptr<CorrelationDataSet>::type CorrelationDataSetPointer;
+typedef std::unique_ptr<CorrelationDataSet> CorrelationDataSetPointer;
 
 class AutocorrTest : public ::testing::Test
 {
@@ -85,7 +85,7 @@ class AutocorrTest : public ::testing::Test
         AutocorrTest( )
             : checker_(refData_.rootChecker())
         {
-#ifdef GMX_DOUBLE
+#if GMX_DOUBLE
             checker_.setDefaultTolerance(test::relativeToleranceAsFloatingPoint(1, 1e-6));
 #else
             checker_.setDefaultTolerance(test::relativeToleranceAsFloatingPoint(1, 1e-3));
@@ -104,16 +104,14 @@ class AutocorrTest : public ::testing::Test
 
         static void TearDownTestCase()
         {
-
             sfree(tempArgs_);
             tempArgs_ = NULL;
             gmx_fft_cleanup();
         }
 
-        void test(unsigned long mode)
+        void test(unsigned long mode, bool bNormalize)
         {
-            bool              bAverage      = false;
-            bool              bNormalize    = true;
+            bool              bAverage      = true;
             bool              bVerbose      = false;
             int               nrRestart     = 1;
             int               dim           = getDim(mode);
@@ -126,7 +124,7 @@ class AutocorrTest : public ::testing::Test
                     result.push_back(data_->getValue(m, i));
                 }
             }
-            real *ptr = static_cast<real*>(&(result[0]));
+            real *ptr = result.data();
             low_do_autocorr(0, 0, 0,   nrFrames_, 1,
                             get_acfnout(), &ptr, data_->getDt(), mode,
                             nrRestart, bAverage, bNormalize,
@@ -134,11 +132,11 @@ class AutocorrTest : public ::testing::Test
                             effnNONE);
 
             double testResult = 0;
-            for (int i = 0; i < nrFrames_; i++)
+            for (int i = 0; i < get_acfnout(); i++)
             {
                 testResult += result[i];
             }
-            checker_.checkSequenceArray(nrFrames_, ptr,
+            checker_.checkSequenceArray(get_acfnout(), ptr,
                                         "AutocorrelationFunction");
             checker_.checkReal(testResult, "Integral");
         }
@@ -182,47 +180,52 @@ t_pargs                   * AutocorrTest::tempArgs_;
 
 TEST_F (AutocorrTest, EacNormal)
 {
-    test(eacNormal);
+    test(eacNormal, true);
+}
+
+TEST_F (AutocorrTest, EacNoNormalize)
+{
+    test(eacNormal, false);
 }
 
 TEST_F (AutocorrTest, EacCos)
 {
-    test(eacCos);
+    test(eacCos, true);
 }
 
 TEST_F (AutocorrTest, EacVector)
 {
-    test(eacVector);
+    test(eacVector, true);
 }
 
 TEST_F (AutocorrTest, EacRcross)
 {
-    test(eacRcross);
+    test(eacRcross, true);
 }
 
 TEST_F (AutocorrTest, EacP0)
 {
-    test(eacP0);
+    test(eacP0, true);
 }
 
 TEST_F (AutocorrTest, EacP1)
 {
-    test(eacP1);
+    test(eacP1, true);
 }
 
 TEST_F (AutocorrTest, EacP2)
 {
-    test(eacP2);
+    test(eacP2, true);
 }
 
 TEST_F (AutocorrTest, EacP3)
 {
-    test(eacP3);
+    test(eacP3, true);
 }
 
 TEST_F (AutocorrTest, EacP4)
 {
-    test(eacP4);
+    test(eacP4, true);
 }
 
 

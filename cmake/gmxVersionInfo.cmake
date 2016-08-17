@@ -1,7 +1,7 @@
 #
 # This file is part of the GROMACS molecular simulation package.
 #
-# Copyright (c) 2014,2015, by the GROMACS development team, led by
+# Copyright (c) 2014,2015,2016, by the GROMACS development team, led by
 # Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
 # and including many others, as listed in the AUTHORS file in the
 # top-level source directory and at http://www.gromacs.org.
@@ -38,33 +38,49 @@
 # This script provides the following basic version variables that need to be
 # maintained manually:
 #   GMX_VERSION_MAJOR      Major version number.
-#   GMX_VERSION_MINOR      Minor version number.
 #   GMX_VERSION_PATCH      Patch version number.
-#       Should always be defined: zero for, e.g., 5.0.
+#       Should always be defined: zero for, e.g., 2016.
 #   GMX_VERSION_SUFFIX     String suffix to add to numeric version string.
 #       "-dev" is automatically added when not building from a source package,
-#       and does not need to be kept here.
-#   LIBRARY_SOVERSION      so version for the built libraries.
-#       Should be increased for each binary incompatible release (in GROMACS,
-#       the typical policy is to increase it for each major/minor version
-#       change, but not for patch releases, even if the latter may not always
-#       be fully binary compatible).
+#       and does not need to be kept here. This mechanism is not quite enough
+#       for building a tarball, but setting the CMake cache variable
+#       GMX_BUILD_TARBALL=on will suppress the addition of "-dev" to the
+#       version string.
+#   LIBRARY_SOVERSION_MAJOR so major version for the built libraries.
+#       Should be increased for each binary incompatible release. In GROMACS,
+#       the typical policy is to increase it at the start of the development
+#       cycle for each major/minor version change, but not for patch releases,
+#       even if the latter may not always be fully binary compatible.
+#       Table of historical values
+#         GROMACS     5.0    0
+#         GROMACS     5.1    1
+#         GROMACS     2016   2
+#   LIBRARY_SOVERSION_MINOR so minor version for the built libraries.
+#       Should be increased for each release that changes only the implementation.
+#       In GROMACS, the typical policy is to increase it for each patch version
+#       change, even if they may not always be fully binary compatible.
+#       If it is somehow clear that the ABI implementation has not changed
+#       in a patch release, this variable should not increase. Release candidate
+#       and beta versions will not increase this number, since nobody should
+#       write code against such versions.
 #   LIBRARY_VERSION        Full library version.
 #   REGRESSIONTEST_BRANCH  For builds not from source packages, name of the
 #       regressiontests branch at gerrit.gromacs.org whose HEAD can test this
 #       code, *if* this code is recent enough (i.e., contains all changes from
 #       the corresponding code branch that affects the regression test
-#       results).
+#       results). Even after a release branch is forked for the source
+#       repository, the correct regressiontests branch can still be master,
+#       because we do not fork it until behaviour needs to change.
 #   REGRESSIONTEST_MD5SUM
 #       The MD5 checksum of the regressiontest tarball. Only used when building
 #       from a source package.
 # They are collected into a single section below.
 # The following variables are set based on these:
 #   GMX_VERSION            String composed from GMX_VERSION_* numeric variables
-#       above. Example: 4.6.1, 5.0
+#       above. Example: 4.6.1, 5.0, 2016
 #   GMX_VERSION_STRING     String with GMX_VERSION suffixed with the given
 #       suffix and possibly "-dev" for builds not from a source package.
-#   GMX_VERSION_NUMERIC    Numeric version number (e.g., 40601 for 4.6.1).
+#   GMX_VERSION_NUMERIC    Numeric version number (e.g., 40601 for 4.6.1, 20160001 for 2016.1).
 #   GMX_API_VERSION        Numeric API version.
 #       This is currently set automatically to GMX_VERSION_NUMERIC, but may
 #       become manually maintained in the future if there will be releases
@@ -77,14 +93,6 @@
 # The latter two are used to generate gromacs/version.h to allow software
 # written against the GROMACS API to provide some #ifdef'ed code to support
 # multiple GROMACS versions.
-#
-# The following variables are defined without manual intervention:
-#   SOURCE_IS_SOURCE_DISTRIBUTION  The source tree is from a source tarball.
-#   SOURCE_IS_GIT_REPOSITORY       The source tree is a git repository.
-# Note that both can be false if the tree has been extracted, e.g., as a
-# tarball directly from git.
-# Additionally, the following variable is defined:
-#   BUILD_IS_INSOURCE              The build is happening in-source.
 #
 # This script also declares machinery to generate and obtain version
 # information from a git repository.  This is enabled by default if the source
@@ -175,61 +183,57 @@
 # are used internally by this machinery, as well as VersionInfo.cmake.cmakein.
 
 #####################################################################
-# Basic nature of the source tree
-
-set(SOURCE_IS_GIT_REPOSITORY OFF)
-set(SOURCE_IS_SOURCE_DISTRIBUTION OFF)
-if (EXISTS "${PROJECT_SOURCE_DIR}/.git")
-    set(SOURCE_IS_GIT_REPOSITORY ON)
-endif()
-# This file is excluded from CPack source packages, but part of the repository,
-# so it should get included everywhere else.
-if (NOT EXISTS "${PROJECT_SOURCE_DIR}/admin/.isreposource")
-    set(SOURCE_IS_SOURCE_DISTRIBUTION ON)
-endif()
-set(BUILD_IS_INSOURCE OFF)
-if ("${PROJECT_SOURCE_DIR}" STREQUAL "${PROJECT_BINARY_DIR}")
-    set(BUILD_IS_INSOURCE ON)
-endif()
-
-#####################################################################
 # Manually maintained version info
 
 # The GROMACS convention is that these are the version number of the next
 # release that is going to be made from this branch.
-set(GMX_VERSION_MAJOR 5)
-set(GMX_VERSION_MINOR 1)
-set(GMX_VERSION_PATCH 0)
+set(GMX_VERSION_MAJOR 2016)
+set(GMX_VERSION_PATCH 1)
 # The suffix, on the other hand, is used mainly for betas and release
-# candidates, where it signifies the last such release from this branch;
-# it will be empty before the first such release, as well as after the
-# final release is out.
+# candidates, where it signifies the most recent such release from
+# this branch; it will be empty before the first such release, as well
+# as after the final release is out.
 set(GMX_VERSION_SUFFIX "")
 
-set(LIBRARY_SOVERSION 1)
-set(LIBRARY_VERSION ${LIBRARY_SOVERSION}.0.0)
-
-set(REGRESSIONTEST_BRANCH "refs/heads/master")
-set(REGRESSIONTEST_MD5SUM "a07524afebca5013540d4f2f72df2dce")
+# Conventionally with libtool, any ABI change must change the major
+# version number, the minor version number should change if it's just
+# the implementation that has been altered, and the third number
+# counts the number of old major versions that will still run if
+# linked to this library (i.e. it is not a patch number). See the
+# above descriptions of LIBRARY_SOVERSION_* for policy for changes
+# here. The important thing is to minimize the chance of third-party
+# code being able to dynamically link with a version of libgromacs
+# that might not work.
+set(LIBRARY_SOVERSION_MAJOR 2)
+set(LIBRARY_SOVERSION_MINOR 0)
+set(LIBRARY_VERSION ${LIBRARY_SOVERSION_MAJOR}.${LIBRARY_SOVERSION_MINOR}.0)
 
 #####################################################################
 # General version management based on manually set numbers
 
 if (GMX_VERSION_PATCH)
-    set(GMX_VERSION "${GMX_VERSION_MAJOR}.${GMX_VERSION_MINOR}.${GMX_VERSION_PATCH}")
+    set(GMX_VERSION "${GMX_VERSION_MAJOR}.${GMX_VERSION_PATCH}")
 else()
-    set(GMX_VERSION "${GMX_VERSION_MAJOR}.${GMX_VERSION_MINOR}")
+    set(GMX_VERSION "${GMX_VERSION_MAJOR}")
 endif()
 set(GMX_VERSION_STRING "${GMX_VERSION}${GMX_VERSION_SUFFIX}")
-if (NOT SOURCE_IS_SOURCE_DISTRIBUTION)
+option(GMX_BUILD_TARBALL "Build tarball without -dev version suffix" OFF)
+mark_as_advanced(GMX_BUILD_TARBALL)
+if (NOT SOURCE_IS_SOURCE_DISTRIBUTION AND NOT GMX_BUILD_TARBALL)
     set(GMX_VERSION_STRING "${GMX_VERSION_STRING}-dev")
 endif()
 
 set(REGRESSIONTEST_VERSION "${GMX_VERSION_STRING}")
+set(REGRESSIONTEST_BRANCH "refs/heads/release-2016")
+# TODO Find some way of ensuring that this is bumped appropriately for
+# each release. It's hard to test because it is only used for
+# REGRESSIONTEST_DOWNLOAD, which doesn't work until that tarball has
+# been placed on the server.
+set(REGRESSIONTEST_MD5SUM "5f49cfc4f04a34f117340cf9b3e5f8a2" CACHE INTERNAL "MD5 sum of the regressiontests tarball")
 
 math(EXPR GMX_VERSION_NUMERIC
-     "${GMX_VERSION_MAJOR}*10000 + ${GMX_VERSION_MINOR}*100 + ${GMX_VERSION_PATCH}")
-set(GMX_API_VERSION ${NUM_VERSION})
+     "${GMX_VERSION_MAJOR}*10000 + ${GMX_VERSION_PATCH}")
+set(GMX_API_VERSION ${GMX_VERSION_NUMERIC})
 
 #####################################################################
 # git version info management

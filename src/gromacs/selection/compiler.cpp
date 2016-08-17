@@ -1,7 +1,7 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2009,2010,2011,2012,2013,2014,2015, by the GROMACS development team, led by
+ * Copyright (c) 2009,2010,2011,2012,2013,2014,2015,2016, by the GROMACS development team, led by
  * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
  * and including many others, as listed in the AUTHORS file in the
  * top-level source directory and at http://www.gromacs.org.
@@ -1872,11 +1872,6 @@ init_method(const SelectionTreeElementPointer &sel, t_topology *top, int isize)
                                "Output initialization must be provided for "
                                "SMETH_VARNUMVAL selection methods");
             alloc_selection_data(sel, isize, true);
-            if ((sel->flags & SEL_DYNAMIC)
-                && sel->v.type != GROUP_VALUE && sel->v.type != POS_VALUE)
-            {
-                sel->v.nr = ((sel->flags & SEL_SINGLEVAL) ? 1 : isize);
-            }
             /* If the method is char-valued, pre-allocate the strings. */
             if (sel->u.expr.method->flags & SMETH_CHARVAL)
             {
@@ -1895,16 +1890,6 @@ init_method(const SelectionTreeElementPointer &sel, t_topology *top, int isize)
                         snew(sel->v.u.s[i], 2);
                     }
                 }
-            }
-        }
-        /* Clear the values for dynamic output to avoid valgrind warnings. */
-        if ((sel->flags & SEL_DYNAMIC) && sel->v.type == REAL_VALUE)
-        {
-            int i;
-
-            for (i = 0; i < sel->v.nr; ++i)
-            {
-                sel->v.u.r[i] = 0.0;
             }
         }
     }
@@ -2146,8 +2131,10 @@ analyze_static(gmx_sel_evaluate_t                *data,
 
         case SEL_EXPRESSION:
         case SEL_MODIFIER:
+        {
+            const int isize = g ? g->isize : 0;
             _gmx_sel_evaluate_method_params(data, sel, g);
-            init_method(sel, data->top, g ? g->isize : 0);
+            init_method(sel, data->top, isize);
             if (!(sel->flags & SEL_DYNAMIC))
             {
                 sel->cdata->evaluate(data, sel, g);
@@ -2165,13 +2152,29 @@ analyze_static(gmx_sel_evaluate_t                *data,
                 {
                     sel->cdata->evaluate(data, sel, g);
                 }
+                else
+                {
+                    if (sel->v.type != GROUP_VALUE && sel->v.type != POS_VALUE)
+                    {
+                        sel->v.nr = ((sel->flags & SEL_SINGLEVAL) ? 1 : isize);
+                    }
+                    // Clear the values for dynamic output to avoid
+                    // uninitialized memory.
+                    if (sel->v.type == REAL_VALUE)
+                    {
+                        for (int i = 0; i < sel->v.nr; ++i)
+                        {
+                            sel->v.u.r[i] = 0.0;
+                        }
+                    }
+                }
                 if (bDoMinMax && g)
                 {
                     gmx_ana_index_copy(sel->cdata->gmax, g, true);
                 }
             }
             break;
-
+        }
         case SEL_BOOLEAN:
             if (!(sel->flags & SEL_DYNAMIC))
             {
@@ -2450,9 +2453,9 @@ init_root_item(const SelectionTreeElementPointer &root,
  * Finds the highest atom index required to evaluate a selection subtree.
  *
  * \param[in]     sel           Root of the selection subtree to process.
- * \param[in,out] maxAtomIndex  The highest atom index required to evaluate the
- *      subtree.  The existing value is never decreased, so multiple calls with
- *      the same parameter will compute the maximum over several subtrees.
+ * \param[in,out] requiredAtoms The atoms required to evaluate the subtree.
+ *      The existing group is only added to, so multiple calls with
+ *      the same parameter will compute the union over several subtrees.
  *
  * For evaluation that starts from a \ref SEL_ROOT element with a fixed group,
  * children will never extend the evaluation group except for method parameter
@@ -2465,7 +2468,8 @@ init_root_item(const SelectionTreeElementPointer &root,
  * position calculation collection in the main compilation method.
  */
 static void
-init_required_atoms(const SelectionTreeElementPointer &sel, int *maxAtomIndex)
+init_required_atoms(const SelectionTreeElementPointer &sel,
+                    gmx_ana_index_t                   *requiredAtoms)
 {
     // Process children.
     if (sel->type != SEL_SUBEXPRREF)
@@ -2473,7 +2477,7 @@ init_required_atoms(const SelectionTreeElementPointer &sel, int *maxAtomIndex)
         SelectionTreeElementPointer child = sel->child;
         while (child)
         {
-            init_required_atoms(child, maxAtomIndex);
+            init_required_atoms(child, requiredAtoms);
             child = child->next;
         }
     }
@@ -2483,8 +2487,7 @@ init_required_atoms(const SelectionTreeElementPointer &sel, int *maxAtomIndex)
     {
         if (sel->u.cgrp.isize > 0)
         {
-            *maxAtomIndex =
-                std::max(*maxAtomIndex, gmx_ana_index_get_max_index(&sel->u.cgrp));
+            gmx_ana_index_union_unsorted(requiredAtoms, requiredAtoms, &sel->u.cgrp);
         }
     }
 }
@@ -2883,10 +2886,9 @@ SelectionCompiler::compile(SelectionCollection *coll)
         coll->printTree(stderr, false);
     }
 
-    // Initialize evaluation groups, maximum atom index needed for evaluation,
-    // position calculations for methods, perform some final optimization, and
-    // free the memory allocated for the compilation.
-    coll->impl_->maxAtomIndex_ = 0;
+    // Initialize evaluation groups, position calculations for methods, perform
+    // some final optimization, and free the memory allocated for the
+    // compilation.
     /* By default, use whole residues/molecules. */
     flags = POS_COMPLWHOLE;
     PositionCalculationCollection::typeFromEnum(coll->impl_->rpost_.c_str(),
@@ -2896,14 +2898,22 @@ SelectionCompiler::compile(SelectionCollection *coll)
     {
         init_root_item(item, &sc->gall);
         postprocess_item_subexpressions(item);
-        init_required_atoms(item, &coll->impl_->maxAtomIndex_);
         init_item_comg(item, &sc->pcc, post, flags);
         free_item_compilerdata(item);
         item = item->next;
     }
-    coll->impl_->maxAtomIndex_ =
-        std::max(coll->impl_->maxAtomIndex_,
-                 sc->pcc.getHighestRequiredAtomIndex());
+
+    // Compute the atoms required for evaluating the selections.
+    gmx_ana_index_clear(&coll->impl_->requiredAtoms_);
+    gmx_ana_index_reserve(&coll->impl_->requiredAtoms_, sc->gall.isize);
+    sc->pcc.getRequiredAtoms(&coll->impl_->requiredAtoms_);
+    item = sc->root;
+    while (item)
+    {
+        init_required_atoms(item, &coll->impl_->requiredAtoms_);
+        item = item->next;
+    }
+    gmx_ana_index_squeeze(&coll->impl_->requiredAtoms_);
 
     /* Allocate memory for the evaluation memory pool. */
     _gmx_sel_mempool_reserve(sc->mempool, 0);

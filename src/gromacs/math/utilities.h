@@ -3,7 +3,7 @@
  *
  * Copyright (c) 1991-2000, University of Groningen, The Netherlands.
  * Copyright (c) 2001-2004, The GROMACS development team.
- * Copyright (c) 2013,2014, by the GROMACS development team, led by
+ * Copyright (c) 2013,2014,2015,2016, by the GROMACS development team, led by
  * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
  * and including many others, as listed in the AUTHORS file in the
  * top-level source directory and at http://www.gromacs.org.
@@ -67,7 +67,7 @@ extern "C" {
 #define M_1_PI      0.31830988618379067154
 #endif
 
-#ifndef M_FLOAT_1_SQRTPI /* used in CUDA kernels */
+#ifndef M_FLOAT_1_SQRTPI /* used in GPU kernels */
 /* 1.0 / sqrt(M_PI) */
 #define M_FLOAT_1_SQRTPI 0.564189583547756f
 #endif
@@ -81,33 +81,6 @@ extern "C" {
 /* 2.0 / sqrt(M_PI) */
 #define M_2_SQRTPI  1.128379167095513
 #endif
-
-int     gmx_nint(real a);
-real    sign(real x, real y);
-
-real    cuberoot (real a);
-double  gmx_erfd(double x);
-double  gmx_erfcd(double x);
-float   gmx_erff(float x);
-float   gmx_erfcf(float x);
-#ifdef GMX_DOUBLE
-#define gmx_erf(x)   gmx_erfd(x)
-#define gmx_erfc(x)  gmx_erfcd(x)
-#else
-#define gmx_erf(x)   gmx_erff(x)
-#define gmx_erfc(x)  gmx_erfcf(x)
-#endif
-
-#if defined(_MSC_VER) && _MSC_VER < 1800
-#define gmx_expm1(x) (exp(x)-1)
-#define gmx_log1p(x) log(1+x)
-#else
-#define gmx_expm1 expm1
-#define gmx_log1p log1p
-#endif
-
-gmx_bool gmx_isfinite(real x);
-gmx_bool gmx_isnan(real x);
 
 /*! \brief Check if two numbers are within a tolerance
  *
@@ -146,16 +119,9 @@ gmx_within_tol(double   f1,
 int
 gmx_numzero(double a);
 
-/*! \brief Compute floor of logarithm to base 2
- *
- * \return log2(x)
- */
-unsigned int
-gmx_log2i(unsigned int x);
-
 /*! \brief Multiply two large ints
  *
- * \return False iff overflow occured
+ * \return False iff overflow occurred
  */
 gmx_bool
 check_int_multiply_for_overflow(gmx_int64_t  a,
@@ -175,6 +141,17 @@ gmx_greatest_common_divisor(int p, int q);
  * Enables division-by-zero, invalid, and overflow.
  */
 int gmx_feenableexcept();
+
+/*! \brief Return cut-off to use
+ *
+ * Takes the max of two cut-offs. However a cut-off of 0
+ * signifies that the cut-off in fact is infinite, and
+ * this requires this special routine.
+ * \param[in] cutoff1 The first cutoff (e.g. coulomb)
+ * \param[in] cutoff2 The second cutoff (e.g. vdw)
+ * \return 0 if either is 0, the normal max of the two otherwise.
+ */
+real max_cutoff(real cutoff1, real cutoff2);
 
 #ifdef __cplusplus
 }

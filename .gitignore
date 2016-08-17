@@ -14,5 +14,4 @@ lib*.pc
 .cproject
 CMakeLists.txt.user
 /VersionInfo*.cmake
-build/
-*.swp
+Testing

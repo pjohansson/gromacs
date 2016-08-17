@@ -1,7 +1,7 @@
 %
 % This file is part of the GROMACS molecular simulation package.
 %
-% Copyright (c) 2013,2014,2015, by the GROMACS development team, led by
+% Copyright (c) 2013,2014,2015,2016, by the GROMACS development team, led by
 % Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
 % and including many others, as listed in the AUTHORS file in the
 % top-level source directory and at http://www.gromacs.org.
@@ -162,7 +162,7 @@ V_c(\rij) = f \frac{q_i q_j}{\epsr \rij}
 \label{eqn:vcoul}
 \eeq
 See also \figref{coul}, where $f = \frac{1}{4\pi \varepsilon_0} =
-138.935\,485$ (see \chref{defunits})
+\electricConvFactorValue$ (see \chref{defunits})
 
 \begin{figure}
 \centerline{\includegraphics[width=8cm]{plots/vcrf}}
@@ -252,19 +252,16 @@ respectively.
 \subsection{Modified non-bonded interactions}
 \label{sec:mod_nb_int}
 In {\gromacs}, the non-bonded potentials can be
-modified by a shift function. The purpose of this is to replace the
+modified by a shift function, also called a force-switch function,
+since it switches the force to zero at the cut-off.
+The purpose of this is to replace the
 truncated forces by forces that are continuous and have continuous
 derivatives at the \normindex{cut-off} radius. With such forces the
-timestep integration produces much smaller errors and there are no
-such complications as creating charges from dipoles by the truncation
-procedure. In fact, by using shifted forces there is no need for
-charge groups in the construction of neighbor lists. However, the
-shift function produces a considerable modification of the Coulomb
-potential. Unless the ``missing'' long-range potential is properly
-calculated and added (through the use of PPPM, Ewald, or PME), the
-effect of such modifications must be carefully evaluated.  The
-modification of the Lennard-Jones dispersion and repulsion is only
-minor, but it does remove the noise caused by cut-off effects.
+time integration produces smaller errors. But note that for
+Lennard-Jones interactions these errors are usually smaller than other errors,
+such as integration errors at the repulsive part of the potential.
+For Coulomb interactions we advise against using a shifted potential
+and for use of a reaction field or a proper long-range method such as PME.
  
 There is {\em no} fundamental difference between a switch function
 (which multiplies the potential with a function) and a shift function
@@ -273,11 +270,11 @@ function is a special case of the shift function, which we apply to
 the {\em force function} $F(r)$, related to the electrostatic or
 van der Waals force acting on particle $i$ by particle $j$ as:
 \beq
-\ve{F}_i = c F(r_{ij}) \frac{\rvij}{r_{ij}}
+\ve{F}_i = c \, F(r_{ij}) \frac{\rvij}{r_{ij}}
 \eeq
 For pure Coulomb or Lennard-Jones interactions
-$F(r)=F_\alpha(r)=r^{-(\alpha+1)}$.
-The shifted force $F_s(r)$ can generally be written as:
+$F(r) = F_\alpha(r) = \alpha \, r^{-(\alpha+1)}$.
+The switched force $F_s(r)$ can generally be written as:
 \beq
 \begin{array}{rcl}
 \vspace{2mm}
@@ -288,37 +285,33 @@ F_s(r)~=&~0             & r_c \le r
 \end{array}
 \eeq
 When $r_1=0$ this is a traditional shift function, otherwise it acts as a 
-switch function. The corresponding shifted coulomb potential then reads:
+switch function. The corresponding shifted potential function then reads:
 \beq
-V_s(r_{ij}) = f \Phi_s (r_{ij}) q_i q_j
-\eeq
-where $\Phi(r)$ is the potential function 
-\beq
-\Phi_s(r) =  \int^{\infty}_r~F_s(x)\, dx
+V_s(r) =  \int^{\infty}_r~F_s(x)\, dx
 \eeq
 
-The {\gromacs} shift function should be smooth at the boundaries, therefore
-the following boundary conditions are imposed on the shift function:
+The {\gromacs} {\bf force switch} function $S_F(r)$ should be smooth at the boundaries, therefore
+the following boundary conditions are imposed on the switch function:
 \beq
 \begin{array}{rcl}
-S(r_1)          &=&0            \\
-S'(r_1)         &=&0            \\
-S(r_c)          &=&-F_\alpha(r_c)       \\
-S'(r_c)         &=&-F_\alpha'(r_c)
+S_F(r_1)          &=&0            \\
+S_F'(r_1)         &=&0            \\
+S_F(r_c)          &=&-F_\alpha(r_c)       \\
+S_F'(r_c)         &=&-F_\alpha'(r_c)
 \end{array}
 \eeq
 A 3$^{rd}$ degree polynomial of the form
 \beq
-S(r) = A(r-r_1)^2 + B(r-r_1)^3
+S_F(r) = A(r-r_1)^2 + B(r-r_1)^3
 \eeq
 fulfills these requirements. The constants A and B are given by the
 boundary condition at $r_c$: 
 \beq
 \begin{array}{rcl}
 \vspace{2mm}
-A &~=~& -\displaystyle
+A &~=~& -\alpha \, \displaystyle
         \frac{(\alpha+4)r_c~-~(\alpha+1)r_1} {r_c^{\alpha+2}~(r_c-r_1)^2} \\
-B &~=~& \displaystyle
+B &~=~& \alpha \, \displaystyle
         \frac{(\alpha+3)r_c~-~(\alpha+1)r_1}{r_c^{\alpha+2}~(r_c-r_1)^3}
 \end{array}
 \eeq
@@ -328,42 +321,47 @@ F_s(r) = \frac{\alpha}{r^{\alpha+1}} + A(r-r_1)^2 + B(r-r_1)^3
 \eeq
 and the potential function reads:
 \beq
-\Phi(r) = \frac{1}{r^\alpha} - \frac{A}{3} (r-r_1)^3 - \frac{B}{4} (r-r_1)^4 - C
+V_s(r) = \frac{1}{r^\alpha} - \frac{A}{3} (r-r_1)^3 - \frac{B}{4} (r-r_1)^4 - C
 \eeq
 where 
 \beq
 C =  \frac{1}{r_c^\alpha} - \frac{A}{3} (r_c-r_1)^3 - \frac{B}{4} (r_c-r_1)^4
 \eeq
 
-When $r_1$ = 0, the modified Coulomb force function is
+The {\gromacs} {\bf potential-switch} function $S_V(r)$ scales the potential between
+$r_1$ and $r_c$, and has similar boundary conditions, intended to produce
+smoothly-varying potential and forces:
 \beq
- F_s(r) = \frac{1}{r^2} - \frac{5 r^2}{r_c^4} + \frac{4 r^3}{r_c^5}
+\begin{array}{rcl}
+S_V(r_1)          &=&1 \\
+S_V'(r_1)         &=&0 \\
+S_V''(r_1)        &=&0 \\
+S_V(r_c)          &=&0 \\
+S_V'(r_c)         &=&0 \\
+S_V''(r_c)        &=&0
+\end{array}
 \eeq
-which is identical to the {\em \index{parabolic force}} 
-function recommended to be used as a short-range function in 
-conjunction with a \swapindex{Poisson}{solver} 
-for the long-range part~\cite{Berendsen93a}.
-The modified Coulomb potential function is:
-\beq
-\Phi(r) = \frac{1}{r} - \frac{5}{3r_c} + \frac{5r^3}{3r_c^4} - \frac{r^4}{r_c^5}
-\eeq
-See also \figref{shift}.
 
-\begin{figure}
-\centerline{\includegraphics[width=10cm]{plots/shiftf}}
-\caption[The Coulomb Force, Shifted Force and Shift Function
-$S(r)$,.]{The Coulomb Force, Shifted Force and Shift Function $S(r)$,
-using r$_1$ = 2 and r$_c$ = 4.} 
-\label{fig:shift}
-\end{figure}
+The fifth-degree polynomial that has these properties is
+\beq
+S_V(r; r_1, r_c) = \frac{1 - 10(r-r_1)^3(r_c-r_1)^2 + 15(r-r_1)^4(r_c-r_1) - 6(r-r_1)}{(r_c-r_1)^5}
+\eeq
+
+This implementation is found in several other simulation
+packages,\cite{Ohmine1988,Kitchen1990,Guenot1993} but differs from
+that in CHARMM.\cite{Steinbach1994} Switching the potential leads to
+artificially large forces in the switching region, therefore it is not
+recommended to switch Coulomb interactions using this
+function,\cite{Spoel2006a} but switching Lennard-Jones interactions
+using this function produces acceptable results.
 
 \subsection{Modified short-range interactions with Ewald summation}
 When Ewald summation\index{Ewald sum} or \seeindex{particle-mesh
 Ewald}{PME}\index{Ewald, particle-mesh} is used to calculate the
 long-range interactions, the 
-short-range Coulomb potential must also be modified, similar to the
-switch function above. In this case the short range potential is given
-by:
+short-range Coulomb potential must also be modified. Here the potential
+is switched to (nearly) zero at the cut-off, instead of the force.
+In this case the short range potential is given by:
 \beq
 V(r) = f \frac{\mbox{erfc}(\beta r_{ij})}{r_{ij}} q_i q_j,
 \eeq
@@ -446,7 +444,7 @@ distance. The functional form is:
 See also \figref{morse}, and the corresponding force is:
 \beq
 \begin{array}{rcl}
-\displaystyle {\bf F}_{morse} ({\bf r}_{ij})&=&2 D_{ij} \beta_{ij} r_{ij} \exp(-\beta_{ij}(r_{ij}-b_{ij})) * \\
+\displaystyle {\bf F}_{morse} ({\bf r}_{ij})&=&2 D_{ij} \beta_{ij} \exp(-\beta_{ij}(r_{ij}-b_{ij})) * \\
 \displaystyle \: & \: &[1 - \exp(-\beta_{ij}(r_{ij}-b_{ij}))] \frac{\displaystyle {\bf r}_{ij}}{\displaystyle r_{ij}},
 \end{array}
 \eeq
@@ -733,7 +731,7 @@ this will never cause problems.
 force constants in kJ/mol/rad$^2$.
 
 \begin{figure}
-\centerline{\includegraphics[width=8cm]{plots/f-imps}}
+\centerline{\includegraphics[width=10cm]{plots/f-imps.pdf}}
 \caption{Improper dihedral potential.}
 \label{fig:imps}
 \end{figure}
@@ -856,7 +854,7 @@ or four~\cite{Jorgensen2005a} cosine terms of a Fourier series.
 In {\gromacs} the four term function is implemented:
 \beq
 V_{F} (\phi_{ijkl}) ~=~ \frac{1}{2} \left[C_1(1+\cos(\phi)) + C_2(
-1-\cos(2\phi)) + C_3(1+\cos(3\phi)) + C_4(1+\cos(4\phi))\right],
+1-\cos(2\phi)) + C_3(1+\cos(3\phi)) + C_4(1-\cos(4\phi))\right],
 \eeq
 %\ifthenelse{\equal{\gmxlite}{1}}{}{
 Internally, {\gromacs}
@@ -975,13 +973,13 @@ and one that does not (type 9).
 For details see \tabref{topfile2}.
 The table files are supplied to the {\tt mdrun} program.
 After the table file name an underscore, the letter ``b'' for bonds,
-``a'' for angles or ``d'' for dihedrals and the table number are appended.
-For example, for a bond with $n=0$ (and using the default table file name)
-the table is read from the file {\tt table_b0.xvg}.  Multiple tables can be
-supplied simply by using different values of $n$, and are applied to the appropriate
+``a'' for angles or ``d'' for dihedrals and the table number must be appended.
+For example, a tabulated bond with $n=0$ can be read from the file {\tt table_b0.xvg}.
+Multiple tables can be
+supplied simply by adding files with different values of $n$, and are applied to the appropriate
 bonds, as specified in the topology (\tabref{topfile2}).
-The format for the table files is three columns with $x$, $f(x)$, $-f'(x)$,
-where $x$ should be uniformly-spaced. Requirements for entries in the topology
+The format for the table files is three fixed-format columns of any suitable width. These columns must contain $x$, $f(x)$, $-f'(x)$,
+and the values of $x$ should be uniformly spaced. Requirements for entries in the topology
 are given in~\tabref{topfile2}. 
 The setup of the tables is as follows:
 \\{\bf bonds}:
@@ -1757,7 +1755,7 @@ of which the charge varies with $\LAM$ is:
 V_c &=& \frac{f}{\epsrf \rij}\left[\LL q_i^A q_j^A + \LAM\, q_i^B q_j^B\right] \\
 \dvdl{V_c}&=& \frac{f}{\epsrf \rij}\left[- q_i^A q_j^A + q_i^B q_j^B\right]
 \eea
-where $f = \frac{1}{4\pi \varepsilon_0} = 138.935\,485$ (see \chref{defunits}).
+where $f = \frac{1}{4\pi \varepsilon_0} = \electricConvFactorValue$ (see \chref{defunits}).
 
 \subsubsection{Coulomb interaction with \normindex{reaction field}}
 The Coulomb interaction including a reaction field, between two particles 
@@ -1927,14 +1925,17 @@ and close to 0 and/or 1 with $p=2$. Lowering {\tt\mbox{sc-sigma}} will decrease
 this effect, but it will also increase the interactions with hydrogens
 relative to the other interactions in the soft-core state.
 
-When soft core potentials are selected (by setting {\tt sc-alpha} \textgreater
+When soft-core potentials are selected (by setting {\tt sc-alpha} \textgreater
 0), and the Coulomb and Lennard-Jones potentials are turned on or off
 sequentially, then the Coulombic interaction is turned off linearly,
-rather than using soft core interactions, which should be less
-statistically noisy in most cases.  This behavior can be overwritten
-by using the mdp option {\tt sc-coul} to {\tt yes}. Additionally, the
-soft-core interaction potential is only applied when either the A or B
-state has zero interaction potential.  If both A and B states have
+rather than using soft-core interactions, which should be less
+statistically noisy in most cases. This behavior can be overwritten
+by using the mdp option {\tt sc-coul} to {\tt yes}. Note that the {\tt sc-coul}
+is only taken into account when lambda states are used, not with
+{\tt couple-lambda0}~/ {\tt couple-lambda1}, and you can still turn off soft-core
+interactions by setting {\tt sc-alpha=0}. Additionally, the soft-core
+interaction potential is only applied when either the A or B
+state has zero interaction potential. If both A and B states have
 nonzero interaction potential, default linear scaling described above
 is used. When both Coulombic and Lennard-Jones interactions are turned
 off simultaneously, a soft-core potential is used, and a hydrogen is
@@ -2029,47 +2030,12 @@ type selectors (termed {\tt vdwtype} and {\tt coulombtype}) and two
 parameters, for a total of six non-bonded interaction parameters. See
 the User Guide for a complete description of these parameters.
 
-The neighbor searching (NS) can be performed using a single-range, or a twin-range 
-approach. Since the former is merely a special case of the latter, we will 
-discuss the more general twin-range. In this case, NS is described by two
-radii: {\tt rlist} and max({\tt rcoulomb},{\tt rvdw}).
-Usually one builds the neighbor list every 10 time steps
-or every 20 fs (parameter {\tt nstlist}). In the neighbor list, all interaction 
-pairs that  fall within {\tt rlist} are stored. Furthermore, the 
-interactions between pairs that do not
-fall within {\tt rlist} but do fall within max({\tt rcoulomb},{\tt rvdw})
-are computed during NS.  The
-forces and energy are stored separately and added to short-range forces
-at every time step between successive NS. If {\tt rlist} = 
-max({\tt rcoulomb},{\tt rvdw}), no forces
-are evaluated during neighbor list generation.
-The \normindex{virial} is calculated from the sum of the short- and
-long-range forces.
-This means that the virial can be slightly asymmetrical at non-NS steps.
-When mdrun is compiled to use mixed precision, the virial is almost always asymmetrical because the
-off-diagonal elements are about as large as each element in the sum.
-In most cases this is not really a problem, since the fluctuations in the
-virial can be 2 orders of magnitude larger than the average.
-
-Except for the plain cut-off,
-all of the interaction functions in \tabref{funcparm}
-require that neighbor searching be done with a larger radius than the $r_c$
+In the group cut-off scheme, all of the interaction functions in \tabref{funcparm}
+require that neighbor searching be done with a radius at least as large as the $r_c$
 specified for the functional form, because of the use of charge groups.
 The extra radius is typically of the order of 0.25 nm (roughly the 
 largest distance between two atoms in a charge group plus the distance a 
 charge group can diffuse within neighbor list updates).
-
-%If your charge groups are very large it may be interesting to turn off charge
-%groups, by setting the option 
-%{\tt bAtomList = yes} in your {\tt grompp.mdp} file.
-%In this case only a small extra radius to account for diffusion needs to be 
-%added (0.1 nm). Do not however use this together with the plain cut-off
-%method, as it will generate large artifacts (\secref{cg}).
-%In summary, there are four parameters that describe NS behavior:
-%{\tt nstlist} (update frequency in number of time steps),
-%{\tt bAtomList} (whether or not charge groups are used to generate neighbor list, the default is to use charge groups, so {\tt bAtomList = no}),
-%{\tt rshort} and {\tt rlong} which are the two radii {\rs} and {\rl}
-%described above.
 
 \begin{table}[ht]
 \centering
@@ -2522,33 +2488,9 @@ It is recommended to optimize the parameters for calculation of
 electrostatic interaction such as PME grid dimensions and cut-off radii.
 This is particularly relevant to do before launching long production runs.
 
-{\gromacs} includes a special tool, {\tt g_tune_pme}, which automates the 
-process of selecting the optimal size of the grid and number of PME-only
-notes.
-
-%
-% Temporarily removed since I am not sure about the state of the testlr
-% program...
-%
-%It is possible to test the accuracy of your settings using the program
-%{\tt\normindex{testlr}} in the {\tt src/gmxlib} dir. This program computes
-%forces and potentials using PPPM and an Ewald implementation and gives the
-%absolute and RMS errors in both:
-%\begin{verbatim}
-%ERROR ANALYSIS
-%Error:         Max Abs         RMS
-%Force            1.132       0.251
-%Potential        0.113       0.035
-%\end{verbatim}
-%{\bf Note:} these numbers were generated using a grid spacing of
-%0.058 nm and $r_c$ = 1.0 nm.
-%
-%You can see what the accuracy is without optimizing the
-%$\hat{G}(k)$ function, if you pass the {\tt -ghat} option to {\tt
-%testlr}. Try it if you think the {\tt mk_ghat} procedure is a waste
-%of time.
-%} % Brace matches ifthenelse test for gmxlite
-
+{\tt gmx mdrun} will automatically do a lot of PME optimization, and
+{\gromacs} also includes a special tool, {\tt gmx tune_pme}, which
+automates the process of selecting the optimal number of PME-only ranks.
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
@@ -2822,7 +2764,7 @@ improve upon the automatic load-balancing used by {\tt mdrun}.
 A force field is built up from two distinct components:
 \begin{itemize}
 \item The set of equations (called the {\em
-    \index{potential function}s}) used to generate the potential
+potential functions}\index{potential function}) used to generate the potential
   energies and their derivatives, the forces. These are described in
   detail in the previous chapter.
 \item The parameters used in this set of equations. These are not
@@ -2940,6 +2882,8 @@ of the blocks. {\bf Note} that all {\gromacs} programs can read compressed
 When selecting the CHARMM force field in {\tt \normindex{pdb2gmx}} the default option is to use \normindex{CMAP} (for torsional correction map). To exclude CMAP, use {\tt -nocmap}. The basic form of the CMAP term implemented in {\gromacs} is a function of the $\phi$ and $\psi$ backbone torsion angles. This term is defined in the {\tt .rtp} file by a {\tt [ cmap ]} statement at the end of each residue supporting CMAP. The following five atom names define the two torsional angles. Atoms 1-4 define $\phi$, and atoms 2-5 define $\psi$. The corresponding atom types are then matched to the correct CMAP type in the {\tt cmap.itp} file that contains the correction maps.
 
 A port of the CHARMM36 force field for use with GROMACS is also available at \url{http://mackerell.umaryland.edu/charmm_ff.shtml#gromacs}.
+
+For branched polymers or other topologies not supported by {\tt \normindex{pdb2gmx}}, it is possible to use TopoTools~\cite{kohlmeyer2016} to generate a {\gromacs} top file.
 
 \subsection{Coarse-grained force fields}
 \index{force-field, coarse-grained}

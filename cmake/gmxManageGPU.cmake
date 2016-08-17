@@ -1,7 +1,7 @@
 #
 # This file is part of the GROMACS molecular simulation package.
 #
-# Copyright (c) 2012,2013,2014,2015, by the GROMACS development team, led by
+# Copyright (c) 2012,2013,2014,2015,2016, by the GROMACS development team, led by
 # Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
 # and including many others, as listed in the AUTHORS file in the
 # top-level source directory and at http://www.gromacs.org.
@@ -74,6 +74,13 @@ if(GMX_GPU OR GMX_GPU_AUTO AND CAN_RUN_CUDA_FIND_PACKAGE)
         # Noise is acceptable when there is a GPU or the user required one.
         set(FIND_CUDA_QUIETLY QUIET)
     endif()
+
+    # Cmake tries to use the static cuda runtime by default,
+    # but this leads to unusable GPU builds on OS X.
+    if(APPLE)
+        set(CUDA_USE_STATIC_CUDA_RUNTIME OFF CACHE STRING "Use the static version of the CUDA runtime library if available")
+    endif()
+
     find_package(CUDA ${REQUIRED_CUDA_VERSION} ${FIND_CUDA_QUIETLY})
 
     # Cmake 2.8.12 (and CMake 3.0) introduced a new bug where the cuda
@@ -137,7 +144,7 @@ ${_msg}")
     if (NOT CUDA_FOUND)
         if (GMX_GPU_AUTO)
             # Disable GPU acceleration in auto mode
-            message(STATUS "No compatible CUDA toolkit found (v4.0+), disabling native GPU acceleration")
+            message(STATUS "No compatible CUDA toolkit found (v5.0+), disabling native GPU acceleration")
             set_property(CACHE GMX_GPU PROPERTY VALUE OFF)
             set(CUDA_NOTFOUND_AUTO ON)
         else()
@@ -154,19 +161,32 @@ endif()
 
 # Try to find NVML if a GPU accelerated binary should be build.
 if (GMX_GPU)
+    if (DEFINED NVML_LIBRARY)
+        set(NVML_FIND_QUIETLY TRUE)
+    endif()
     find_package(NVML)
-    if(NVML_FOUND)
-        include_directories(${NVML_INCLUDE_DIR})
-        set(HAVE_NVML 1)
-        list(APPEND GMX_EXTRA_LIBRARIES ${NVML_LIBRARY})
-    endif(NVML_FOUND)
+    option(GMX_USE_NVML "Use NVML support for better CUDA performance" ${NVML_FOUND})
+    mark_as_advanced(GMX_USE_NVML)
+    if(GMX_USE_NVML)
+        if(NVML_FOUND)
+            include_directories(SYSTEM ${NVML_INCLUDE_DIR})
+            set(HAVE_NVML 1)
+            list(APPEND GMX_EXTRA_LIBRARIES ${NVML_LIBRARY})
+        else()
+            message(FATAL_ERROR "NVML support was required, but was not detected. Please consult the install guide.")
+        endif()
+    endif()
 endif()
 
 # Annoyingly enough, FindCUDA leaves a few variables behind as non-advanced.
 # We need to mark these advanced outside the conditional, otherwise, if the
 # user turns GMX_GPU=OFF after a failed cmake pass, these variables will be
 # left behind in the cache.
-mark_as_advanced(CUDA_BUILD_CUBIN CUDA_BUILD_EMULATION CUDA_SDK_ROOT_DIR CUDA_VERBOSE_BUILD)
+mark_as_advanced(CUDA_BUILD_CUBIN CUDA_BUILD_EMULATION CUDA_SDK_ROOT_DIR CUDA_VERBOSE_BUILD # cmake 2.8.9 still spews these, check again when requirements change
+                 CUDA_SEPARABLE_COMPILATION      # not present at least with cmake 3.2, remove when required
+                 CUDA_USE_STATIC_CUDA_RUNTIME    # since cmake 3.3
+                 CUDA_dl_LIBRARY CUDA_rt_LIBRARY # - || -
+                 )
 if(NOT GMX_GPU)
     mark_as_advanced(CUDA_TOOLKIT_ROOT_DIR)
 endif()
@@ -208,16 +228,72 @@ macro(get_cuda_compiler_info COMPILER_INFO COMPILER_FLAGS)
     endif()
 endmacro ()
 
+include(CMakeDependentOption)
+include(gmxOptionUtilities)
 macro(gmx_gpu_setup)
-    # set up nvcc options
-    include(gmxManageNvccConfig)
+    if(GMX_GPU)
+        if(NOT CUDA_NVCC_EXECUTABLE)
+            message(FATAL_ERROR "nvcc is required for a CUDA build, please set CUDA_TOOLKIT_ROOT_DIR appropriately")
+        endif()
 
-    # Atomic operations used for polling wait for GPU
-    # (to avoid the cudaStreamSynchronize + ECC bug).
-    # ThreadMPI is now always included. Thus, we don't check for Atomics anymore here.
+        # set up nvcc options
+        include(gmxManageNvccConfig)
 
-    # no OpenMP is no good!
-    if(NOT GMX_OPENMP)
-        message(WARNING "To use GPU acceleration efficiently, mdrun requires OpenMP multi-threading. Without OpenMP a single CPU core can be used with a GPU which is not optimal. Note that with MPI multiple processes can be forced to use a single GPU, but this is typically inefficient. You need to set both C and C++ compilers that support OpenMP (CC and CXX environment variables, respectively) when using GPUs.")
+        gmx_check_if_changed(_cuda_version_changed CUDA_VERSION)
+
+        # Generate CUDA RT API version string which will end up in config.h
+        # We do this because nvcc is silly enough to not define its own version
+        # (which should match the CUDA runtime API version AFAICT) and we want to
+        # avoid creating the fragile dependency on cuda_runtime_api.h.
+        #
+        # NOTE: CUDA v7.5 is expected to have nvcc define it own version, so in the
+        # future we should switch to using that version string instead of our own.
+        if (NOT GMX_CUDA_VERSION OR _cuda_version_changed)
+            MATH(EXPR GMX_CUDA_VERSION "${CUDA_VERSION_MAJOR}*1000 + ${CUDA_VERSION_MINOR}*10")
+        endif()
+
+        if (_cuda_version_changed)
+            # check the generated CUDA API version against the one present in cuda_runtime_api.h
+            try_compile(_get_cuda_version_compile_res
+                ${CMAKE_BINARY_DIR}
+                ${CMAKE_SOURCE_DIR}/cmake/TestCUDAVersion.c
+                COMPILE_DEFINITIONS "-DGMX_CUDA_VERSION=${GMX_CUDA_VERSION}"
+                CMAKE_FLAGS "-DINCLUDE_DIRECTORIES=${CUDA_TOOLKIT_INCLUDE}"
+                OUTPUT_VARIABLE _get_cuda_version_compile_out)
+
+            if (NOT _get_cuda_version_compile_res)
+                if (_get_cuda_version_compile_out MATCHES "CUDA version mismatch")
+                    message(FATAL_ERROR "The CUDA API version generated internally from the compiler version does not match the version reported by cuda.h. This means either that the CUDA detection picked up mismatching nvcc and the CUDA headers (likely not part of the same toolkit installation) or that there is an error in the internal version generation. If you are sure that it is not the former causing the error (check the relevant cache variables), define the GMX_CUDA_VERSION cache variable to work around the error.")
+                else()
+                    message(FATAL_ERROR "Could not detect CUDA runtime API version")
+                endif()
+            endif()
+        endif()
+
+        # no OpenMP is no good!
+        if(NOT GMX_OPENMP)
+            message(WARNING "To use GPU acceleration efficiently, mdrun requires OpenMP multi-threading. Without OpenMP a single CPU core can be used with a GPU which is not optimal. Note that with MPI multiple processes can be forced to use a single GPU, but this is typically inefficient. You need to set both C and C++ compilers that support OpenMP (CC and CXX environment variables, respectively) when using GPUs.")
+        endif()
+    endif() # GMX_GPU
+
+    cmake_dependent_option(GMX_CUDA_NB_SINGLE_COMPILATION_UNIT
+        "Whether to compile the CUDA non-bonded module using a single compilation unit." ON
+        "GMX_GPU" ON)
+    mark_as_advanced(GMX_CUDA_NB_SINGLE_COMPILATION_UNIT)
+
+    if (GMX_GPU)
+        # We need to use single compilation unit for kernels:
+        # - when compiling for CC 2.x devices where buggy kernel code is generated
+        gmx_check_if_changed(_gmx_cuda_target_changed GMX_CUDA_TARGET_SM GMX_CUDA_TARGET_COMPUTE CUDA_NVCC_FLAGS)
+        if(_gmx_cuda_target_changed OR NOT GMX_GPU_DETECTION_DONE)
+            if((NOT GMX_CUDA_TARGET_SM AND NOT GMX_CUDA_TARGET_COMPUTE) OR
+               (GMX_CUDA_TARGET_SM MATCHES "2[01]" OR GMX_CUDA_TARGET_COMPUTE MATCHES "2[01]"))
+               message(STATUS "Enabling single compilation unit for the CUDA non-bonded module. Multiple compilation units are not compatible with CC 2.x devices, to enable the feature specify only CC >=3.0 target architectures in GMX_CUDA_TARGET_SM/GMX_CUDA_TARGET_COMPUTE.")
+                set_property(CACHE GMX_CUDA_NB_SINGLE_COMPILATION_UNIT PROPERTY VALUE ON)
+            else()
+                message(STATUS "Enabling multiple compilation units for the CUDA non-bonded module.")
+                set_property(CACHE GMX_CUDA_NB_SINGLE_COMPILATION_UNIT PROPERTY VALUE OFF)
+            endif()
+        endif()
     endif()
 endmacro()

@@ -3,7 +3,7 @@
  *
  * Copyright (c) 1991-2000, University of Groningen, The Netherlands.
  * Copyright (c) 2001-2004, The GROMACS development team.
- * Copyright (c) 2011,2014, by the GROMACS development team, led by
+ * Copyright (c) 2011,2014,2015, by the GROMACS development team, led by
  * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
  * and including many others, as listed in the AUTHORS file in the
  * top-level source directory and at http://www.gromacs.org.
@@ -37,6 +37,8 @@
 #ifndef GMX_TOPOLOGY_TOPOLOGY_H
 #define GMX_TOPOLOGY_TOPOLOGY_H
 
+#include <cstdio>
+
 #include "gromacs/math/vectypes.h"
 #include "gromacs/topology/atoms.h"
 #include "gromacs/topology/block.h"
@@ -53,14 +55,16 @@ enum {
     egcORFIT, egcQMMM,
     egcNR
 };
+/* Names corresponding to groups */
+extern const char *gtypes[egcNR+1];
 
 typedef struct gmx_moltype_t
 {
-    char          **name;       /* Name of the molecule type            */
-    t_atoms         atoms;      /* The atoms                            */
-    t_ilist         ilist[F_NRE];
-    t_block         cgs;        /* The charge groups                    */
-    t_blocka        excls;      /* The exclusions                       */
+    char          **name;         /* Name of the molecule type            */
+    t_atoms         atoms;        /* The atoms in this molecule           */
+    t_ilist         ilist[F_NRE]; /* Interaction list with local indices  */
+    t_block         cgs;          /* The charge groups                    */
+    t_blocka        excls;        /* The exclusions                       */
 } gmx_moltype_t;
 
 typedef struct gmx_molblock_t
@@ -99,13 +103,18 @@ typedef struct gmx_mtop_t
     gmx_moltype_t   *moltype;
     int              nmolblock;
     gmx_molblock_t  *molblock;
+    gmx_bool         bIntermolecularInteractions; /* Are there intermolecular
+                                                   * interactions?            */
+    t_ilist         *intermolecular_ilist;        /* List of intermolecular interactions
+                                                   * using system wide atom indices,
+                                                   * either NULL or size F_NRE           */
     int              natoms;
-    int              maxres_renum; /* Parameter for residue numbering      */
-    int              maxresnr;     /* The maximum residue number in moltype */
-    t_atomtypes      atomtypes;    /* Atomtype properties                  */
-    t_block          mols;         /* The molecules                        */
+    int              maxres_renum;                /* Parameter for residue numbering      */
+    int              maxresnr;                    /* The maximum residue number in moltype */
+    t_atomtypes      atomtypes;                   /* Atomtype properties                  */
+    t_block          mols;                        /* The molecules                        */
     gmx_groups_t     groups;
-    t_symtab         symtab;       /* The symbol table                     */
+    t_symtab         symtab;                      /* The symbol table                     */
 } gmx_mtop_t;
 
 /* The mdrun node-local topology struct, completely written out */
@@ -120,14 +129,15 @@ typedef struct gmx_localtop_t
 /* The old topology struct, completely written out, used in analysis tools */
 typedef struct t_topology
 {
-    char          **name;       /* Name of the topology                 */
-    t_idef          idef;       /* The interaction function definition  */
-    t_atoms         atoms;      /* The atoms                            */
-    t_atomtypes     atomtypes;  /* Atomtype properties                  */
-    t_block         cgs;        /* The charge groups                    */
-    t_block         mols;       /* The molecules                        */
-    t_blocka        excls;      /* The exclusions                       */
-    t_symtab        symtab;     /* The symbol table                     */
+    char          **name;                        /* Name of the topology                 */
+    t_idef          idef;                        /* The interaction function definition  */
+    t_atoms         atoms;                       /* The atoms                            */
+    t_atomtypes     atomtypes;                   /* Atomtype properties                  */
+    t_block         cgs;                         /* The charge groups                    */
+    t_block         mols;                        /* The molecules                        */
+    gmx_bool        bIntermolecularInteractions; /* Inter.mol. int. ?   */
+    t_blocka        excls;                       /* The exclusions                       */
+    t_symtab        symtab;                      /* The symbol table                     */
 } t_topology;
 
 void init_mtop(gmx_mtop_t *mtop);
@@ -139,6 +149,10 @@ void done_top(t_topology *top);
 
 t_atoms *mtop2atoms(gmx_mtop_t *mtop);
 /* generate a t_atoms struct for the system from gmx_mtop_t */
+
+void pr_mtop(FILE *fp, int indent, const char *title, const gmx_mtop_t *mtop,
+             gmx_bool bShowNumbers);
+void pr_top(FILE *fp, int indent, const char *title, const t_topology *top, gmx_bool bShowNumbers);
 
 #ifdef __cplusplus
 }

@@ -1,7 +1,7 @@
 #
 # This file is part of the GROMACS molecular simulation package.
 #
-# Copyright (c) 2013,2014,2015, by the GROMACS development team, led by
+# Copyright (c) 2013,2014,2015,2016, by the GROMACS development team, led by
 # Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
 # and including many others, as listed in the AUTHORS file in the
 # top-level source directory and at http://www.gromacs.org.
@@ -32,20 +32,31 @@
 # To help us fund GROMACS development, we humbly ask that you cite
 # the research papers on the package. Check out http://www.gromacs.org.
 
+# make an "object library" for code that we re-use for both kinds of tests
+add_library(mdrun_test_objlib OBJECT
+    mdruncomparisonfixture.cpp
+    moduletest.cpp
+    terminationhelper.cpp
+    )
+
 set(testname "MdrunTests")
 set(exename "mdrun-test")
 
-gmx_build_unit_test(
-    ${testname}
+gmx_add_gtest_executable(
     ${exename}
     # files with code for tests
+    tabulated_bonded_interactions.cpp
+    energyreader.cpp
+    grompp.cpp
     rerun.cpp
     trajectory_writing.cpp
+    trajectoryreader.cpp
     compressed_x_output.cpp
     swapcoords.cpp
     interactiveMD.cpp
-    # files with code for test fixtures
-    moduletest.cpp
+    termination.cpp
+    # pseudo-library for code for testing mdrun
+    $<TARGET_OBJECTS:mdrun_test_objlib>
     # pseudo-library for code for mdrun
     $<TARGET_OBJECTS:mdrun_objlib>
     )
@@ -57,15 +68,15 @@ gmx_register_integration_test(
 set(testname "MdrunMpiTests")
 set(exename "mdrun-mpi-test")
 
-gmx_build_unit_test(
-    ${testname}
-    ${exename}
+gmx_add_gtest_executable(
+    ${exename} MPI
     # files with code for tests
     multisim.cpp
     multisimtest.cpp
     replicaexchange.cpp
-    # files with code for test fixtures
-    moduletest.cpp
+    domain_decomposition.cpp
+    # pseudo-library for code for testing mdrun
+    $<TARGET_OBJECTS:mdrun_test_objlib>
     # pseudo-library for code for mdrun
     $<TARGET_OBJECTS:mdrun_objlib>
     )

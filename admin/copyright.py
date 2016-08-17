@@ -2,7 +2,7 @@
 #
 # This file is part of the GROMACS molecular simulation package.
 #
-# Copyright (c) 2013,2014, by the GROMACS development team, led by
+# Copyright (c) 2013,2014,2015,2016, by the GROMACS development team, led by
 # Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
 # and including many others, as listed in the AUTHORS file in the
 # top-level source directory and at http://www.gromacs.org.
@@ -38,7 +38,7 @@
 It is used internally by several bash scripts to do copyright-relates tasks,
 but can also be invoked directly for some rare use cases.
 
-See docs/dev-manual/uncrustify.md for more details.
+See docs/dev-manual/uncrustify.rst for more details.
 """
 
 import datetime
@@ -303,7 +303,7 @@ def select_comment_handler(override, filename):
             dummy, ext2 = os.path.splitext(root)
             if ext2:
                 ext = ext2
-        if ext in ('.c', '.cu', '.cpp', '.h', '.cuh', '.y', '.l', '.pre', '.bm'):
+        if ext in ('.c', '.cu', '.cpp', '.cl', '.h', '.cuh', '.clh', '.y', '.l', '.pre', '.bm'):
             filetype = 'c'
         elif ext in ('.tex',):
             filetype = 'tex'

@@ -39,16 +39,34 @@
 #include "gromacs/utility/basedefinitions.h"
 #include "gromacs/utility/real.h"
 
-#ifdef __cplusplus
-extern "C" {
-#endif
-
+struct pme_solve_work_t;
 struct gmx_pme_t;
 
-void get_pme_ener_vir_q(const struct gmx_pme_t *pme, int nthread,
+/*! \brief Allocates array of work structures
+ *
+ * Note that work is the address of a pointer allocated by
+ * this function. Upon return it will point at
+ * an array of work structures.
+ */
+void pme_init_all_work(struct pme_solve_work_t **work, int nthread, int nkx);
+
+/*! \brief Frees array of work structures
+ *
+ * Frees work and sets it to NULL. */
+void pme_free_all_work(struct pme_solve_work_t **work, int nthread);
+
+/*! \brief Get energy and virial for electrostatics
+ *
+ * Note that work is an array of work structures
+ */
+void get_pme_ener_vir_q(struct pme_solve_work_t *work, int nthread,
                         real *mesh_energy, matrix vir);
 
-void get_pme_ener_vir_lj(const struct gmx_pme_t *pme, int nthread,
+/*! \brief Get energy and virial for L-J
+ *
+ * Note that work is an array of work structures
+ */
+void get_pme_ener_vir_lj(struct pme_solve_work_t *work, int nthread,
                          real *mesh_energy, matrix vir);
 
 int solve_pme_yzx(struct gmx_pme_t *pme, t_complex *grid,
@@ -59,9 +77,5 @@ int solve_pme_yzx(struct gmx_pme_t *pme, t_complex *grid,
 int solve_pme_lj_yzx(struct gmx_pme_t *pme, t_complex **grid, gmx_bool bLB,
                      real ewaldcoeff, real vol,
                      gmx_bool bEnerVir, int nthread, int thread);
-
-#ifdef __cplusplus
-}
-#endif
 
 #endif

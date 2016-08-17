@@ -50,9 +50,9 @@
 #include "gromacs/math/units.h"
 #include "names.h"
 #include "txtdump.h"
-#include "gromacs/fileio/trnio.h"
+#include "gromacs/fileio/trrio.h"
 #include "gromacs/topology/symtab.h"
-#include "gromacs/fileio/strdb.h"
+#include "gromacs/utility/strdb.h"
 #include "gromacs/fileio/confio.h"
 
 #define TET   109.47
@@ -493,7 +493,7 @@ int main(int argc,char *argv[])
     "If an input file is given it is interpreted as a series of oxygen",
     "coordinates the distance between which can be scaled by the odist flag.",
     "The program then adds hydrogens to the oxygens in random orientation",
-    "but with proper OH distances and HOH angle. This feature allows to",
+    "but with proper OH distances and HOH angle. This feature allows one to",
     "build water clusters based on oxygen coordinates only."
   };
   static int nx=1,ny=1,nz=1;

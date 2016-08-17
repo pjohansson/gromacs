@@ -37,13 +37,16 @@
 
 #include "gmxpre.h"
 
-#include "pme-gather.h"
-
-#include "gromacs/ewald/pme-internal.h"
-#include "gromacs/ewald/pme-simd.h"
-#include "gromacs/ewald/pme-spline-work.h"
 #include "gromacs/math/vec.h"
+#include "gromacs/simd/simd.h"
+#include "gromacs/utility/basedefinitions.h"
 #include "gromacs/utility/smalloc.h"
+
+#include "pme-internal.h"
+#include "pme-simd.h"
+#include "pme-spline-work.h"
+
+using namespace gmx; // TODO: Remove when this file is moved into gmx namespace
 
 #define DO_FSPLINE(order)                      \
     for (ithx = 0; (ithx < order); ithx++)              \
@@ -78,27 +81,24 @@ void gather_f_bsplines(struct gmx_pme_t *pme, real *grid,
                        real scale)
 {
     /* sum forces for local particles */
-    int                     nn, n, ithx, ithy, ithz, i0, j0, k0;
-    int                     index_x, index_xy;
-    int                     nx, ny, nz, pny, pnz;
-    int                 *   idxptr;
-    real                    tx, ty, dx, dy, coefficient;
-    real                    fx, fy, fz, gval;
-    real                    fxy1, fz1;
-    real                   *thx, *thy, *thz, *dthx, *dthy, *dthz;
-    int                     norder;
-    real                    rxx, ryx, ryy, rzx, rzy, rzz;
-    int                     order;
+    int    nn, n, ithx, ithy, ithz, i0, j0, k0;
+    int    index_x, index_xy;
+    int    nx, ny, nz, pny, pnz;
+    int   *idxptr;
+    real   tx, ty, dx, dy, coefficient;
+    real   fx, fy, fz, gval;
+    real   fxy1, fz1;
+    real  *thx, *thy, *thz, *dthx, *dthy, *dthz;
+    int    norder;
+    real   rxx, ryx, ryy, rzx, rzy, rzz;
+    int    order;
 
 #ifdef PME_SIMD4_SPREAD_GATHER
     // cppcheck-suppress unreadVariable cppcheck seems not to analyze code from pme-simd4.h
     struct pme_spline_work *work = pme->spline_work;
 #ifndef PME_SIMD4_UNALIGNED
-    real                    thz_buffer[GMX_SIMD4_WIDTH*3],  *thz_aligned;
-    real                    dthz_buffer[GMX_SIMD4_WIDTH*3], *dthz_aligned;
-
-    thz_aligned  = gmx_simd4_align_r(thz_buffer);
-    dthz_aligned = gmx_simd4_align_r(dthz_buffer);
+    GMX_ALIGNED(real, GMX_SIMD4_WIDTH)  thz_aligned[GMX_SIMD4_WIDTH*2];
+    GMX_ALIGNED(real, GMX_SIMD4_WIDTH)  dthz_aligned[GMX_SIMD4_WIDTH*2];
 #endif
 #endif
 
@@ -157,7 +157,7 @@ void gather_f_bsplines(struct gmx_pme_t *pme, real *grid,
 #define PME_GATHER_F_SIMD4_ALIGNED
 #define PME_ORDER 4
 #endif
-#include "gromacs/ewald/pme-simd4.h"
+#include "pme-simd4.h"
 #else
                     DO_FSPLINE(4);
 #endif
@@ -166,7 +166,7 @@ void gather_f_bsplines(struct gmx_pme_t *pme, real *grid,
 #ifdef PME_SIMD4_SPREAD_GATHER
 #define PME_GATHER_F_SIMD4_ALIGNED
 #define PME_ORDER 5
-#include "gromacs/ewald/pme-simd4.h"
+#include "pme-simd4.h"
 #else
                     DO_FSPLINE(5);
 #endif
