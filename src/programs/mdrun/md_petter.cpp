@@ -285,15 +285,12 @@ flow_collect_or_output(t_flow_container   *flowcr,
                        const t_state      *state,
                        const gmx_groups_t *groups)
 {
-    if (do_per_step(step, flowcr->step_collect))
-    {
-        collect_flow_data(flowcr, cr, mdatoms, state, groups);
+    collect_flow_data(flowcr, cr, mdatoms, state, groups);
 
-        if (do_per_step(step, flowcr->step_output) && step != ir->init_step)
-        {
-            output_flow_data(flowcr, cr, step);
-            reset_flow_data(flowcr);
-        }
+    if (do_per_step(step, flowcr->step_output) && step != ir->init_step)
+    {
+        output_flow_data(flowcr, cr, step);
+        reset_flow_data(flowcr);
     }
 }
 

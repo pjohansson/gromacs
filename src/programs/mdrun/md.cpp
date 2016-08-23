@@ -1724,7 +1724,10 @@ double gmx::do_md(FILE *fplog, t_commrec *cr, int nfile, const t_filenm fnm[],
         // Collect and output data at specified steps / PETTER
         if (bFlowOutput)
         {
-            flow_collect_or_output(flowcr, step, cr, ir, mdatoms, state, groups);
+            if (do_per_step(step, flowcr->step_collect))
+            {
+                flow_collect_or_output(flowcr, step, cr, ir, mdatoms, state, groups);
+            }
         }
 
         /* #######  SET VARIABLES FOR NEXT ITERATION IF THEY STILL NEED IT ###### */
