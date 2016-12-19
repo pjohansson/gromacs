@@ -41,6 +41,10 @@
 #include <cstdlib>
 #include <cstring>
 
+#include <array>
+#include <vector>
+#include <iostream>
+
 #include "gromacs/commandline/pargs.h"
 #include "gromacs/commandline/viewit.h"
 #include "gromacs/fileio/trxio.h"
@@ -60,495 +64,163 @@
 #include "gromacs/utility/gmxassert.h"
 #include "gromacs/utility/smalloc.h"
 
-typedef struct {
-    char *atomname;
-    int   nr_el;
-} t_electron;
+using namespace std;
 
-/****************************************************************************/
-/* This program calculates the partial density across the box.              */
-/* Peter Tieleman, Mei 1995                                                 */
-/****************************************************************************/
+using RVec = array<real, DIM>;
+using Frames = vector<vector<RVec>>;
 
-/* used for sorting the list */
-int compare(void *a, void *b)
+struct RLim {
+    bool rmin_set,
+         rmax_set;
+    rvec rmin,
+         rmax;
+};
+
+Frames collect_positions(const char             *fn,
+                         int              *grpindex,
+                         int               grpsize,
+                         t_topology             *top,
+                         vector<real>           &times,
+                         struct RLim     &rlim,
+                         const int               ePBC,
+                         const gmx_output_env_t *oenv)
 {
-    t_electron *tmp1, *tmp2;
-    tmp1 = (t_electron *)a; tmp2 = (t_electron *)b;
-
-    return std::strcmp(tmp1->atomname, tmp2->atomname);
-}
-
-int get_electrons(t_electron **eltab, const char *fn)
-{
-    char  buffer[256];  /* to read in a line   */
-    char  tempname[80]; /* buffer to hold name */
-    int   tempnr;
-
-    FILE *in;
-    int   nr;        /* number of atomstypes to read */
-    int   i;
-
-    if (!(in = gmx_ffopen(fn, "r")))
-    {
-        gmx_fatal(FARGS, "Couldn't open %s. Exiting.\n", fn);
-    }
-
-    if (NULL == fgets(buffer, 255, in))
-    {
-        gmx_fatal(FARGS, "Error reading from file %s", fn);
-    }
-
-    if (sscanf(buffer, "%d", &nr) != 1)
-    {
-        gmx_fatal(FARGS, "Invalid number of atomtypes in datafile\n");
-    }
-
-    snew(*eltab, nr);
-
-    for (i = 0; i < nr; i++)
-    {
-        if (fgets(buffer, 255, in) == NULL)
-        {
-            gmx_fatal(FARGS, "reading datafile. Check your datafile.\n");
-        }
-        if (sscanf(buffer, "%s = %d", tempname, &tempnr) != 2)
-        {
-            gmx_fatal(FARGS, "Invalid line in datafile at line %d\n", i+1);
-        }
-        (*eltab)[i].nr_el    = tempnr;
-        (*eltab)[i].atomname = gmx_strdup(tempname);
-    }
-    gmx_ffclose(in);
-
-    /* sort the list */
-    fprintf(stderr, "Sorting list..\n");
-    qsort ((void*)*eltab, nr, sizeof(t_electron),
-           (int(*)(const void*, const void*))compare);
-
-    return nr;
-}
-
-void center_coords(t_atoms *atoms, int *index_center, int ncenter,
-                   matrix box, rvec x0[])
-{
-    int  i, k, m;
-    real tmass, mm;
-    rvec com, shift, box_center;
-
-    tmass = 0;
-    clear_rvec(com);
-    for (k = 0; (k < ncenter); k++)
-    {
-        i = index_center[k];
-        if (i >= atoms->nr)
-        {
-            gmx_fatal(FARGS, "Index %d refers to atom %d, which is larger than natoms (%d).",
-                      k+1, i+1, atoms->nr);
-        }
-        mm     = atoms->atom[i].m;
-        tmass += mm;
-        for (m = 0; (m < DIM); m++)
-        {
-            com[m] += mm*x0[i][m];
-        }
-    }
-    for (m = 0; (m < DIM); m++)
-    {
-        com[m] /= tmass;
-    }
-    calc_box_center(ecenterDEF, box, box_center);
-    rvec_sub(com, box_center, shift);
-
-    /* Important - while the center was calculated based on a group, we should move all atoms */
-    for (i = 0; (i < atoms->nr); i++)
-    {
-        rvec_dec(x0[i], shift);
-    }
-}
-
-void calc_electron_density(const char *fn, int **index, int gnx[],
-                           double ***slDensity, int *nslices, t_topology *top,
-                           int ePBC,
-                           int axis, int nr_grps, real *slWidth,
-                           t_electron eltab[], int nr, gmx_bool bCenter,
-                           int *index_center, int ncenter,
-                           gmx_bool bRelative, const gmx_output_env_t *oenv)
-{
-    rvec        *x0;            /* coordinates without pbc */
-    matrix       box;           /* box (3x3) */
-    double       invvol;
-    int          natoms;        /* nr. atoms in trj */
+    int          num_atoms;
+    rvec        *x0;
+    matrix       box;
     t_trxstatus *status;
-    int          i, n,          /* loop indices */
-                 nr_frames = 0, /* number of frames */
-                 slice;         /* current slice */
-    t_electron  *found;         /* found by bsearch */
-    t_electron   sought;        /* thingie thought by bsearch */
-    real         boxSz, aveBox;
-    gmx_rmpbc_t  gpbc = NULL;
+    real         t;
 
-    real         t,
-                 z;
-
-    if (axis < 0 || axis >= DIM)
+    if (rlim.rmin_set || rlim.rmax_set)
     {
-        gmx_fatal(FARGS, "Invalid axes. Terminating\n");
+        fprintf(stderr, "\nLimits on coordinates to include were chosen.\n");
+        fprintf(stderr, "Checking final frame of trajectory for indices:\n");
     }
 
-    if ((natoms = read_first_x(oenv, &status, fn, &t, &x0, box)) == 0)
+    if ((num_atoms = read_first_x(oenv, &status, fn, &t, &x0, box)) == 0)
     {
         gmx_fatal(FARGS, "Could not read coordinates from statusfile\n");
     }
 
-    aveBox = 0;
-
-    if (!*nslices)
+    if (rlim.rmin_set || rlim.rmax_set)
     {
-        *nslices = static_cast<int>(box[axis][axis] * 10); /* default value */
-        fprintf(stderr, "\nDividing the box in %d slices\n", *nslices);
-    }
+        do {}
+        while (read_next_x(oenv, status, &t, x0, box));
 
-    snew(*slDensity, nr_grps);
-    for (i = 0; i < nr_grps; i++)
-    {
-        snew((*slDensity)[i], *nslices);
-    }
+        int new_grpsize = 0;
+        int *index_buf;
+        snew(index_buf, grpsize);
 
-    gpbc = gmx_rmpbc_init(&top->idef, ePBC, top->atoms.nr);
-    /*********** Start processing trajectory ***********/
-    do
-    {
-        gmx_rmpbc(gpbc, natoms, box, x0);
+        // Allow the use of -1.0 to not set specific limits along an axis
+        rlim.rmax[XX] = (rlim.rmax[XX] <= 0.0) ? box[XX][XX] : rlim.rmax[XX];
+        rlim.rmax[YY] = (rlim.rmax[YY] <= 0.0) ? box[YY][YY] : rlim.rmax[YY];
+        rlim.rmax[ZZ] = (rlim.rmax[ZZ] <= 0.0) ? box[ZZ][ZZ] : rlim.rmax[ZZ];
 
-        /* Translate atoms so the com of the center-group is in the
-         * box geometrical center.
-         */
-        if (bCenter)
+        for (int i = 0; i < grpsize; ++i)
         {
-            center_coords(&top->atoms, index_center, ncenter, box, x0);
-        }
-
-        invvol   = *nslices/(box[XX][XX]*box[YY][YY]*box[ZZ][ZZ]);
-
-        if (bRelative)
-        {
-            *slWidth = 1.0/(*nslices);
-            boxSz    = 1.0;
-        }
-        else
-        {
-            *slWidth = box[axis][axis]/(*nslices);
-            boxSz    = box[axis][axis];
-        }
-
-        aveBox += box[axis][axis];
-
-        for (n = 0; n < nr_grps; n++)
-        {
-            for (i = 0; i < gnx[n]; i++) /* loop over all atoms in index file */
+            auto j = grpindex[i];
+            if (x0[j][XX] >= rlim.rmin[XX] && x0[j][XX] <= rlim.rmax[XX]
+                && x0[j][YY] >= rlim.rmin[YY] && x0[j][YY] <= rlim.rmax[YY]
+                && x0[j][ZZ] >= rlim.rmin[ZZ] && x0[j][ZZ] <= rlim.rmax[ZZ])
             {
-                z = x0[index[n][i]][axis];
-                while (z < 0)
-                {
-                    z += box[axis][axis];
-                }
-                while (z > box[axis][axis])
-                {
-                    z -= box[axis][axis];
-                }
-
-                if (bRelative)
-                {
-                    z = z/box[axis][axis];
-                }
-
-                /* determine which slice atom is in */
-                if (bCenter)
-                {
-                    slice = static_cast<int>(std::floor( (z-(boxSz/2.0)) / (*slWidth) ) + *nslices/2);
-                }
-                else
-                {
-                    slice = static_cast<int>(z / (*slWidth));
-                }
-                sought.nr_el    = 0;
-                sought.atomname = gmx_strdup(*(top->atoms.atomname[index[n][i]]));
-
-                /* now find the number of electrons. This is not efficient. */
-                found = (t_electron *)
-                    bsearch((const void *)&sought,
-                            (const void *)eltab, nr, sizeof(t_electron),
-                            (int(*)(const void*, const void*))compare);
-
-                if (found == NULL)
-                {
-                    fprintf(stderr, "Couldn't find %s. Add it to the .dat file\n",
-                            *(top->atoms.atomname[index[n][i]]));
-                }
-                else
-                {
-                    (*slDensity)[n][slice] += (found->nr_el -
-                                               top->atoms.atom[index[n][i]].q)*invvol;
-                }
-                free(sought.atomname);
+                index_buf[new_grpsize] = j;
+                ++new_grpsize;
             }
         }
-        nr_frames++;
+
+        sfree(grpindex);
+        grpindex = index_buf;
+        grpsize = new_grpsize;
+
+        fprintf(stderr, "Done. Kept %d indices within:\n", grpsize);
+        fprintf(stderr, "  X: [%8.3f, %8.3f]\n", rlim.rmin[XX], rlim.rmax[XX]);
+        fprintf(stderr, "  Y: [%8.3f, %8.3f]\n", rlim.rmin[YY], rlim.rmax[YY]);
+        fprintf(stderr, "  Z: [%8.3f, %8.3f]\n\n", rlim.rmin[ZZ], rlim.rmax[ZZ]);
+
+        // Rewind doesn't work properly, instead close and reopen
+        close_trj(status);
+        read_first_x(oenv, &status, fn, &t, &x0, box);
+    }
+
+    Frames xs_frames;
+    auto gpbc = gmx_rmpbc_init(&top->idef, ePBC, top->atoms.nr);
+    do
+    {
+        gmx_rmpbc(gpbc, num_atoms, box, x0);
+
+        vector<RVec> xs (grpsize);
+        for (int i = 0; i < grpsize; ++i)
+        {
+            for (int j = 0; j < DIM; ++j)
+            {
+                xs[i][j] = x0[grpindex[i]][j];
+            }
+        }
+
+        xs_frames.push_back(xs);
+        times.push_back(t);
     }
     while (read_next_x(oenv, status, &t, x0, box));
     gmx_rmpbc_done(gpbc);
 
-    /*********** done with status file **********/
     close_trj(status);
+    fprintf(stderr, "\nRead %d frames from trajectory.\n",
+            static_cast<int>(xs_frames.size()));
 
-/* slDensity now contains the total number of electrons per slice, summed
-   over all frames. Now divide by nr_frames and volume of slice
- */
+    sfree(x0);
 
-    fprintf(stderr, "\nRead %d frames from trajectory. Counting electrons\n",
-            nr_frames);
-
-    if (bRelative)
-    {
-        aveBox  /= nr_frames;
-        *slWidth = aveBox/(*nslices);
-    }
-
-    for (n = 0; n < nr_grps; n++)
-    {
-        for (i = 0; i < *nslices; i++)
-        {
-            (*slDensity)[n][i] /= nr_frames;
-        }
-    }
-
-    sfree(x0); /* free memory used by coordinate array */
+    return xs_frames;
 }
 
-void calc_density(const char *fn, int **index, int gnx[],
-                  double ***slDensity, int *nslices, t_topology *top, int ePBC,
-                  int axis, int nr_grps, real *slWidth, gmx_bool bCenter,
-                  int *index_center, int ncenter,
-                  gmx_bool bRelative, const gmx_output_env_t *oenv)
+Frames calc_relative_positions(const Frames &xs_frames)
 {
-    rvec        *x0;            /* coordinates without pbc */
-    matrix       box;           /* box (3x3) */
-    double       invvol;
-    int          natoms;        /* nr. atoms in trj */
-    t_trxstatus *status;
-    int          i, n,          /* loop indices */
-                 nr_frames = 0, /* number of frames */
-                 slice;         /* current slice */
-    real         t,
-                 z;
-    real         boxSz, aveBox;
-    gmx_rmpbc_t  gpbc = NULL;
+    auto final_positions = xs_frames.back();
+    Frames xs_relative;
 
-    if (axis < 0 || axis >= DIM)
+    for (auto xs : xs_frames)
     {
-        gmx_fatal(FARGS, "Invalid axes. Terminating\n");
-    }
+        const int num_atoms = xs.size();
+        vector<RVec> xs_buf (num_atoms, {0.0, 0.0, 0.0});
 
-    if ((natoms = read_first_x(oenv, &status, fn, &t, &x0, box)) == 0)
-    {
-        gmx_fatal(FARGS, "Could not read coordinates from statusfile\n");
-    }
-
-    aveBox = 0;
-
-    if (!*nslices)
-    {
-        *nslices = static_cast<int>(box[axis][axis] * 10); /* default value */
-        fprintf(stderr, "\nDividing the box in %d slices\n", *nslices);
-    }
-
-    snew(*slDensity, nr_grps);
-    for (i = 0; i < nr_grps; i++)
-    {
-        snew((*slDensity)[i], *nslices);
-    }
-
-    gpbc = gmx_rmpbc_init(&top->idef, ePBC, top->atoms.nr);
-    /*********** Start processing trajectory ***********/
-    do
-    {
-        gmx_rmpbc(gpbc, natoms, box, x0);
-
-        /* Translate atoms so the com of the center-group is in the
-         * box geometrical center.
-         */
-        if (bCenter)
+        for (int i = 0; i < num_atoms; ++i)
         {
-            center_coords(&top->atoms, index_center, ncenter, box, x0);
-        }
-
-        invvol   = *nslices/(box[XX][XX]*box[YY][YY]*box[ZZ][ZZ]);
-
-        if (bRelative)
-        {
-            *slWidth = 1.0/(*nslices);
-            boxSz    = 1.0;
-        }
-        else
-        {
-            *slWidth = box[axis][axis]/(*nslices);
-            boxSz    = box[axis][axis];
-        }
-
-        aveBox += box[axis][axis];
-
-        for (n = 0; n < nr_grps; n++)
-        {
-            for (i = 0; i < gnx[n]; i++) /* loop over all atoms in index file */
+            for (int j = 0; j < DIM; ++j)
             {
-                z = x0[index[n][i]][axis];
-                while (z < 0)
-                {
-                    z += box[axis][axis];
-                }
-                while (z > box[axis][axis])
-                {
-                    z -= box[axis][axis];
-                }
-
-                if (bRelative)
-                {
-                    z = z/box[axis][axis];
-                }
-
-                /* determine which slice atom is in */
-                if (bCenter)
-                {
-                    slice = static_cast<int>(std::floor( (z-(boxSz/2.0)) / (*slWidth) ) + *nslices/2);
-                }
-                else
-                {
-                    slice = static_cast<int>(std::floor(z / (*slWidth)));
-                }
-
-                /* Slice should already be 0<=slice<nslices, but we just make
-                 * sure we are not hit by IEEE rounding errors since we do
-                 * math operations after applying PBC above.
-                 */
-                if (slice < 0)
-                {
-                    slice += *nslices;
-                }
-                else if (slice >= *nslices)
-                {
-                    slice -= *nslices;
-                }
-
-                (*slDensity)[n][slice] += top->atoms.atom[index[n][i]].m*invvol;
+                xs_buf[i][j] = final_positions[i][j] - xs[i][j];
             }
         }
-        nr_frames++;
-    }
-    while (read_next_x(oenv, status, &t, x0, box));
-    gmx_rmpbc_done(gpbc);
 
-    /*********** done with status file **********/
-    close_trj(status);
-
-    /* slDensity now contains the total mass per slice, summed over all
-       frames. Now divide by nr_frames and volume of slice
-     */
-
-    fprintf(stderr, "\nRead %d frames from trajectory. Calculating density\n",
-            nr_frames);
-
-    if (bRelative)
-    {
-        aveBox  /= nr_frames;
-        *slWidth = aveBox/(*nslices);
+        xs_relative.push_back(xs_buf);
     }
 
-    for (n = 0; n < nr_grps; n++)
-    {
-        for (i = 0; i < *nslices; i++)
-        {
-            (*slDensity)[n][i] /= nr_frames;
-        }
-    }
-
-    sfree(x0); /* free memory used by coordinate array */
+    return xs_relative;
 }
 
-void plot_density(double *slDensity[], const char *afile, int nslices,
-                  int nr_grps, char *grpname[], real slWidth,
-                  const char **dens_opt,
-                  gmx_bool bCenter, gmx_bool bRelative, gmx_bool bSymmetrize,
-                  const gmx_output_env_t *oenv)
+void save_traces(const Frames           &xs_frames,
+                 const vector<real>     &times,
+                 const char             *filename,
+                 const gmx_output_env_t *oenv)
 {
-    FILE       *den;
-    const char *title  = NULL;
-    const char *xlabel = NULL;
-    const char *ylabel = NULL;
-    int         slice, n;
-    real        ddd;
-    real        axispos;
+    const char *title = "Trace data per time";
+    const char *xlabel = "Time";
+    const char *ylabel = "Positions (X0 Y0 Z0 X1 Y1 Z1 ... XN YN ZN for atom N)";
 
-    title = bSymmetrize ? "Symmetrized partial density" : "Partial density";
+    auto file = xvgropen(filename, title, xlabel, ylabel, oenv);
 
-    if (bCenter)
+    //xvgr_legend(den, nr_grps, (const char**)grpname, oenv);
+
+    auto t = times.cbegin();
+    for (auto xs : xs_frames)
     {
-        xlabel = bRelative ?
-            "Average relative position from center (nm)" :
-            "Relative position from center (nm)";
-    }
-    else
-    {
-        xlabel = bRelative ? "Average coordinate (nm)" : "Coordinate (nm)";
-    }
-
-    switch (dens_opt[0][0])
-    {
-        case 'm': ylabel = "Density (kg m\\S-3\\N)"; break;
-        case 'n': ylabel = "Number density (nm\\S-3\\N)"; break;
-        case 'c': ylabel = "Charge density (e nm\\S-3\\N)"; break;
-        case 'e': ylabel = "Electron density (e nm\\S-3\\N)"; break;
-    }
-
-    den = xvgropen(afile,
-                   title, xlabel, ylabel, oenv);
-
-    xvgr_legend(den, nr_grps, (const char**)grpname, oenv);
-
-    for (slice = 0; (slice < nslices); slice++)
-    {
-        if (bCenter)
+        fprintf(file, "%12.3f", *t++);
+        for (auto atom : xs)
         {
-            axispos = (slice - nslices/2.0 + 0.5) * slWidth;
+            fprintf(file, "  %8.3f  %8.3f  %8.3f", atom[XX], atom[YY], atom[ZZ]);
         }
-        else
-        {
-            axispos = (slice + 0.5) * slWidth;
-        }
-        fprintf(den, "%12g  ", axispos);
-        for (n = 0; (n < nr_grps); n++)
-        {
-            if (bSymmetrize)
-            {
-                ddd = (slDensity[n][slice]+slDensity[n][nslices-slice-1])*0.5;
-            }
-            else
-            {
-                ddd = slDensity[n][slice];
-            }
-            if (dens_opt[0][0] == 'm')
-            {
-                fprintf(den, "   %12g", ddd*AMU/(NANO*NANO*NANO));
-            }
-            else
-            {
-                fprintf(den, "   %12g", ddd);
-            }
-        }
-        fprintf(den, "\n");
+        fprintf(file, "\n");
     }
 
-    xvgrclose(den);
+    xvgrclose(file);
 }
 
 int gmx_density(int argc, char *argv[])
@@ -557,201 +229,87 @@ int gmx_density(int argc, char *argv[])
         "[THISMODULE] computes partial densities across the box, using an index file.[PAR]",
         "For the total density of NPT simulations, use [gmx-energy] instead.",
         "[PAR]",
-
-        "Option [TT]-center[tt] performs the histogram binning relative to the center",
-        "of an arbitrary group, in absolute box coordinates. If you are calculating",
-        "profiles along the Z axis box dimension bZ, output would be from -bZ/2 to",
-        "bZ/2 if you center based on the entire system.",
-        "Note that this behaviour has changed in GROMACS 5.0; earlier versions",
-        "merely performed a static binning in (0,bZ) and shifted the output. Now",
-        "we compute the center for each frame and bin in (-bZ/2,bZ/2).[PAR]",
-
-        "Option [TT]-symm[tt] symmetrizes the output around the center. This will",
-        "automatically turn on [TT]-center[tt] too.",
-
-        "Option [TT]-relative[tt] performs the binning in relative instead of absolute",
-        "box coordinates, and scales the final output with the average box dimension",
-        "along the output axis. This can be used in combination with [TT]-center[tt].[PAR]",
-
-        "Densities are in kg/m^3, and number densities or electron densities can also be",
-        "calculated. For electron densities, a file describing the number of",
-        "electrons for each type of atom should be provided using [TT]-ei[tt].",
-        "It should look like::",
-        "",
-        "   2",
-        "   atomname = nrelectrons",
-        "   atomname = nrelectrons",
-        "",
-        "The first line contains the number of lines to read from the file.",
-        "There should be one line for each unique atom name in your system.",
-        "The number of electrons for each atom is modified by its atomic",
-        "partial charge.[PAR]",
-
-        "IMPORTANT CONSIDERATIONS FOR BILAYERS[PAR]",
-        "One of the most common usage scenarios is to calculate the density of various",
-        "groups across a lipid bilayer, typically with the z axis being the normal",
-        "direction. For short simulations, small systems, and fixed box sizes this",
-        "will work fine, but for the more general case lipid bilayers can be complicated.",
-        "The first problem that while both proteins and lipids have low volume",
-        "compressibility, lipids have quite high area compressiblity. This means the",
-        "shape of the box (thickness and area/lipid) will fluctuate substantially even",
-        "for a fully relaxed system. Since GROMACS places the box between the origin",
-        "and positive coordinates, this in turn means that a bilayer centered in the",
-        "box will move a bit up/down due to these fluctuations, and smear out your",
-        "profile. The easiest way to fix this (if you want pressure coupling) is",
-        "to use the [TT]-center[tt] option that calculates the density profile with",
-        "respect to the center of the box. Note that you can still center on the",
-        "bilayer part even if you have a complex non-symmetric system with a bilayer",
-        "and, say, membrane proteins - then our output will simply have more values",
-        "on one side of the (center) origin reference.[PAR]",
-
-        "Even the centered calculation will lead to some smearing out the output",
-        "profiles, as lipids themselves are compressed and expanded. In most cases",
-        "you probably want this (since it corresponds to macroscopic experiments),",
-        "but if you want to look at molecular details you can use the [TT]-relative[tt]",
-        "option to attempt to remove even more of the effects of volume fluctuations.[PAR]",
-
-        "Finally, large bilayers that are not subject to a surface tension will exhibit",
-        "undulatory fluctuations, where there are 'waves' forming in the system.",
-        "This is a fundamental property of the biological system, and if you are",
-        "comparing against experiments you likely want to include the undulation",
-        "smearing effect.",
+        "Hello!",
         "",
     };
 
-    gmx_output_env_t  *oenv;
-    static const char *dens_opt[] =
-    { NULL, "mass", "number", "charge", "electron", NULL };
-    static int         axis        = 2;  /* normal to memb. default z  */
-    static const char *axtitle     = "Z";
-    static int         nslices     = 50; /* nr of slices defined       */
-    static int         ngrps       = 1;  /* nr. of groups              */
-    static gmx_bool    bSymmetrize = FALSE;
-    static gmx_bool    bCenter     = FALSE;
-    static gmx_bool    bRelative   = FALSE;
+    static rvec rmin = {0.0, 0.0, 0.0},
+                rmax = {0.0, 0.0, 0.0};
 
-    t_pargs            pa[]        = {
-        { "-d", FALSE, etSTR, {&axtitle},
-          "Take the normal on the membrane in direction X, Y or Z." },
-        { "-sl",  FALSE, etINT, {&nslices},
-          "Divide the box in this number of slices." },
-        { "-dens",    FALSE, etENUM, {dens_opt},
-          "Density"},
-        { "-ng",       FALSE, etINT, {&ngrps},
-          "Number of groups of which to compute densities." },
-        { "-center",   FALSE, etBOOL, {&bCenter},
-          "Perform the binning relative to the center of the (changing) box. Useful for bilayers." },
-        { "-symm",     FALSE, etBOOL, {&bSymmetrize},
-          "Symmetrize the density along the axis, with respect to the center. Useful for bilayers." },
-        { "-relative", FALSE, etBOOL, {&bRelative},
-          "Use relative coordinates for changing boxes and scale output by average dimensions." }
+    t_pargs pa[] = {
+        { "-rmin", FALSE, etRVEC, { rmin },
+          "Minimum coordinate values for final atom positions to include." },
+        { "-rmax", FALSE, etRVEC, { rmax },
+          "Maximum coordinate values for final atom positions to include." },
+    };
+    const char *bugs[] = {
     };
 
-    const char        *bugs[] = {
-        "When calculating electron densities, atomnames are used instead of types. This is bad.",
-    };
-
-    double           **density;        /* density per slice          */
-    real               slWidth;        /* width of one slice         */
-    char              *grpname_center; /* centering group name     */
-    char             **grpname;        /* groupnames                 */
-    int                nr_electrons;   /* nr. electrons              */
-    int                ncenter;        /* size of centering group    */
-    int               *ngx;            /* sizes of groups            */
-    t_electron        *el_tab;         /* tabel with nr. of electrons*/
-    t_topology        *top;            /* topology               */
-    int                ePBC;
-    int               *index_center;   /* index for centering group  */
-    int              **index;          /* indices for all groups     */
-    int                i;
-
-    t_filenm           fnm[] = { /* files for g_density       */
+    t_filenm fnm[] = {
         { efTRX, "-f", NULL,  ffREAD },
         { efNDX, NULL, NULL,  ffOPTRD },
         { efTPR, NULL, NULL,  ffREAD },
-        { efDAT, "-ei", "electrons", ffOPTRD }, /* file with nr. of electrons */
         { efXVG, "-o", "density", ffWRITE },
     };
 
 #define NFILE asize(fnm)
 
-    if (!parse_common_args(&argc, argv, PCA_CAN_VIEW | PCA_CAN_TIME,
+    gmx_output_env_t  *oenv;
+    if (!parse_common_args(&argc, argv, PCA_CAN_TIME,
                            NFILE, fnm, asize(pa), pa, asize(desc), desc, asize(bugs), bugs,
                            &oenv))
     {
         return 0;
     }
 
-    GMX_RELEASE_ASSERT(dens_opt[0] != NULL, "Option setting inconsistency; dens_opt[0] is NULL");
+    int ePBC;
+    auto top = read_top(ftp2fn(efTPR, NFILE, fnm), &ePBC); /* read topology file */
 
-    if (bSymmetrize && !bCenter)
-    {
-        fprintf(stderr, "Can not symmetrize without centering. Turning on -center\n");
-        bCenter = TRUE;
-    }
-    /* Calculate axis */
-    axis = toupper(axtitle[0]) - 'X';
+    char **grpnames;  /* groupnames              */
+    int   *grpsizes;  /* sizes of groups         */
+    int  **index;     /* indices for all groups  */
 
-    top = read_top(ftp2fn(efTPR, NFILE, fnm), &ePBC); /* read topology file */
-    if (dens_opt[0][0] == 'n')
+    snew(index, 1);
+    snew(grpnames, 1);
+    snew(grpsizes, 1);
+
+
+    fprintf(stderr, "\nSelect group to collect traces for:\n");
+    get_index(&top->atoms, ftp2fn_null(efNDX, NFILE, fnm),
+              1, grpsizes, index, grpnames);
+
+    struct RLim rlim;
+    if (opt2parg_bSet("-rmin", asize(pa), pa))
     {
-        for (i = 0; (i < top->atoms.nr); i++)
+        rlim.rmin_set = true;
+        for (int i = 0; i < DIM; ++i)
         {
-            top->atoms.atom[i].m = 1;
+            rlim.rmin[i] = rmin[i];
         }
-    }
-    else if (dens_opt[0][0] == 'c')
-    {
-        for (i = 0; (i < top->atoms.nr); i++)
-        {
-            top->atoms.atom[i].m = top->atoms.atom[i].q;
-        }
-    }
-
-    snew(grpname, ngrps);
-    snew(index, ngrps);
-    snew(ngx, ngrps);
-
-    if (bCenter)
-    {
-        fprintf(stderr,
-                "\nNote: that the center of mass is calculated inside the box without applying\n"
-                "any special periodicity. If necessary, it is your responsibility to first use\n"
-                "trjconv to make sure atoms in this group are placed in the right periodicity.\n\n"
-                "Select the group to center density profiles around:\n");
-        get_index(&top->atoms, ftp2fn_null(efNDX, NFILE, fnm), 1, &ncenter,
-                  &index_center, &grpname_center);
     }
     else
     {
-        ncenter      = 0;
-        index_center = NULL;
+        rlim.rmin_set = false;
     }
-
-    fprintf(stderr, "\nSelect %d group%s to calculate density for:\n", ngrps, (ngrps > 1) ? "s" : "");
-    get_index(&top->atoms, ftp2fn_null(efNDX, NFILE, fnm), ngrps, ngx, index, grpname);
-
-    if (dens_opt[0][0] == 'e')
+    if (opt2parg_bSet("-rmax", asize(pa), pa))
     {
-        nr_electrons =  get_electrons(&el_tab, ftp2fn(efDAT, NFILE, fnm));
-        fprintf(stderr, "Read %d atomtypes from datafile\n", nr_electrons);
-
-        calc_electron_density(ftp2fn(efTRX, NFILE, fnm), index, ngx, &density,
-                              &nslices, top, ePBC, axis, ngrps, &slWidth, el_tab,
-                              nr_electrons, bCenter, index_center, ncenter,
-                              bRelative, oenv);
+        rlim.rmax_set = true;
+        for (int i = 0; i < DIM; ++i)
+        {
+            rlim.rmax[i] = rmax[i];
+        }
     }
     else
     {
-        calc_density(ftp2fn(efTRX, NFILE, fnm), index, ngx, &density, &nslices, top,
-                     ePBC, axis, ngrps, &slWidth, bCenter, index_center, ncenter,
-                     bRelative, oenv);
+        rlim.rmax_set = false;
     }
+    vector<real> times;
+    const auto xs_frames = collect_positions(ftp2fn(efTRX, NFILE, fnm),
+                                             *index, *grpsizes, top,
+                                             times, rlim, ePBC, oenv);
+    const auto xs_relative = calc_relative_positions(xs_frames);
 
-    plot_density(density, opt2fn("-o", NFILE, fnm),
-                 nslices, ngrps, grpname, slWidth, dens_opt,
-                 bCenter, bRelative, bSymmetrize, oenv);
+    save_traces(xs_relative, times, opt2fn("-o", NFILE, fnm), oenv);
 
-    do_view(oenv, opt2fn("-o", NFILE, fnm), "-nxy");  /* view xvgr file */
     return 0;
 }
