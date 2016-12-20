@@ -65,14 +65,13 @@ using namespace std;
  * Petter Johansson, Stockholm 2016                                         *
  ****************************************************************************/
 
-using RVec   = array<real, DIM>;     // easiest to use proper arrays for positions
-using Frames = vector<vector<RVec>>; // each frame (one per time) needs a vector
-using Times  = vector<real>;         // making things slightly more readable
-                                     // (albeit obfuscating the object)
+using FrameX = vector<array<real, DIM>>; // Easiest to use proper arrays for
+                                         // positions. Each frame (one per time)
+                                         // needs a vector of these.
 
 struct FrameData {
-    Frames frames;
-    Times  times;
+    vector<FrameX> frames;
+    vector<real>   times;
 };
 
 struct RLims {
@@ -156,15 +155,15 @@ FrameData collect_positions(const char             *fn,
         read_first_x(oenv, &status, fn, &t, &x0, box);
     }
 
-    Frames xs_frames;
-    Times times;
+    vector<FrameX> frames;
+    vector<real> times;
 
     auto gpbc = gmx_rmpbc_init(&top->idef, ePBC, top->atoms.nr);
     do
     {
         gmx_rmpbc(gpbc, num_atoms, box, x0);
 
-        vector<RVec> xs (grpsize);
+        FrameX xs (grpsize);
         for (int i = 0; i < grpsize; ++i)
         {
             for (int j = 0; j < DIM; ++j)
@@ -173,7 +172,7 @@ FrameData collect_positions(const char             *fn,
             }
         }
 
-        xs_frames.push_back(xs);
+        frames.push_back(xs);
         times.push_back(t);
     }
     while (read_next_x(oenv, status, &t, x0, box));
@@ -181,23 +180,23 @@ FrameData collect_positions(const char             *fn,
 
     close_trj(status);
     fprintf(stderr, "\nRead %d frames from trajectory.\n",
-            static_cast<int>(xs_frames.size()));
+            static_cast<int>(frames.size()));
 
     sfree(x0);
 
-    return FrameData { xs_frames, times };
+    return FrameData { frames, times };
 }
 
 static
 FrameData calc_relative_to_final(const FrameData &fdata)
 {
     auto final_positions = fdata.frames.back();
-    Frames xs_relative;
+    vector<FrameX> frames_relative;
 
     for (auto xs : fdata.frames)
     {
         const int num_atoms = xs.size();
-        vector<RVec> xs_buf = xs;
+        auto xs_buf = xs;
 
         for (int i = 0; i < num_atoms; ++i)
         {
@@ -209,10 +208,10 @@ FrameData calc_relative_to_final(const FrameData &fdata)
             }
         }
 
-        xs_relative.push_back(xs_buf);
+        frames_relative.push_back(xs_buf);
     }
 
-    Times times_relative = fdata.times;
+    vector<real> times_relative = fdata.times;
     const auto tend = fdata.times.back();
 
     for (auto &t : times_relative)
@@ -220,7 +219,7 @@ FrameData calc_relative_to_final(const FrameData &fdata)
         t -= tend;
     }
 
-    return FrameData { xs_relative, times_relative };
+    return FrameData { frames_relative, times_relative };
 }
 
 static
