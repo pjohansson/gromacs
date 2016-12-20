@@ -77,11 +77,11 @@ struct RLim {
 };
 
 Frames collect_positions(const char             *fn,
-                         int              *grpindex,
-                         int               grpsize,
+                         int                    *grpindex,
+                         int                     grpsize,
                          t_topology             *top,
                          vector<real>           &times,
-                         struct RLim     &rlim,
+                         struct RLim            &rlim,
                          const int               ePBC,
                          const gmx_output_env_t *oenv)
 {
@@ -172,7 +172,8 @@ Frames collect_positions(const char             *fn,
     return xs_frames;
 }
 
-Frames calc_relative_to_final(const Frames &xs_frames, vector<real> &times)
+Frames calc_relative_to_final(const Frames &xs_frames,
+                              vector<real> &times)
 {
     auto final_positions = xs_frames.back();
     Frames xs_relative;
@@ -194,9 +195,9 @@ Frames calc_relative_to_final(const Frames &xs_frames, vector<real> &times)
     }
 
     const auto tend = times.back();
-    for (auto it = times.begin(); it != times.end(); ++it)
+    for (auto t_it = times.begin(); t_it != times.end(); ++t_it)
     {
-        *it -= tend;
+        *t_it -= tend;
     }
 
     return xs_relative;
@@ -213,10 +214,9 @@ void save_traces(const Frames           &xs_frames,
 
     auto file = xvgropen(filename, title, xlabel, ylabel, oenv);
 
-    //xvgr_legend(den, nr_grps, (const char**)grpname, oenv);
+    // xvgr_legend(den, nr_grps, (const char**)grpname, oenv);
 
     auto t = times.cbegin();
-    //for (auto xs : xs_frames)
     for (auto x_it = xs_frames.cbegin(); x_it != (xs_frames.cend()-1); ++x_it)
     {
         fprintf(file, "%12.3f", *t++);
@@ -236,15 +236,15 @@ int gmx_moltrace(int argc, char *argv[])
         "[THISMODULE] backtraces molecules from their final position of a ",
         "trajectory and calculates the difference from that position for every ",
         "frame. In effect this will show from where a selected molecule ",
-        "arrived. ",
-        //"[PAR]",
+        "arrived.",
+        "[PAR]",
         "The selection of molecules can be done through an index group and/or ",
         "through submitting minimum and maximum coordinates for the final ",
         "particle positions to include. This is done by supplying [TT]-rmin[tt] ",
         "and [TT]-rmax[tt] vectors. For [TT]-rmax[tt] a value of -1.0 corresponds ",
         "to using the full system length along that dimension. The time of the ",
         "final frame is the final frame read by the trajectory: this is controlled ",
-        "through the flags [TT]-b[tt], [TT]-e[tt] and [TT]-dt[tt] as described ",
+        "through the flags [TT]-b[tt], [TT]-e[tt] and [TT]-dt[tt] described ",
         "below.",
     };
 
@@ -264,7 +264,7 @@ int gmx_moltrace(int argc, char *argv[])
         { efTRX, "-f", NULL,  ffREAD },
         { efNDX, NULL, NULL,  ffOPTRD },
         { efTPR, NULL, NULL,  ffREAD },
-        { efXVG, "-o", "density", ffWRITE },
+        { efXVG, "-o", "trace", ffWRITE },
     };
 
 #define NFILE asize(fnm)
@@ -278,11 +278,11 @@ int gmx_moltrace(int argc, char *argv[])
     }
 
     int ePBC;
-    auto top = read_top(ftp2fn(efTPR, NFILE, fnm), &ePBC); /* read topology file */
+    auto top = read_top(ftp2fn(efTPR, NFILE, fnm), &ePBC);
 
-    char **grpnames;  /* groupnames              */
-    int   *grpsizes;  /* sizes of groups         */
-    int  **index;     /* indices for all groups  */
+    char **grpnames;
+    int   *grpsizes;
+    int  **index;
 
     snew(index, 1);
     snew(grpnames, 1);
