@@ -342,6 +342,8 @@ void registerLegacyModules(gmx::CommandLineModuleManager *manager)
                    "Calculate the minimum distance between two groups");
     registerModule(manager, &gmx_morph, "morph",
                    "Interpolate linearly between conformations");
+    registerModule(manager, &gmx_moltrace, "moltrace",
+                   "Backtrace molecules in a trajectory");
     registerModule(manager, &gmx_msd, "msd",
                    "Calculates mean square displacements");
     registerModule(manager, &gmx_nmeig, "nmeig",

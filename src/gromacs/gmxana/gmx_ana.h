@@ -166,6 +166,9 @@ int
 gmx_morph(int argc, char *argv[]);
 
 int
+gmx_moltrace(int argc, char *argv[]);
+
+int
 gmx_nmeig(int argc, char *argv[]);
 
 int
