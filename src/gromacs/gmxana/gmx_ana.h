@@ -169,6 +169,9 @@ int
 gmx_moltrace(int argc, char *argv[]);
 
 int
+gmx_contact_line(int argc, char *argv[]);
+
+int
 gmx_nmeig(int argc, char *argv[]);
 
 int
