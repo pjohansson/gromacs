@@ -67,35 +67,33 @@ using namespace std;
  * Petter Johansson, Stockholm 2016                                         *
  ****************************************************************************/
 
-using FrameX = vector<array<real, DIM>>; // Easiest to use proper arrays for
-                                         // positions. Each frame (one per time)
-                                         // needs a vector of these.
-
-struct FrameData {
-    vector<FrameX> frames;
-    vector<real>   times;
-};
-
 struct RLims {
     RLims(t_pargs pa[], const int pasize, const rvec rmin_in, const rvec rmax_in)
-         :rmin_set{static_cast<bool>(opt2parg_bSet("-rmin", pasize, pa))},
-          rmax_set{static_cast<bool>(opt2parg_bSet("-rmax", pasize, pa))}
-         {
-             copy_rvec(rmin_in, rmin);
-             copy_rvec(rmax_in, rmax);
-         }
+        :cutoff{static_cast<real>(opt2parg_real("-co", pasize, pa))},
+         cutoff2{cutoff * cutoff},
+         nmin{static_cast<int>(opt2parg_int("-nmin", pasize, pa))},
+         nmax{static_cast<int>(opt2parg_int("-nmax", pasize, pa))}
+        {
+            copy_rvec(rmin_in, rmin);
+            copy_rvec(rmax_in, rmax);
+            set_search_space_limits();
+        }
 
-    bool rmin_set,
-         rmax_set;
+    void set_search_space_limits() {
+        const rvec add_ss = {cutoff, cutoff, cutoff};
+        rvec_sub(rmin, add_ss, rmin_ss);
+        rvec_add(rmax, add_ss, rmax_ss);
+    }
+
+    real cutoff,
+         cutoff2;
+    int nmin,
+        nmax;
     rvec rmin,
-         rmax;
+         rmax,
+         rmin_ss,
+         rmax_ss;
 };
-
-static
-bool count_is_contact_line(const int count)
-{
-    return (count > 3) && (count < 12);
-}
 
 static
 vector<int> find_interface_indices(const rvec         *x0,
@@ -105,8 +103,6 @@ vector<int> find_interface_indices(const rvec         *x0,
                                    const t_pbc        *pbc)
 {
     // Find indices within search volume
-    const real max_dist = 0.5;
-    const auto max_dist2 = max_dist * max_dist;
     vector<int> search_space;
     vector<int> indices;
 
@@ -115,12 +111,9 @@ vector<int> find_interface_indices(const rvec         *x0,
         const auto n = grpindex[i];
         const auto x1 = x0[n];
 
-        if (x1[XX] >= (rlim.rmin[XX] - max_dist)
-            && x1[XX] <= (rlim.rmax[XX] + max_dist)
-            && x1[YY] >= (rlim.rmin[YY] - max_dist)
-            && x1[YY] <= (rlim.rmax[YY] + max_dist)
-            && x1[ZZ] >= (rlim.rmin[ZZ] - max_dist)
-            && x1[ZZ] <= (rlim.rmax[ZZ] + max_dist))
+        if (x1[XX] >= rlim.rmin_ss[XX] && x1[XX] <= rlim.rmax_ss[XX]
+            && x1[YY] >= rlim.rmin_ss[YY] && x1[YY] <= rlim.rmax_ss[YY]
+            && x1[ZZ] >= rlim.rmin_ss[ZZ] && x1[ZZ] <= rlim.rmax_ss[ZZ])
         {
             search_space.push_back(n);
 
@@ -153,14 +146,14 @@ vector<int> find_interface_indices(const rvec         *x0,
                 const auto x2 = x0[j];
                 pbc_dx(pbc, x1, x2, dx);
 
-                if (norm2(dx) <= max_dist2)
+                if (norm2(dx) <= rlim.cutoff2)
                 {
                     ++count;
                 }
             }
         }
 
-        if (count_is_contact_line(count))
+        if ((count >= rlim.nmin) && (count <= rlim.nmax))
         {
             cl_indices.push_back(i);
         }
@@ -192,24 +185,22 @@ void collect_indices(const char             *fn,
     }
 
     // Allow the use of -1.0 to not set specific limits along an axis
-    if (rlim.rmin_set || rlim.rmax_set)
-    {
-        rlim.rmax[XX] = (rlim.rmax[XX] <= 0.0) ? box[XX][XX] : rlim.rmax[XX];
-        rlim.rmax[YY] = (rlim.rmax[YY] <= 0.0) ? box[YY][YY] : rlim.rmax[YY];
-        rlim.rmax[ZZ] = (rlim.rmax[ZZ] <= 0.0) ? box[ZZ][ZZ] : rlim.rmax[ZZ];
-    }
+    rlim.rmax[XX] = (rlim.rmax[XX] <= 0.0) ? box[XX][XX] : rlim.rmax[XX];
+    rlim.rmax[YY] = (rlim.rmax[YY] <= 0.0) ? box[YY][YY] : rlim.rmax[YY];
+    rlim.rmax[ZZ] = (rlim.rmax[ZZ] <= 0.0) ? box[ZZ][ZZ] : rlim.rmax[ZZ];
+    rlim.set_search_space_limits();
 
     auto gpbc = gmx_rmpbc_init(&top->idef, ePBC, top->atoms.nr);
     auto pbc = new t_pbc;
     set_pbc(pbc, ePBC, box);
     do
     {
+        gmx_rmpbc(gpbc, num_atoms, box, x0);
         auto indices = find_interface_indices(x0, grpindex, grpsize, rlim, pbc);
 
         // Debug: write gro file
-        /*
-        std::string outfile { "test.gro" };
-        std::string title { "interface" };
+        string outfile { "test.gro" };
+        string title { "interface" };
         write_sto_conf_indexed(outfile.data(),
                                title.data(),
                                &top->atoms,
@@ -221,7 +212,6 @@ void collect_indices(const char             *fn,
                                indices.data());
 
                               break;
-                              */
     }
     while (read_next_x(oenv, status, &t, x0, box));
     gmx_rmpbc_done(gpbc);
@@ -235,72 +225,6 @@ void collect_indices(const char             *fn,
     return;
 }
 
-/*
-static
-FrameData calc_relative_to_final(const FrameData &fdata)
-{
-    auto final_positions = fdata.frames.back();
-    vector<FrameX> frames_relative;
-
-    for (auto xs : fdata.frames)
-    {
-        const int num_atoms = xs.size();
-        auto xs_buf = xs;
-
-        for (int i = 0; i < num_atoms; ++i)
-        {
-            // The direction here is: final position -> current (in backtrace).
-            // Thus we subtract the final positions.
-            for (int j = 0; j < DIM; ++j)
-            {
-                xs_buf[i][j] -= final_positions[i][j];
-            }
-        }
-
-        frames_relative.push_back(xs_buf);
-    }
-
-    vector<real> times_relative = fdata.times;
-    const auto tend = fdata.times.back();
-
-    for (auto &t : times_relative)
-    {
-        t -= tend;
-    }
-
-    return FrameData { frames_relative, times_relative };
-}
-
-static
-void save_traces(const FrameData        &fdata,
-                 const char             *filename,
-                 const gmx_output_env_t *oenv)
-{
-    const char *title  = "Trace data per time from final positions";
-    const char *xlabel = "Time (ps)";
-    const char *ylabel = "Positions (X0 Y0 Z0 X1 Y1 Z1 ... XN YN ZN for atom N)";
-
-    auto file = xvgropen(filename, title, xlabel, ylabel, oenv);
-    auto t_it = fdata.times.cbegin();
-    auto frame_it = fdata.frames.cbegin();
-
-    while (frame_it != (fdata.frames.cend()-1))
-    {
-        fprintf(file, "%12.3f", *t_it);
-        for (auto atom : *frame_it)
-        {
-            fprintf(file, "  %8.3f  %8.3f  %8.3f", atom[XX], atom[YY], atom[ZZ]);
-        }
-        fprintf(file, "\n");
-
-        ++t_it;
-        ++frame_it;
-    }
-
-    xvgrclose(file);
-}
-*/
-
 int gmx_contact_line(int argc, char *argv[])
 {
     const char        *desc[] = {
@@ -310,12 +234,21 @@ int gmx_contact_line(int argc, char *argv[])
 
     static rvec rmin = { 0.0,  0.0,  0.0},
                 rmax = {-1.0, -1.0, -1.0};
+    static int nmin = 20,
+               nmax = 100;
+    static real cutoff = 1.0;
 
     t_pargs            pa[] = {
         { "-rmin", FALSE, etRVEC, { rmin },
-          "Minimum coordinate values for final atom positions to include." },
+          "Minimum coordinate values for atom positions to include." },
         { "-rmax", FALSE, etRVEC, { rmax },
-          "Maximum coordinate values for final atom positions to include." },
+          "Maximum coordinate values for atom positions to include." },
+        { "-co", FALSE, etREAL, { &cutoff },
+          "Cutoff distance for neighbour search." },
+        { "-nmin", FALSE, etINT, { &nmin },
+          "Minimum number of atoms within cutoff." },
+        { "-nmax", FALSE, etINT, { &nmax },
+          "Maximum number of atoms within cutoff." },
     };
 
     const char        *bugs[] = {
