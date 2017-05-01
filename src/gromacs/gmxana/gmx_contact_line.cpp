@@ -69,19 +69,31 @@ using namespace std;
  * Petter Johansson, Stockholm 2016                                         *
  ****************************************************************************/
 
-struct RLims {
-    RLims(t_pargs pa[], const int pasize, const rvec rmin_in, const rvec rmax_in)
+struct CLConf {
+    CLConf(t_pargs pa[], const int pasize, const rvec rmin_in, const rvec rmax_in)
         :cutoff{static_cast<real>(opt2parg_real("-co", pasize, pa))},
          cutoff2{cutoff * cutoff},
          nmin{static_cast<int>(opt2parg_int("-nmin", pasize, pa))},
          nmax{static_cast<int>(opt2parg_int("-nmax", pasize, pa))}
-        {
-            copy_rvec(rmin_in, rmin);
-            copy_rvec(rmax_in, rmax);
-            set_search_space_limits();
-        }
+    {
+        copy_rvec(rmin_in, rmin);
+        copy_rvec(rmax_in, rmax);
+        set_search_space_limits();
+    }
 
-    void set_search_space_limits() {
+    void set_box_limits(const matrix box)
+    {
+        rmin[XX] = (rmin[XX] <= 0.0) ? 0.0 : rmin[XX];
+        rmin[YY] = (rmin[YY] <= 0.0) ? 0.0 : rmin[YY];
+        rmin[ZZ] = (rmin[ZZ] <= 0.0) ? 0.0 : rmin[ZZ];
+        rmax[XX] = (rmax[XX] <= 0.0) ? box[XX][XX] : rmax[XX];
+        rmax[YY] = (rmax[YY] <= 0.0) ? box[YY][YY] : rmax[YY];
+        rmax[ZZ] = (rmax[ZZ] <= 0.0) ? box[ZZ][ZZ] : rmax[ZZ];
+        set_search_space_limits();
+    }
+
+    void set_search_space_limits()
+    {
         const rvec add_ss = {cutoff, cutoff, cutoff};
         rvec_sub(rmin, add_ss, rmin_ss);
         rvec_add(rmax, add_ss, rmax_ss);
@@ -108,46 +120,45 @@ is_inside_limits(const rvec x,
 }
 
 static vector<int>
-find_interface_indices(const rvec         *x0,
-                       const int          *grpindex,
-                       const int           grpsize,
-                       const struct RLims &rlim,
-                       const t_pbc        *pbc)
+find_interface_indices(const rvec          *x0,
+                       const int           *grpindex,
+                       const int            grpsize,
+                       const struct CLConf &conf,
+                       const t_pbc         *pbc)
 {
     // Find indices within search volume
     vector<int> search_space;
-    vector<int> indices;
+    vector<int> candidates;
 
     for (int i = 0; i < grpsize; ++i)
     {
         const auto n = grpindex[i];
         const auto x1 = x0[n];
 
-        if (is_inside_limits(x1, rlim.rmin_ss, rlim.rmax_ss))
+        if (is_inside_limits(x1, conf.rmin_ss, conf.rmax_ss))
         {
             search_space.push_back(n);
-            if (is_inside_limits(x1, rlim.rmin, rlim.rmax))
+
+            if (is_inside_limits(x1, conf.rmin, conf.rmax))
             {
-                indices.push_back(n);
+                candidates.push_back(n);
             }
         }
     }
 
 #ifdef DEBUG_CONTACTLINE
     fprintf(stderr, "Kept %lu (%lu) indices within the search volume. ",
-            indices.size(), search_space.size());
+            candidates.size(), search_space.size());
 #endif
 
     vector<int> interface_inds;
     rvec dx;
 
-    // Outer loop over all atoms which should be tested
-    for (auto i : indices)
+    for (auto i : candidates)
     {
         const auto x1 = x0[i];
         int count = 0;
 
-        // Inner loop over all atoms to test against
         for (auto j : search_space)
         {
             if (i != j)
@@ -155,31 +166,121 @@ find_interface_indices(const rvec         *x0,
                 const auto x2 = x0[j];
                 pbc_dx(pbc, x1, x2, dx);
 
-                if (norm2(dx) <= rlim.cutoff2)
+                if (norm2(dx) <= conf.cutoff2)
                 {
                     ++count;
                 }
             }
         }
 
-        if (count >= rlim.nmin && count <= rlim.nmax)
+        if (count >= conf.nmin && count <= conf.nmax)
         {
             interface_inds.push_back(i);
         }
     }
 
 #ifdef DEBUG_CONTACTLINE
-    fprintf(stderr, "Found %lu interface atoms.\n", interface_inds.size());
+    fprintf(stderr, "Found %lu interface atoms ", interface_inds.size());
 #endif
 
     return interface_inds;
+}
+
+static vector<vector<int>>
+slice_system_along_dir(const rvec *x0,
+                       const vector<int> interface,
+                       const CLConf &conf,
+                       const real slice_precision,
+                       const int dir)
+{
+    // Identify the floor by slicing the system and finding the lowest peak
+    const int num_slices = static_cast<int>(ceil((conf.rmax[dir] - conf.rmin[dir]) / slice_precision));
+    const real final_slice_precision = (conf.rmax[dir] - conf.rmin[dir]) / num_slices;
+
+    vector<vector<int>> slice_indices (num_slices);
+    for (auto i : interface)
+    {
+        const auto x = x0[i][dir];
+        const auto slice = static_cast<int>((x - conf.rmin[dir]) / final_slice_precision);
+        slice_indices.at(slice).push_back(i);
+    }
+
+    return slice_indices;
+}
+
+static vector<int>
+find_bottom_layer(const rvec *x0,
+                  const vector<int> interface,
+                  const CLConf &conf)
+{
+    const auto slice_indices = slice_system_along_dir(x0, interface, conf, 0.3, ZZ);
+
+    // Track the maximum count, when a decrease is found the peak
+    // was in the previous slice
+    int prev_slice = -1;
+    unsigned int max_value = 0;
+
+    for (auto indices : slice_indices)
+    {
+        const auto count = indices.size();
+        if (count < max_value)
+        {
+            break;
+        }
+
+        max_value = count;
+        ++prev_slice;
+
+    }
+
+    auto bottom = slice_indices.at(prev_slice);
+
+    return bottom;
+}
+
+static vector<int>
+find_contact_line_indices(const rvec *x0,
+                          const vector<int> interface,
+                          const CLConf &conf)
+{
+    // Identify the bottom layer, then slice it along the y axis
+    // to find the minimum and maximum x coordinates of the contact line
+    const auto bottom = find_bottom_layer(x0, interface, conf);
+    const auto yslices = slice_system_along_dir(x0, bottom, conf, 0.3, YY);
+    vector<int> indices;
+
+    for (auto slice : yslices)
+    {
+        auto iter = slice.cbegin();
+        auto xmax = x0[*iter][XX];
+        int imax = *iter;
+
+        while (++iter != slice.cend())
+        {
+            const auto x = x0[*iter][XX];
+
+            if (x > xmax)
+            {
+                imax = *iter;
+                xmax = x;
+            }
+        }
+
+        indices.push_back(imax);
+    }
+
+#ifdef DEBUG_CONTACTLINE
+    fprintf(stderr, "and %lu contact line atoms.\n", indices.size());
+#endif
+
+    return indices;
 }
 
 static void
 collect_indices(const char             *fn,
                 int                    *grpindex,
                 int                     grpsize,
-                struct RLims           &rlim,
+                struct CLConf          &conf,
                 const t_topology       *top,
                 const int               ePBC,
                 const gmx_output_env_t *oenv)
@@ -195,35 +296,27 @@ collect_indices(const char             *fn,
         gmx_fatal(FARGS, "Could not read coordinates from statusfile\n");
     }
 
-    // Allow the use of -1.0 to not set specific limits along an axis
-    rlim.rmax[XX] = (rlim.rmax[XX] <= 0.0) ? box[XX][XX] : rlim.rmax[XX];
-    rlim.rmax[YY] = (rlim.rmax[YY] <= 0.0) ? box[YY][YY] : rlim.rmax[YY];
-    rlim.rmax[ZZ] = (rlim.rmax[ZZ] <= 0.0) ? box[ZZ][ZZ] : rlim.rmax[ZZ];
-    rlim.set_search_space_limits();
 
     auto gpbc = gmx_rmpbc_init(&top->idef, ePBC, top->atoms.nr);
     auto pbc = new t_pbc;
     set_pbc(pbc, ePBC, box);
+    conf.set_box_limits(box);
+
     do
     {
         gmx_rmpbc(gpbc, num_atoms, box, x0);
-        auto indices = find_interface_indices(x0, grpindex, grpsize, rlim, pbc);
+        const auto interface = find_interface_indices(x0, grpindex, grpsize,
+                                                      conf, pbc);
+        auto contact_line = find_contact_line_indices(x0, interface, conf);
 
 // Debug: write gro file
 #ifdef DEBUG_CONTACTLINE
         string outfile { "test.gro" };
         string title { "interface" };
-        write_sto_conf_indexed(outfile.data(),
-                               title.data(),
-                               &top->atoms,
-                               x0,
-                               NULL,
-                               ePBC,
-                               box,
-                               indices.size(),
-                               indices.data());
-
-                              break;
+        write_sto_conf_indexed(outfile.data(), title.data(),
+                               &top->atoms, x0, NULL, ePBC, box,
+                               contact_line.size(), contact_line.data());
+        break;
 #endif
     }
     while (read_next_x(oenv, status, &t, x0, box));
@@ -252,7 +345,7 @@ gmx_contact_line(int argc, char *argv[])
                nmax = 100;
     static real cutoff = 1.0;
 
-    t_pargs            pa[] = {
+    t_pargs pa[] = {
         { "-rmin", FALSE, etRVEC, { rmin },
           "Minimum coordinate values for atom positions to include." },
         { "-rmax", FALSE, etRVEC, { rmax },
@@ -265,10 +358,10 @@ gmx_contact_line(int argc, char *argv[])
           "Maximum number of atoms within cutoff." },
     };
 
-    const char        *bugs[] = {
+    const char *bugs[] = {
     };
 
-    t_filenm           fnm[] = {
+    t_filenm fnm[] = {
         { efTRX, "-f", NULL,  ffREAD },
         { efNDX, NULL, NULL,  ffOPTRD },
         { efTPR, NULL, NULL,  ffREAD },
@@ -277,7 +370,7 @@ gmx_contact_line(int argc, char *argv[])
 
 #define NFILE asize(fnm)
 
-    gmx_output_env_t  *oenv;
+    gmx_output_env_t *oenv;
     if (!parse_common_args(&argc, argv, PCA_CAN_TIME,
                            NFILE, fnm, asize(pa), pa, asize(desc), desc, asize(bugs), bugs,
                            &oenv))
@@ -300,10 +393,10 @@ gmx_contact_line(int argc, char *argv[])
     get_index(&top->atoms, ftp2fn_null(efNDX, NFILE, fnm),
               1, grpsizes, index, grpnames);
 
-    struct RLims rlim {pa, asize(pa), rmin, rmax};
+    struct CLConf conf {pa, asize(pa), rmin, rmax};
 
     collect_indices(ftp2fn(efTRX, NFILE, fnm),
-                   *index, *grpsizes, rlim,
+                    *index, *grpsizes, conf,
                     top, ePBC, oenv);
 
     sfree(index);
