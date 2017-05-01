@@ -62,6 +62,8 @@
 
 using namespace std;
 
+#define DEBUG_CONTACTLINE
+
 /****************************************************************************
  * This program backtraces molecules from their final positions.            *
  * Petter Johansson, Stockholm 2016                                         *
@@ -95,12 +97,22 @@ struct RLims {
          rmax_ss;
 };
 
-static
-vector<int> find_interface_indices(const rvec         *x0,
-                                   const int          *grpindex,
-                                   const int           grpsize,
-                                   const struct RLims &rlim,
-                                   const t_pbc        *pbc)
+static bool
+is_inside_limits(const rvec x,
+                 const rvec rmin,
+                 const rvec rmax)
+{
+    return x[XX] >= rmin[XX] && x[XX] <= rmax[XX]
+        && x[YY] >= rmin[YY] && x[YY] <= rmax[YY]
+        && x[ZZ] >= rmin[ZZ] && x[ZZ] <= rmax[ZZ];
+}
+
+static vector<int>
+find_interface_indices(const rvec         *x0,
+                       const int          *grpindex,
+                       const int           grpsize,
+                       const struct RLims &rlim,
+                       const t_pbc        *pbc)
 {
     // Find indices within search volume
     vector<int> search_space;
@@ -111,25 +123,22 @@ vector<int> find_interface_indices(const rvec         *x0,
         const auto n = grpindex[i];
         const auto x1 = x0[n];
 
-        if (x1[XX] >= rlim.rmin_ss[XX] && x1[XX] <= rlim.rmax_ss[XX]
-            && x1[YY] >= rlim.rmin_ss[YY] && x1[YY] <= rlim.rmax_ss[YY]
-            && x1[ZZ] >= rlim.rmin_ss[ZZ] && x1[ZZ] <= rlim.rmax_ss[ZZ])
+        if (is_inside_limits(x1, rlim.rmin_ss, rlim.rmax_ss))
         {
             search_space.push_back(n);
-
-            if (x1[XX] >= rlim.rmin[XX] && x1[XX] <= rlim.rmax[XX]
-                && x1[YY] >= rlim.rmin[YY] && x1[YY] <= rlim.rmax[YY]
-                && x1[ZZ] >= rlim.rmin[ZZ] && x1[ZZ] <= rlim.rmax[ZZ])
+            if (is_inside_limits(x1, rlim.rmin, rlim.rmax))
             {
                 indices.push_back(n);
             }
         }
     }
 
+#ifdef DEBUG_CONTACTLINE
     fprintf(stderr, "Kept %lu (%lu) indices within the search volume. ",
             indices.size(), search_space.size());
+#endif
 
-    vector<int> cl_indices;
+    vector<int> interface_inds;
     rvec dx;
 
     // Outer loop over all atoms which should be tested
@@ -153,25 +162,27 @@ vector<int> find_interface_indices(const rvec         *x0,
             }
         }
 
-        if ((count >= rlim.nmin) && (count <= rlim.nmax))
+        if (count >= rlim.nmin && count <= rlim.nmax)
         {
-            cl_indices.push_back(i);
+            interface_inds.push_back(i);
         }
     }
 
-    fprintf(stderr, "Found %lu interface atoms.\n", cl_indices.size());
+#ifdef DEBUG_CONTACTLINE
+    fprintf(stderr, "Found %lu interface atoms.\n", interface_inds.size());
+#endif
 
-    return cl_indices;
+    return interface_inds;
 }
 
-static
-void collect_indices(const char             *fn,
-                     int                    *grpindex,
-                     int                     grpsize,
-                     struct RLims           &rlim,
-                     const t_topology       *top,
-                     const int               ePBC,
-                     const gmx_output_env_t *oenv)
+static void
+collect_indices(const char             *fn,
+                int                    *grpindex,
+                int                     grpsize,
+                struct RLims           &rlim,
+                const t_topology       *top,
+                const int               ePBC,
+                const gmx_output_env_t *oenv)
 {
     int num_atoms;
     rvec *x0;
@@ -198,7 +209,8 @@ void collect_indices(const char             *fn,
         gmx_rmpbc(gpbc, num_atoms, box, x0);
         auto indices = find_interface_indices(x0, grpindex, grpsize, rlim, pbc);
 
-        // Debug: write gro file
+// Debug: write gro file
+#ifdef DEBUG_CONTACTLINE
         string outfile { "test.gro" };
         string title { "interface" };
         write_sto_conf_indexed(outfile.data(),
@@ -212,6 +224,7 @@ void collect_indices(const char             *fn,
                                indices.data());
 
                               break;
+#endif
     }
     while (read_next_x(oenv, status, &t, x0, box));
     gmx_rmpbc_done(gpbc);
@@ -225,7 +238,8 @@ void collect_indices(const char             *fn,
     return;
 }
 
-int gmx_contact_line(int argc, char *argv[])
+int
+gmx_contact_line(int argc, char *argv[])
 {
     const char        *desc[] = {
         "[THISMODULE] identifies molecules at the contact line.",
