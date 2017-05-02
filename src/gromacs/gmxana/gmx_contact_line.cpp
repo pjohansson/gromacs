@@ -41,6 +41,8 @@
 #include <cmath>
 #include <cstdlib>
 #include <cstring>
+#include <deque>
+#include <numeric>
 #include <string>
 #include <vector>
 
@@ -118,8 +120,10 @@ struct CLConf {
          rmax_ss;
 };
 
-struct ContactLine {
-    ContactLine(const rvec *x0, const vector<int> input_indices)
+
+struct Positions {
+    Positions(const rvec *x0,
+              const vector<int> input_indices)
         :indices{input_indices}
     {
         for (auto i : indices)
@@ -127,9 +131,22 @@ struct ContactLine {
             positions.push_back({x0[i][XX], x0[i][YY], x0[i][ZZ]});
         }
     }
-
     vector<int> indices;
     vector<array<real, DIM>> positions;
+};
+
+struct Interface {
+    Interface(const rvec *x0,
+              const vector<int> cl_indices,
+              const vector<int> bottom_indices,
+              const vector<int> int_indices)
+        :contact_line{Positions {x0, cl_indices}},
+         bottom{Positions {x0, bottom_indices}},
+         interface{Positions {x0, int_indices}} {}
+
+    Positions contact_line,
+              bottom,
+              interface;
 };
 
 static bool
@@ -137,9 +154,9 @@ is_inside_limits(const rvec x,
                  const rvec rmin,
                  const rvec rmax)
 {
-    return x[XX] >= rmin[XX] && x[XX] <= rmax[XX]
-        && x[YY] >= rmin[YY] && x[YY] <= rmax[YY]
-        && x[ZZ] >= rmin[ZZ] && x[ZZ] <= rmax[ZZ];
+    return x[XX] >= rmin[XX] && x[XX] < rmax[XX]
+        && x[YY] >= rmin[YY] && x[YY] < rmax[YY]
+        && x[ZZ] >= rmin[ZZ] && x[ZZ] < rmax[ZZ];
 }
 
 static vector<int>
@@ -231,9 +248,9 @@ slice_system_along_dir(const rvec *x0,
 }
 
 static vector<int>
-find_bottom_layer(const rvec *x0,
-                  const vector<int> interface,
-                  const CLConf &conf)
+find_bottom_layer_indices(const rvec *x0,
+                          const vector<int> interface,
+                          const CLConf &conf)
 {
     const auto slice_indices = slice_system_along_dir(x0, interface, conf, ZZ);
 
@@ -255,19 +272,16 @@ find_bottom_layer(const rvec *x0,
 
     }
 
-    auto bottom = slice_indices.at(prev_slice);
-
-    return bottom;
+    return slice_indices.at(prev_slice);
 }
 
 static vector<int>
 find_contact_line_indices(const rvec *x0,
-                          const vector<int> interface,
+                          const vector<int> bottom,
                           const CLConf &conf)
 {
-    // Identify the bottom layer, then slice it along the y axis
-    // to find the minimum and maximum x coordinates of the contact line
-    const auto bottom = find_bottom_layer(x0, interface, conf);
+    // Slice the bottom along the y axis to find the minimum
+    // and maximum x coordinates of the contact line
     const auto yslices = slice_system_along_dir(x0, bottom, conf, YY);
     vector<int> indices;
 
@@ -298,7 +312,114 @@ find_contact_line_indices(const rvec *x0,
     return indices;
 }
 
-static vector<ContactLine>
+static vector<int>
+find_shared_indices(const vector<int> current,
+                    const vector<int> prev)
+{
+    vector<int> shared_indices;
+
+    for (auto i : current)
+    {
+        bool is_shared = false;
+
+        for (auto j : prev)
+        {
+            if (i == j)
+            {
+                is_shared = true;
+                break;
+            }
+        }
+
+        if (is_shared)
+        {
+            shared_indices.push_back(i);
+        }
+    }
+
+    return shared_indices;
+}
+
+static vector<int>
+find_contact_line_advancements(const Positions &current,
+                               const Positions &previous,
+                               const CLConf    &conf)
+{
+    constexpr real max_dist = 0.3;
+    vector<int> inds_advanced;
+
+    auto cur = current.positions.cbegin();
+    auto prev = previous.positions.cbegin();
+    size_t i = 0;
+
+    while ((cur != current.positions.cend())
+            && (prev != previous.positions.cend()))
+    {
+        const auto xcur = (*cur)[XX];
+        const auto xprev = (*prev)[XX];
+
+        if ((xcur - xprev) >= max_dist)
+        {
+            const auto index = current.indices[i];
+            inds_advanced.push_back(index);
+        }
+
+        ++cur;
+        ++prev;
+        ++i;
+    }
+
+#ifdef DEBUG_CONTACTLINE
+    fprintf(stderr, "Atoms which advanced the contact line:");
+    for (auto i : inds_advanced)
+    {
+        fprintf(stderr, " %d", i);
+    }
+    fprintf(stderr, "\n");
+#endif
+
+    return inds_advanced;
+}
+
+static unsigned int
+find_indices_at_previous_contact_line(const vector<int> indices,
+                                      const Interface& current,
+                                      const Interface& previous)
+{
+    // How many were at the contact line in the previous frame?
+    // The first check is whether they came from there or not.
+    // We then calculate the fraction compared to all advancements.
+    const auto at_previous_contact_line = find_shared_indices(
+        indices, previous.contact_line.indices);
+
+#ifdef DEBUG_CONTACTLINE
+    fprintf(stderr, "Of which were at the previous contact line:");
+    for (auto i : at_previous_contact_line)
+    {
+        fprintf(stderr, " %d", i);
+    }
+    fprintf(stderr, "\n");
+#endif
+
+    return at_previous_contact_line.size();
+}
+
+static void
+analyze_advancement(const vector<unsigned int>& from_previous,
+                    const vector<unsigned int>& num_advanced)
+{
+    const auto sum_previous = accumulate(
+        from_previous.cbegin(), from_previous.cend(), 0);
+    const auto sum_total = accumulate(
+        num_advanced.cbegin(), num_advanced.cend(), 0);
+
+    const auto fraction_old =
+        static_cast<real>(sum_previous) / static_cast<real>(sum_total);
+
+    fprintf(stderr, "Fraction of contact line molecules that came from the previous contact line:\n%.3f (%.3f)\n", fraction_old, 1.0 - fraction_old);
+}
+
+static void
 collect_contact_lines(const char             *fn,
                       int                    *grpindex,
                       int                     grpsize,
@@ -324,20 +445,64 @@ collect_contact_lines(const char             *fn,
     set_pbc(pbc, ePBC, box);
     conf.set_box_limits(box);
 
-    vector<ContactLine> contact_lines;
+    //vector<ContactLine> contact_lines;
+    deque<Interface> interfaces;
 
 #ifdef DEBUG_CONTACTLINE
     int i = 0;
 #endif
+
+    vector<unsigned int> num_advanced;
+    vector<unsigned int> from_previous_contact_line;
 
     do
     {
         gmx_rmpbc(gpbc, num_atoms, box, x0);
         const auto interface = find_interface_indices(x0, grpindex, grpsize,
                                                       conf, pbc);
-        auto contact_line_inds = find_contact_line_indices(x0, interface, conf);
-        ContactLine contact_line {x0, contact_line_inds};
-        contact_lines.push_back(contact_line);
+        const auto bottom = find_bottom_layer_indices(x0, interface, conf);
+        auto contact_line = find_contact_line_indices(x0, bottom, conf);
+
+        Interface current {x0, contact_line, bottom, interface};
+        interfaces.push_back(current);
+
+        if (interfaces.size() > conf.stride)
+        {
+            const auto& previous = interfaces.front();
+            const auto& prev_contact_line = previous.contact_line.indices;
+
+            // Find the indices which advanced the contact line
+            // and analyze them
+            const auto inds_advanced = find_contact_line_advancements(
+                                            current.contact_line,
+                                            previous.contact_line,
+                                            conf);
+
+            num_advanced.push_back(inds_advanced.size());
+            from_previous_contact_line.push_back(
+                find_indices_at_previous_contact_line(inds_advanced,
+                                                      current,
+                                                      previous)
+            );
+
+            interfaces.pop_front();
+#ifdef DEBUG_CONTACTLINE
+            if (inds_advanced.size() > 0)
+            {
+                const auto fraction =
+                    static_cast<real>(from_previous_contact_line.back())
+                    / static_cast<real>(num_advanced.back());
+                fprintf(stderr, "%lu of %lu: %.2f\n",
+                        from_previous_contact_line.back(),
+                        num_advanced.back(),
+                        fraction);
+            }
+            else
+            {
+                fprintf(stderr, "No advancement.");
+            }
+#endif
+        }
 
 #ifdef DEBUG_CONTACTLINE
         if (i++ == 4)
@@ -346,8 +511,9 @@ collect_contact_lines(const char             *fn,
             string title { "interface" };
             write_sto_conf_indexed(outfile.data(), title.data(),
                                    &top->atoms, x0, NULL, ePBC, box,
-                                   contact_line.indices.size(),
-                                   contact_line.indices.data());
+                                   contact_line.size(),
+                                   contact_line.data());
+
             break;
         }
 #endif
@@ -359,82 +525,7 @@ collect_contact_lines(const char             *fn,
     fprintf(stderr, "\nRead %d frames from trajectory.\n", 0);
     sfree(x0);
 
-    return contact_lines;
-}
-
-static vector<int>
-find_new_indices(const vector<int> current,
-                 const vector<int> prev)
-{
-    vector<int> new_indices;
-
-#ifdef DEBUG_CONTACTLINE
-    fprintf(stderr, "Current:");
-    for (auto i : current)
-    {
-        fprintf(stderr, " %d", i);
-    }
-    fprintf(stderr, "\nPrevious:");
-    for (auto i : prev)
-    {
-        fprintf(stderr, " %d", i);
-    }
-#endif
-
-    for (auto i : current)
-    {
-        bool is_in_both = false;
-
-        for (auto j : prev)
-        {
-            if (i == j)
-            {
-                is_in_both = true;
-                break;
-            }
-        }
-
-        if (!is_in_both)
-        {
-            new_indices.push_back(i);
-        }
-    }
-#ifdef DEBUG_CONTACTLINE
-    fprintf(stderr, "\nNew:");
-    for (auto i : new_indices)
-    {
-        fprintf(stderr, " %d", i);
-    }
-    fprintf(stderr, "\n");
-#endif
-
-    return new_indices;
-}
-
-static void
-analyze_contact_lines(const vector<ContactLine> contact_lines,
-                      const CLConf              conf)
-{
-    if (contact_lines.size() < (static_cast<unsigned int>(conf.stride) + 1))
-    {
-        gmx_fatal(FARGS, "The used stride is larger than the read contact lines.");
-    }
-
-    auto current = contact_lines.cbegin();
-    auto prev = contact_lines.cbegin();
-
-    for (auto i = 0; i < conf.stride; ++i)
-    {
-        ++current;
-    }
-
-    while (current != contact_lines.cend())
-    {
-        find_new_indices((*current).indices, (*prev).indices);
-        ++current;
-        ++prev;
-    }
-    fprintf(stderr, "\n");
+    analyze_advancement(from_previous_contact_line, num_advanced);
 }
 
 int
@@ -507,12 +598,12 @@ gmx_contact_line(int argc, char *argv[])
 
     struct CLConf conf {pa, asize(pa), rmin, rmax};
 
-    const auto contact_lines = collect_contact_lines(
+    collect_contact_lines(
         ftp2fn(efTRX, NFILE, fnm),
         *index, *grpsizes, conf,
         top, ePBC, oenv
     );
-    analyze_contact_lines(contact_lines, conf);
+    //analyze_contact_lines(contact_lines, conf);
 
     sfree(index);
     sfree(grpnames);
