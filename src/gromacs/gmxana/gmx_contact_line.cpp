@@ -445,20 +445,14 @@ collect_contact_lines(const char             *fn,
     set_pbc(pbc, ePBC, box);
     conf.set_box_limits(box);
 
-    //vector<ContactLine> contact_lines;
     deque<Interface> interfaces;
-
-#ifdef DEBUG_CONTACTLINE
-    int i = 0;
-#endif
-
     vector<unsigned int> num_advanced;
     vector<unsigned int> from_previous_contact_line;
 
     do
     {
         gmx_rmpbc(gpbc, num_atoms, box, x0);
-        const auto interface = find_interface_indices(x0, grpindex, grpsize,
+        auto interface = find_interface_indices(x0, grpindex, grpsize,
                                                       conf, pbc);
         const auto bottom = find_bottom_layer_indices(x0, interface, conf);
         auto contact_line = find_contact_line_indices(x0, bottom, conf);
@@ -486,36 +480,43 @@ collect_contact_lines(const char             *fn,
             );
 
             interfaces.pop_front();
+
 #ifdef DEBUG_CONTACTLINE
             if (inds_advanced.size() > 0)
             {
                 const auto fraction =
                     static_cast<real>(from_previous_contact_line.back())
                     / static_cast<real>(num_advanced.back());
-                fprintf(stderr, "%lu of %lu: %.2f\n",
+                fprintf(stderr, "%lu of %lu (%.2f) advancements were MKT like\n",
                         from_previous_contact_line.back(),
                         num_advanced.back(),
                         fraction);
             }
             else
             {
-                fprintf(stderr, "No advancement.");
+                fprintf(stderr, "No advancement was made.");
             }
 #endif
         }
 
 #ifdef DEBUG_CONTACTLINE
-        if (i++ == 4)
-        {
-            string outfile { "test.gro" };
-            string title { "interface" };
-            write_sto_conf_indexed(outfile.data(), title.data(),
-                                   &top->atoms, x0, NULL, ePBC, box,
-                                   contact_line.size(),
-                                   contact_line.data());
+        constexpr size_t MAXLEN = 256;
+        char debug_filename[MAXLEN];
+        char debug_title[MAXLEN];
 
-            break;
-        }
+        snprintf(debug_filename, MAXLEN, "contact_line_%.1fps.gro", t);
+        snprintf(debug_title, MAXLEN, "contact_line");
+        write_sto_conf_indexed(debug_filename, debug_title,
+                               &top->atoms, x0, NULL, ePBC, box,
+                               contact_line.size(),
+                               contact_line.data());
+
+        snprintf(debug_filename, MAXLEN, "interface_%.1fps.gro", t);
+        snprintf(debug_title, MAXLEN, "interface");
+        write_sto_conf_indexed(debug_filename, debug_title,
+                               &top->atoms, x0, NULL, ePBC, box,
+                               interface.size(),
+                               interface.data());
 #endif
     }
     while (read_next_x(oenv, status, &t, x0, box));
