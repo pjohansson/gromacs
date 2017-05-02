@@ -77,17 +77,18 @@ struct CLConf {
          cutoff2{cutoff * cutoff},
          precision{static_cast<real>(opt2parg_real("-prec", pasize, pa))},
          nmin{static_cast<int>(opt2parg_int("-nmin", pasize, pa))},
-         nmax{static_cast<int>(opt2parg_int("-nmax", pasize, pa))},
-         stride{static_cast<int>(opt2parg_int("-stride", pasize, pa))}
+         nmax{static_cast<int>(opt2parg_int("-nmax", pasize, pa))}
     {
         copy_rvec(rmin_in, rmin);
         copy_rvec(rmax_in, rmax);
         set_search_space_limits();
 
-        if (stride < 1)
+        const auto stride_buf = opt2parg_int("-stride", pasize, pa);
+        if (stride_buf < 1)
         {
             gmx_fatal(FARGS, "Input stride must be positive.");
         }
+        stride = static_cast<unsigned int>(stride_buf);
     }
 
     void set_box_limits(const matrix box)
@@ -112,8 +113,8 @@ struct CLConf {
          cutoff2,
          precision;
     int nmin,
-        nmax,
-        stride;
+        nmax;
+    unsigned int stride;
     rvec rmin,
          rmax,
          rmin_ss,
@@ -131,6 +132,7 @@ struct Positions {
             positions.push_back({x0[i][XX], x0[i][YY], x0[i][ZZ]});
         }
     }
+
     vector<int> indices;
     vector<array<real, DIM>> positions;
 };
@@ -452,21 +454,20 @@ collect_contact_lines(const char             *fn,
     do
     {
         gmx_rmpbc(gpbc, num_atoms, box, x0);
-        auto interface = find_interface_indices(x0, grpindex, grpsize,
-                                                      conf, pbc);
+        const auto interface = find_interface_indices(x0, grpindex, grpsize,
+                                                conf, pbc);
         const auto bottom = find_bottom_layer_indices(x0, interface, conf);
-        auto contact_line = find_contact_line_indices(x0, bottom, conf);
+        const auto contact_line = find_contact_line_indices(x0, bottom, conf);
 
         Interface current {x0, contact_line, bottom, interface};
         interfaces.push_back(current);
 
         if (interfaces.size() > conf.stride)
         {
-            const auto& previous = interfaces.front();
-            const auto& prev_contact_line = previous.contact_line.indices;
-
             // Find the indices which advanced the contact line
-            // and analyze them
+            // by comparing with the previous frame (separated by stride).
+            // Then analyze where the advancing atoms came from.
+            const auto& previous = interfaces.front();
             const auto inds_advanced = find_contact_line_advancements(
                                             current.contact_line,
                                             previous.contact_line,
@@ -487,7 +488,7 @@ collect_contact_lines(const char             *fn,
                 const auto fraction =
                     static_cast<real>(from_previous_contact_line.back())
                     / static_cast<real>(num_advanced.back());
-                fprintf(stderr, "%lu of %lu (%.2f) advancements were MKT like\n",
+                fprintf(stderr, "%u of %u (%.2f) advancements were MKT like\n",
                         from_previous_contact_line.back(),
                         num_advanced.back(),
                         fraction);
@@ -525,6 +526,7 @@ collect_contact_lines(const char             *fn,
     close_trj(status);
     fprintf(stderr, "\nRead %d frames from trajectory.\n", 0);
     sfree(x0);
+    delete(pbc);
 
     analyze_advancement(from_previous_contact_line, num_advanced);
 }
