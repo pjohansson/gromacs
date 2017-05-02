@@ -439,7 +439,7 @@ static void write_hconf_box(FILE *out, const matrix box)
 }
 
 void write_hconf_indexed_p(FILE *out, const char *title, const t_atoms *atoms,
-                           int nx, const int index[],
+                           const int nx, const int index[],
                            const rvec *x, const rvec *v, const matrix box)
 {
     char resnm[6], nm[6];

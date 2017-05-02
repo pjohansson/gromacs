@@ -58,7 +58,7 @@ int read_g96_conf(FILE *fp, const char *infile, struct t_trxframe *fr,
  * title, atoms, x, v can all be NULL, in which case they won't be read *
  * line holds the previous line for trajectory reading                  */
 
-void write_g96_conf(FILE *out, const t_trxframe *fr, int nindex, const int *index);
+void write_g96_conf(FILE *out, const t_trxframe *fr, const int nindex, const int *index);
 /* write a Gromos96 coordinate file or trajectory frame *
  * index can be NULL                                    */
 
