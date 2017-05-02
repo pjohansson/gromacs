@@ -60,7 +60,7 @@ int gro_first_x_or_v(FILE *status, struct t_trxframe *fr);
 /* read first/next x and/or v frame from gro file */
 
 void write_hconf_indexed_p(FILE *out, const char *title, const t_atoms *atoms,
-                           int nx, const int index[],
+                           const int nx, const int index[],
                            const rvec *x, const rvec *v, const matrix box);
 
 void write_hconf_mtop(FILE *out, const char *title, struct gmx_mtop_t *mtop,

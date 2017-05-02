@@ -54,7 +54,7 @@ struct t_topology;
 void write_sto_conf_indexed(const char *outfile, const char *title,
                             const t_atoms *atoms,
                             const rvec x[], const rvec *v, int ePBC, const matrix box,
-                            int nindex, int index[]);
+                            const int nindex, const int index[]);
 /* like write_sto_conf, but indexed */
 
 void write_sto_conf(const char *outfile, const char *title,
