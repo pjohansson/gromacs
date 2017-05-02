@@ -65,20 +65,27 @@ using namespace std;
 #define DEBUG_CONTACTLINE
 
 /****************************************************************************
- * This program backtraces molecules from their final positions.            *
- * Petter Johansson, Stockholm 2016                                         *
+ * This program analyzes how contact line molecules advance.                *
+ * Petter Johansson, Stockholm 2017                                         *
  ****************************************************************************/
 
 struct CLConf {
     CLConf(t_pargs pa[], const int pasize, const rvec rmin_in, const rvec rmax_in)
         :cutoff{static_cast<real>(opt2parg_real("-co", pasize, pa))},
          cutoff2{cutoff * cutoff},
+         precision{static_cast<real>(opt2parg_real("-prec", pasize, pa))},
          nmin{static_cast<int>(opt2parg_int("-nmin", pasize, pa))},
-         nmax{static_cast<int>(opt2parg_int("-nmax", pasize, pa))}
+         nmax{static_cast<int>(opt2parg_int("-nmax", pasize, pa))},
+         stride{static_cast<int>(opt2parg_int("-stride", pasize, pa))}
     {
         copy_rvec(rmin_in, rmin);
         copy_rvec(rmax_in, rmax);
         set_search_space_limits();
+
+        if (stride < 1)
+        {
+            gmx_fatal(FARGS, "Input stride must be positive.");
+        }
     }
 
     void set_box_limits(const matrix box)
@@ -100,13 +107,29 @@ struct CLConf {
     }
 
     real cutoff,
-         cutoff2;
+         cutoff2,
+         precision;
     int nmin,
-        nmax;
+        nmax,
+        stride;
     rvec rmin,
          rmax,
          rmin_ss,
          rmax_ss;
+};
+
+struct ContactLine {
+    ContactLine(const rvec *x0, const vector<int> input_indices)
+        :indices{input_indices}
+    {
+        for (auto i : indices)
+        {
+            positions.push_back({x0[i][XX], x0[i][YY], x0[i][ZZ]});
+        }
+    }
+
+    vector<int> indices;
+    vector<array<real, DIM>> positions;
 };
 
 static bool
@@ -180,7 +203,7 @@ find_interface_indices(const rvec          *x0,
     }
 
 #ifdef DEBUG_CONTACTLINE
-    fprintf(stderr, "Found %lu interface atoms ", interface_inds.size());
+    fprintf(stderr, "Found %lu interface ", interface_inds.size());
 #endif
 
     return interface_inds;
@@ -190,11 +213,10 @@ static vector<vector<int>>
 slice_system_along_dir(const rvec *x0,
                        const vector<int> interface,
                        const CLConf &conf,
-                       const real slice_precision,
                        const int dir)
 {
     // Identify the floor by slicing the system and finding the lowest peak
-    const int num_slices = static_cast<int>(ceil((conf.rmax[dir] - conf.rmin[dir]) / slice_precision));
+    const int num_slices = static_cast<int>(ceil((conf.rmax[dir] - conf.rmin[dir]) / conf.precision));
     const real final_slice_precision = (conf.rmax[dir] - conf.rmin[dir]) / num_slices;
 
     vector<vector<int>> slice_indices (num_slices);
@@ -213,7 +235,7 @@ find_bottom_layer(const rvec *x0,
                   const vector<int> interface,
                   const CLConf &conf)
 {
-    const auto slice_indices = slice_system_along_dir(x0, interface, conf, 0.3, ZZ);
+    const auto slice_indices = slice_system_along_dir(x0, interface, conf, ZZ);
 
     // Track the maximum count, when a decrease is found the peak
     // was in the previous slice
@@ -246,7 +268,7 @@ find_contact_line_indices(const rvec *x0,
     // Identify the bottom layer, then slice it along the y axis
     // to find the minimum and maximum x coordinates of the contact line
     const auto bottom = find_bottom_layer(x0, interface, conf);
-    const auto yslices = slice_system_along_dir(x0, bottom, conf, 0.3, YY);
+    const auto yslices = slice_system_along_dir(x0, bottom, conf, YY);
     vector<int> indices;
 
     for (auto slice : yslices)
@@ -276,14 +298,14 @@ find_contact_line_indices(const rvec *x0,
     return indices;
 }
 
-static void
-collect_indices(const char             *fn,
-                int                    *grpindex,
-                int                     grpsize,
-                struct CLConf          &conf,
-                const t_topology       *top,
-                const int               ePBC,
-                const gmx_output_env_t *oenv)
+static vector<ContactLine>
+collect_contact_lines(const char             *fn,
+                      int                    *grpindex,
+                      int                     grpsize,
+                      struct CLConf          &conf,
+                      const t_topology       *top,
+                      const int               ePBC,
+                      const gmx_output_env_t *oenv)
 {
     int num_atoms;
     rvec *x0;
@@ -302,48 +324,134 @@ collect_indices(const char             *fn,
     set_pbc(pbc, ePBC, box);
     conf.set_box_limits(box);
 
+    vector<ContactLine> contact_lines;
+
+#ifdef DEBUG_CONTACTLINE
+    int i = 0;
+#endif
+
     do
     {
         gmx_rmpbc(gpbc, num_atoms, box, x0);
         const auto interface = find_interface_indices(x0, grpindex, grpsize,
                                                       conf, pbc);
-        auto contact_line = find_contact_line_indices(x0, interface, conf);
+        auto contact_line_inds = find_contact_line_indices(x0, interface, conf);
+        ContactLine contact_line {x0, contact_line_inds};
+        contact_lines.push_back(contact_line);
 
-// Debug: write gro file
 #ifdef DEBUG_CONTACTLINE
-        string outfile { "test.gro" };
-        string title { "interface" };
-        write_sto_conf_indexed(outfile.data(), title.data(),
-                               &top->atoms, x0, NULL, ePBC, box,
-                               contact_line.size(), contact_line.data());
-        break;
+        if (i++ == 4)
+        {
+            string outfile { "test.gro" };
+            string title { "interface" };
+            write_sto_conf_indexed(outfile.data(), title.data(),
+                                   &top->atoms, x0, NULL, ePBC, box,
+                                   contact_line.indices.size(),
+                                   contact_line.indices.data());
+            break;
+        }
 #endif
     }
     while (read_next_x(oenv, status, &t, x0, box));
     gmx_rmpbc_done(gpbc);
 
     close_trj(status);
-    fprintf(stderr, "\nRead %d frames from trajectory.\n",
-            0);
-
+    fprintf(stderr, "\nRead %d frames from trajectory.\n", 0);
     sfree(x0);
 
-    return;
+    return contact_lines;
+}
+
+static vector<int>
+find_new_indices(const vector<int> current,
+                 const vector<int> prev)
+{
+    vector<int> new_indices;
+
+#ifdef DEBUG_CONTACTLINE
+    fprintf(stderr, "Current:");
+    for (auto i : current)
+    {
+        fprintf(stderr, " %d", i);
+    }
+    fprintf(stderr, "\nPrevious:");
+    for (auto i : prev)
+    {
+        fprintf(stderr, " %d", i);
+    }
+#endif
+
+    for (auto i : current)
+    {
+        bool is_in_both = false;
+
+        for (auto j : prev)
+        {
+            if (i == j)
+            {
+                is_in_both = true;
+                break;
+            }
+        }
+
+        if (!is_in_both)
+        {
+            new_indices.push_back(i);
+        }
+    }
+#ifdef DEBUG_CONTACTLINE
+    fprintf(stderr, "\nNew:");
+    for (auto i : new_indices)
+    {
+        fprintf(stderr, " %d", i);
+    }
+    fprintf(stderr, "\n");
+#endif
+
+    return new_indices;
+}
+
+static void
+analyze_contact_lines(const vector<ContactLine> contact_lines,
+                      const CLConf              conf)
+{
+    if (contact_lines.size() < (static_cast<unsigned int>(conf.stride) + 1))
+    {
+        gmx_fatal(FARGS, "The used stride is larger than the read contact lines.");
+    }
+
+    auto current = contact_lines.cbegin();
+    auto prev = contact_lines.cbegin();
+
+    for (auto i = 0; i < conf.stride; ++i)
+    {
+        ++current;
+    }
+
+    while (current != contact_lines.cend())
+    {
+        find_new_indices((*current).indices, (*prev).indices);
+        ++current;
+        ++prev;
+    }
+    fprintf(stderr, "\n");
 }
 
 int
 gmx_contact_line(int argc, char *argv[])
 {
-    const char        *desc[] = {
-        "[THISMODULE] identifies molecules at the contact line.",
+    const char *desc[] = {
+        "[THISMODULE] analyzes molecules at the contact line.",
         "",
     };
 
     static rvec rmin = { 0.0,  0.0,  0.0},
                 rmax = {-1.0, -1.0, -1.0};
     static int nmin = 20,
-               nmax = 100;
-    static real cutoff = 1.0;
+               nmax = 100,
+               stride = 1;
+    static real cutoff = 1.0,
+                precision = 0.3;
 
     t_pargs pa[] = {
         { "-rmin", FALSE, etRVEC, { rmin },
@@ -356,6 +464,10 @@ gmx_contact_line(int argc, char *argv[])
           "Minimum number of atoms within cutoff." },
         { "-nmax", FALSE, etINT, { &nmax },
           "Maximum number of atoms within cutoff." },
+        { "-prec", FALSE, etREAL, { &precision },
+          "Precision of slices along y and z (nm)." },
+        { "-stride", FALSE, etINT, { &stride },
+          "Stride between contact line comparisons." },
     };
 
     const char *bugs[] = {
@@ -395,9 +507,12 @@ gmx_contact_line(int argc, char *argv[])
 
     struct CLConf conf {pa, asize(pa), rmin, rmax};
 
-    collect_indices(ftp2fn(efTRX, NFILE, fnm),
-                    *index, *grpsizes, conf,
-                    top, ePBC, oenv);
+    const auto contact_lines = collect_contact_lines(
+        ftp2fn(efTRX, NFILE, fnm),
+        *index, *grpsizes, conf,
+        top, ePBC, oenv
+    );
+    analyze_contact_lines(contact_lines, conf);
 
     sfree(index);
     sfree(grpnames);
