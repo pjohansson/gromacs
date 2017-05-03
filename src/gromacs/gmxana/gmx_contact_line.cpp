@@ -36,14 +36,15 @@
  */
 #include "gmxpre.h"
 
+#include <algorithm> // find
 #include <array>
 #include <cctype>
 #include <cmath>
 #include <cstdlib>
 #include <cstring>
 #include <deque>
-#include <numeric>
-#include <string>
+#include <iterator> // end
+#include <numeric> // accumulate
 #include <vector>
 
 #include "gromacs/commandline/pargs.h"
@@ -76,6 +77,7 @@ struct CLConf {
         :cutoff{static_cast<real>(opt2parg_real("-co", pasize, pa))},
          cutoff2{cutoff * cutoff},
          precision{static_cast<real>(opt2parg_real("-prec", pasize, pa))},
+         dx{static_cast<real>(opt2parg_real("-dx", pasize, pa))},
          nmin{static_cast<int>(opt2parg_int("-nmin", pasize, pa))},
          nmax{static_cast<int>(opt2parg_int("-nmax", pasize, pa))}
     {
@@ -111,7 +113,8 @@ struct CLConf {
 
     real cutoff,
          cutoff2,
-         precision;
+         precision,
+         dx;
     int nmin,
         nmax;
     unsigned int stride;
@@ -120,7 +123,6 @@ struct CLConf {
          rmin_ss,
          rmax_ss;
 };
-
 
 struct Positions {
     Positions(const rvec *x0,
@@ -271,7 +273,6 @@ find_bottom_layer_indices(const rvec *x0,
 
         max_value = count;
         ++prev_slice;
-
     }
 
     return slice_indices.at(prev_slice);
@@ -322,18 +323,7 @@ find_shared_indices(const vector<int> current,
 
     for (auto i : current)
     {
-        bool is_shared = false;
-
-        for (auto j : prev)
-        {
-            if (i == j)
-            {
-                is_shared = true;
-                break;
-            }
-        }
-
-        if (is_shared)
+        if (find(prev.cbegin(), prev.cend(), i) != end(prev))
         {
             shared_indices.push_back(i);
         }
@@ -343,32 +333,28 @@ find_shared_indices(const vector<int> current,
 }
 
 static vector<int>
-find_contact_line_advancements(const Positions &current,
-                               const Positions &previous,
-                               const CLConf    &conf)
+contact_line_advancements(const Positions &current,
+                          const Positions &previous,
+                          const CLConf    &conf)
 {
-    constexpr real max_dist = 0.3;
     vector<int> inds_advanced;
 
     auto cur = current.positions.cbegin();
     auto prev = previous.positions.cbegin();
-    size_t i = 0;
+    auto cur_index = current.indices.cbegin();
 
     while ((cur != current.positions.cend())
             && (prev != previous.positions.cend()))
     {
-        const auto xcur = (*cur)[XX];
-        const auto xprev = (*prev)[XX];
+        const auto xcur = (*cur++)[XX];
+        const auto xprev = (*prev++)[XX];
 
-        if ((xcur - xprev) >= max_dist)
+        if ((xcur - xprev) >= conf.dx)
         {
-            const auto index = current.indices[i];
-            inds_advanced.push_back(index);
+            inds_advanced.push_back(*cur_index);
         }
 
-        ++cur;
-        ++prev;
-        ++i;
+        ++cur_index;
     }
 
 #ifdef DEBUG_CONTACTLINE
@@ -383,40 +369,39 @@ find_contact_line_advancements(const Positions &current,
     return inds_advanced;
 }
 
-static unsigned int
-find_indices_at_previous_contact_line(const vector<int> indices,
-                                      const Interface& current,
-                                      const Interface& previous)
+static vector<int>
+at_previous_contact_line(const vector<int> indices,
+                         const Interface& current,
+                         const Interface& previous)
 {
     // How many were at the contact line in the previous frame?
     // The first check is whether they came from there or not.
-    // We then calculate the fraction compared to all advancements.
-    const auto at_previous_contact_line = find_shared_indices(
+    const auto previous_contact_line = find_shared_indices(
         indices, previous.contact_line.indices);
 
 #ifdef DEBUG_CONTACTLINE
     fprintf(stderr, "Of which were at the previous contact line:");
-    for (auto i : at_previous_contact_line)
+    for (auto i : previous_contact_line)
     {
         fprintf(stderr, " %d", i);
     }
     fprintf(stderr, "\n");
 #endif
 
-    return at_previous_contact_line.size();
+    return previous_contact_line;
 }
 
 static void
-analyze_advancement(const vector<unsigned int>& from_previous,
-                    const vector<unsigned int>& num_advanced)
+analyze_advancement(const vector<size_t>& from_previous,
+                    const vector<size_t>& num_advanced)
 {
     const auto sum_previous = accumulate(
         from_previous.cbegin(), from_previous.cend(), 0);
     const auto sum_total = accumulate(
         num_advanced.cbegin(), num_advanced.cend(), 0);
 
-    const auto fraction_old =
-        static_cast<real>(sum_previous) / static_cast<real>(sum_total);
+    const auto fraction_old = static_cast<real>(sum_previous)
+        / static_cast<real>(sum_total);
 
     fprintf(stderr, "Fraction of contact line molecules that came from the previous contact line:\n%.3f (%.3f)\n", fraction_old, 1.0 - fraction_old);
 }
@@ -447,15 +432,29 @@ collect_contact_lines(const char             *fn,
     set_pbc(pbc, ePBC, box);
     conf.set_box_limits(box);
 
+    // At each frame, count and save the number of atoms (ie. indices)
+    // who advanced the contact line and the number of those who
+    // came from the previous contact line. Keep them in a vector
+    // to analyze the entire set at the end of the trajectory analysis.
+    vector<size_t> num_advanced;
+    vector<size_t> num_from_previous;
+
+    // To compare against previous frames when calculating which
+    // indices advanced the contact line we need to save this
+    // information. A deque gives us a window of the last-to-first data.
     deque<Interface> interfaces;
-    vector<unsigned int> num_advanced;
-    vector<unsigned int> from_previous_contact_line;
+
+#ifdef DEBUG_CONTACTLINE
+    constexpr size_t MAXLEN = 80;
+    auto debug_filename = new char[MAXLEN];
+    auto debug_title = new char[MAXLEN];
+#endif
 
     do
     {
         gmx_rmpbc(gpbc, num_atoms, box, x0);
-        const auto interface = find_interface_indices(x0, grpindex, grpsize,
-                                                conf, pbc);
+        const auto interface = find_interface_indices(
+            x0, grpindex, grpsize, conf, pbc);
         const auto bottom = find_bottom_layer_indices(x0, interface, conf);
         const auto contact_line = find_contact_line_indices(x0, bottom, conf);
 
@@ -464,21 +463,14 @@ collect_contact_lines(const char             *fn,
 
         if (interfaces.size() > conf.stride)
         {
-            // Find the indices which advanced the contact line
-            // by comparing with the previous frame (separated by stride).
-            // Then analyze where the advancing atoms came from.
             const auto& previous = interfaces.front();
-            const auto inds_advanced = find_contact_line_advancements(
-                                            current.contact_line,
-                                            previous.contact_line,
-                                            conf);
+            const auto inds_advanced = contact_line_advancements(
+                current.contact_line, previous.contact_line, conf);
+            const auto from_previous = at_previous_contact_line(
+                inds_advanced, current, previous);
 
             num_advanced.push_back(inds_advanced.size());
-            from_previous_contact_line.push_back(
-                find_indices_at_previous_contact_line(inds_advanced,
-                                                      current,
-                                                      previous)
-            );
+            num_from_previous.push_back(from_previous.size());
 
             interfaces.pop_front();
 
@@ -486,25 +478,21 @@ collect_contact_lines(const char             *fn,
             if (inds_advanced.size() > 0)
             {
                 const auto fraction =
-                    static_cast<real>(from_previous_contact_line.back())
+                    static_cast<real>(num_from_previous.back())
                     / static_cast<real>(num_advanced.back());
-                fprintf(stderr, "%u of %u (%.2f) advancements were MKT like\n",
-                        from_previous_contact_line.back(),
+                fprintf(stderr, "%lu of %lu (%.2f) advancements were hops.\n",
+                        num_from_previous.back(),
                         num_advanced.back(),
                         fraction);
             }
             else
             {
-                fprintf(stderr, "No advancement was made.");
+                fprintf(stderr, "No advancement was made.\n");
             }
 #endif
         }
 
 #ifdef DEBUG_CONTACTLINE
-        constexpr size_t MAXLEN = 256;
-        char debug_filename[MAXLEN];
-        char debug_title[MAXLEN];
-
         snprintf(debug_filename, MAXLEN, "contact_line_%.1fps.gro", t);
         snprintf(debug_title, MAXLEN, "contact_line");
         write_sto_conf_indexed(debug_filename, debug_title,
@@ -523,12 +511,17 @@ collect_contact_lines(const char             *fn,
     while (read_next_x(oenv, status, &t, x0, box));
     gmx_rmpbc_done(gpbc);
 
+#ifdef DEBUG_CONTACTLINE
+    delete[] debug_filename;
+    delete[] debug_title;
+#endif
+
     close_trj(status);
     fprintf(stderr, "\nRead %d frames from trajectory.\n", 0);
     sfree(x0);
-    delete(pbc);
+    delete pbc;
 
-    analyze_advancement(from_previous_contact_line, num_advanced);
+    analyze_advancement(num_from_previous, num_advanced);
 }
 
 int
@@ -545,7 +538,8 @@ gmx_contact_line(int argc, char *argv[])
                nmax = 100,
                stride = 1;
     static real cutoff = 1.0,
-                precision = 0.3;
+                precision = 0.3,
+                dx = 0.3;
 
     t_pargs pa[] = {
         { "-rmin", FALSE, etRVEC, { rmin },
@@ -560,6 +554,8 @@ gmx_contact_line(int argc, char *argv[])
           "Maximum number of atoms within cutoff." },
         { "-prec", FALSE, etREAL, { &precision },
           "Precision of slices along y and z (nm)." },
+        { "-dx", FALSE, etREAL, { &dx },
+          "Minimum distance for contact line advancement along x (nm)." },
         { "-stride", FALSE, etINT, { &stride },
           "Stride between contact line comparisons." },
     };
@@ -606,7 +602,6 @@ gmx_contact_line(int argc, char *argv[])
         *index, *grpsizes, conf,
         top, ePBC, oenv
     );
-    //analyze_contact_lines(contact_lines, conf);
 
     sfree(index);
     sfree(grpnames);
