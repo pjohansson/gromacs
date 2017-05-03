@@ -44,7 +44,7 @@
 #include <cstring>
 #include <deque>
 #include <iterator> // end
-#include <numeric> // accumulate
+#include <tuple>
 #include <vector>
 
 #include "gromacs/commandline/pargs.h"
@@ -65,7 +65,7 @@
 
 using namespace std;
 
-#define DEBUG_CONTACTLINE
+// #define DEBUG_CONTACTLINE
 
 /****************************************************************************
  * This program analyzes how contact line molecules advance.                *
@@ -122,6 +122,11 @@ struct CLConf {
          rmax,
          rmin_ss,
          rmax_ss;
+};
+
+struct CLData {
+    vector<real> times,
+                 fractions;
 };
 
 struct Positions {
@@ -391,29 +396,58 @@ at_previous_contact_line(const vector<int> indices,
     return previous_contact_line;
 }
 
-static void
+static vector<real>
 analyze_advancement(const vector<size_t>& from_previous,
                     const vector<size_t>& num_advanced)
 {
-    const auto sum_previous = accumulate(
-        from_previous.cbegin(), from_previous.cend(), 0);
-    const auto sum_total = accumulate(
-        num_advanced.cbegin(), num_advanced.cend(), 0);
+    auto from = from_previous.cbegin();
+    auto total = num_advanced.cbegin();
 
-    const auto fraction_old = static_cast<real>(sum_previous)
-        / static_cast<real>(sum_total);
+    real sum_total = 0.0,
+         sum_previous = 0.0,
+         sum_fractions = 0.0;
 
-    fprintf(stderr, "Fraction of contact line molecules that came from the previous contact line:\n%.3f (%.3f)\n", fraction_old, 1.0 - fraction_old);
+    vector<real> fractions;
+
+    while (from != from_previous.cend())
+    {
+        const auto tot = static_cast<real>(*total++);
+        const auto prev = static_cast<real>(*from++);
+
+        sum_total += tot;
+        sum_previous += prev;
+
+        if (tot > 0.0)
+        {
+            fractions.push_back(prev / tot);
+            sum_fractions += fractions.back();
+        }
+    }
+
+    const auto fraction = sum_previous / sum_total;
+    const real mean = sum_fractions / static_cast<real>(fractions.size());
+    real var = 0.0;
+
+    for (auto f : fractions)
+    {
+        var += (f - mean) * (f - mean);
+    }
+    var /= static_cast<real>(fractions.size());
+    const auto std = sqrt(var);
+
+    fprintf(stderr, "Fraction of contact line molecules that came from the previous contact line:\n%.3f +/- %.3f\n", fraction, std);
+
+    return fractions;
 }
 
-static void
-collect_contact_lines(const char             *fn,
-                      int                    *grpindex,
-                      int                     grpsize,
-                      struct CLConf          &conf,
-                      const t_topology       *top,
-                      const int               ePBC,
-                      const gmx_output_env_t *oenv)
+static CLData
+collect_contact_line_advancement(const char             *fn,
+                                 int                    *grpindex,
+                                 int                     grpsize,
+                                 struct CLConf          &conf,
+                                 const t_topology       *top,
+                                 const int               ePBC,
+                                 const gmx_output_env_t *oenv)
 {
     int num_atoms;
     rvec *x0;
@@ -438,6 +472,7 @@ collect_contact_lines(const char             *fn,
     // to analyze the entire set at the end of the trajectory analysis.
     vector<size_t> num_advanced;
     vector<size_t> num_from_previous;
+    vector<real> times;
 
     // To compare against previous frames when calculating which
     // indices advanced the contact line we need to save this
@@ -471,6 +506,7 @@ collect_contact_lines(const char             *fn,
 
             num_advanced.push_back(inds_advanced.size());
             num_from_previous.push_back(from_previous.size());
+            times.push_back(t);
 
             interfaces.pop_front();
 
@@ -521,7 +557,35 @@ collect_contact_lines(const char             *fn,
     sfree(x0);
     delete pbc;
 
-    analyze_advancement(num_from_previous, num_advanced);
+    const auto fractions = analyze_advancement(num_from_previous, num_advanced);
+
+    const CLData result {
+        times: times,
+        fractions: fractions
+    };
+
+    return result;
+}
+
+static void
+save_contact_line_figure(const CLData           &data,
+                         const char             *filename,
+                         const gmx_output_env_t *oenv)
+{
+    const auto title = "Contact line advancement data";
+    const auto xlabel = "Time (ps)";
+    const auto ylabel = "Fraction";
+
+    auto file = xvgropen(filename, title, xlabel, ylabel, oenv);
+    auto t = data.times.cbegin();
+    auto f = data.fractions.cbegin();
+
+    while (t != data.times.cend())
+    {
+        fprintf(file, "%12.3f %1.3f\n", *t++, *f++);
+    }
+
+    xvgrclose(file);
 }
 
 int
@@ -567,7 +631,7 @@ gmx_contact_line(int argc, char *argv[])
         { efTRX, "-f", NULL,  ffREAD },
         { efNDX, NULL, NULL,  ffOPTRD },
         { efTPR, NULL, NULL,  ffREAD },
-        { efXVG, "-o", "base", ffWRITE },
+        { efXVG, "-o", "clfrac", ffWRITE },
     };
 
 #define NFILE asize(fnm)
@@ -597,11 +661,9 @@ gmx_contact_line(int argc, char *argv[])
 
     struct CLConf conf {pa, asize(pa), rmin, rmax};
 
-    collect_contact_lines(
-        ftp2fn(efTRX, NFILE, fnm),
-        *index, *grpsizes, conf,
-        top, ePBC, oenv
-    );
+    const auto contact_line_data = collect_contact_line_advancement(
+        ftp2fn(efTRX, NFILE, fnm), *index, *grpsizes, conf, top, ePBC, oenv);
+    save_contact_line_figure(contact_line_data, opt2fn("-o", NFILE, fnm), oenv);
 
     sfree(index);
     sfree(grpnames);
