@@ -39,6 +39,7 @@
 #include <algorithm> // find
 #include <array>
 #include <cctype>
+#include <chrono>
 #include <cmath>
 #include <cstdlib>
 #include <cstring>
@@ -127,6 +128,21 @@ struct CLConf {
 struct CLData {
     vector<real> times,
                  fractions;
+};
+
+struct Timings {
+    Timings ()
+        :interface{0.0},
+         bottom{0.0},
+         contact_line{0.0},
+         rest{0.0},
+         traj_total{0.0} {}
+
+    chrono::duration<double> interface,
+                             bottom,
+                             contact_line,
+                             rest,
+                             traj_total;
 };
 
 struct Positions {
@@ -435,9 +451,37 @@ analyze_advancement(const vector<size_t>& from_previous,
     var /= static_cast<real>(fractions.size());
     const auto std = sqrt(var);
 
-    fprintf(stderr, "Fraction of contact line molecules that came from the previous contact line:\n%.3f +/- %.3f\n", fraction, std);
+    fprintf(stdout, "Fraction of contact line molecules that came from the previous contact line:\n%.3f +/- %.3f\n", fraction, std);
 
     return fractions;
+}
+
+static void
+print_a_timing(const char             *label,
+               const chrono::duration<double>  length,
+               const chrono::duration<double>  total)
+{
+    constexpr size_t MAXLEN = 6;
+    auto percent = new char[MAXLEN];
+    snprintf(percent, MAXLEN, "%3.1f%%", 100 * (length.count() / total.count()));
+    fprintf(stderr, "%-27s%12.3f%11s\n", label, length.count(), percent);
+}
+
+static void
+print_timings(const Timings &timings)
+{
+    const auto total = timings.traj_total;
+
+    fprintf(stderr, "\n");
+    fprintf(stderr, "Counter                        Time (s)   Of total\n");
+    fprintf(stderr, "--------------------------------------------------\n");
+    print_a_timing("Collect interface", timings.interface, total);
+    print_a_timing("Collect bottom", timings.bottom, total);
+    print_a_timing("Collect contact line", timings.contact_line, total);
+    print_a_timing("Remainder loop", timings.rest, total);
+    fprintf(stderr, "--------------------------------------------------\n");
+    fprintf(stderr, "In total the trajectory analysis took %.3f seconds.\n",
+            total.count());
 }
 
 static CLData
@@ -485,13 +529,28 @@ collect_contact_line_advancement(const char             *fn,
     auto debug_title = new char[MAXLEN];
 #endif
 
+    Timings timings;
+
+      //std::chrono::time_point<std::chrono::system_clock> start, end;
+    const auto start_total_time = chrono::system_clock::now();
     do
     {
+        const auto start_loop_time = chrono::system_clock::now();
+
         gmx_rmpbc(gpbc, num_atoms, box, x0);
+
+        const auto start_int_time = chrono::system_clock::now();
         const auto interface = find_interface_indices(
             x0, grpindex, grpsize, conf, pbc);
+        const auto int_duration = chrono::system_clock::now() - start_int_time;
+
+        const auto start_bottom_time = chrono::system_clock::now();
         const auto bottom = find_bottom_layer_indices(x0, interface, conf);
+        const auto bottom_duration = chrono::system_clock::now() - start_bottom_time;
+
+        const auto start_cl_time = chrono::system_clock::now();
         const auto contact_line = find_contact_line_indices(x0, bottom, conf);
+        const auto cl_duration = chrono::system_clock::now() - start_cl_time;
 
         Interface current {x0, contact_line, bottom, interface};
         interfaces.push_back(current);
@@ -528,6 +587,14 @@ collect_contact_line_advancement(const char             *fn,
 #endif
         }
 
+        const auto end_loop_time = chrono::system_clock::now();
+        const auto loop_duration = end_loop_time - start_loop_time;
+        timings.interface += int_duration;
+        timings.bottom += bottom_duration;
+        timings.contact_line += cl_duration;
+        timings.rest += loop_duration - int_duration - bottom_duration
+            - cl_duration;
+
 #ifdef DEBUG_CONTACTLINE
         snprintf(debug_filename, MAXLEN, "contact_line_%.1fps.gro", t);
         snprintf(debug_title, MAXLEN, "contact_line");
@@ -546,6 +613,9 @@ collect_contact_line_advancement(const char             *fn,
     }
     while (read_next_x(oenv, status, &t, x0, box));
     gmx_rmpbc_done(gpbc);
+
+    timings.traj_total = chrono::system_clock::now() - start_total_time;
+    print_timings(timings);
 
 #ifdef DEBUG_CONTACTLINE
     delete[] debug_filename;
