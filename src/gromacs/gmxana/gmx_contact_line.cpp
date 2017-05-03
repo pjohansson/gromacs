@@ -73,9 +73,19 @@ using namespace std;
  * Petter Johansson, Stockholm 2017                                         *
  ****************************************************************************/
 
+enum Algorithm {
+    ContactLine = 1,
+    Bottom = 2
+};
+
 struct CLConf {
-    CLConf(t_pargs pa[], const int pasize, const rvec rmin_in, const rvec rmax_in)
-        :cutoff{static_cast<real>(opt2parg_real("-co", pasize, pa))},
+    CLConf(t_pargs pa[],
+           const int pasize,
+           const rvec rmin_in,
+           const rvec rmax_in,
+           const int test)
+        :algorithm{static_cast<Algorithm>(test)},
+         cutoff{static_cast<real>(opt2parg_real("-co", pasize, pa))},
          cutoff2{cutoff * cutoff},
          precision{static_cast<real>(opt2parg_real("-prec", pasize, pa))},
          dx{static_cast<real>(opt2parg_real("-dx", pasize, pa))},
@@ -91,7 +101,7 @@ struct CLConf {
         {
             gmx_fatal(FARGS, "Input stride must be positive.");
         }
-        stride = static_cast<unsigned int>(stride_buf);
+        stride = static_cast<size_t>(stride_buf);
     }
 
     void set_box_limits(const matrix box)
@@ -112,13 +122,14 @@ struct CLConf {
         rvec_add(rmax, add_ss, rmax_ss);
     }
 
+    Algorithm algorithm;
     real cutoff,
          cutoff2,
          precision,
          dx;
     int nmin,
         nmax;
-    unsigned int stride;
+    size_t stride;
     rvec rmin,
          rmax,
          rmin_ss,
@@ -392,13 +403,29 @@ contact_line_advancements(const Positions &current,
 
 static vector<int>
 at_previous_contact_line(const vector<int> indices,
-                         const Interface& current,
-                         const Interface& previous)
+                         const Interface   &current,
+                         const Interface   &previous,
+                         const CLConf      &conf)
 {
     // How many were at the contact line in the previous frame?
-    // The first check is whether they came from there or not.
-    const auto previous_contact_line = find_shared_indices(
-        indices, previous.contact_line.indices);
+    vector<int> previous_contact_line;
+
+    switch (conf.algorithm)
+    {
+        case ContactLine:
+            previous_contact_line = find_shared_indices(
+                indices, previous.contact_line.indices);
+            break;
+
+        case Bottom:
+            previous_contact_line = find_shared_indices(
+                indices, previous.bottom.indices);
+            break;
+
+        default:
+            gmx_fatal(FARGS, "Selected algorithm is not implemented.");
+            break;
+    }
 
 #ifdef DEBUG_CONTACTLINE
     fprintf(stderr, "Of which were at the previous contact line:");
@@ -561,7 +588,7 @@ collect_contact_line_advancement(const char             *fn,
             const auto inds_advanced = contact_line_advancements(
                 current.contact_line, previous.contact_line, conf);
             const auto from_previous = at_previous_contact_line(
-                inds_advanced, current, previous);
+                inds_advanced, current, previous, conf);
 
             num_advanced.push_back(inds_advanced.size());
             num_from_previous.push_back(from_previous.size());
@@ -674,6 +701,7 @@ gmx_contact_line(int argc, char *argv[])
     static real cutoff = 1.0,
                 precision = 0.3,
                 dx = 0.3;
+    const char *algorithm[] = { NULL, "contact-line", "bottom", NULL };
 
     t_pargs pa[] = {
         { "-rmin", FALSE, etRVEC, { rmin },
@@ -692,6 +720,8 @@ gmx_contact_line(int argc, char *argv[])
           "Minimum distance for contact line advancement along x (nm)." },
         { "-stride", FALSE, etINT, { &stride },
           "Stride between contact line comparisons." },
+        { "-al" , FALSE, etENUM, { &algorithm },
+          "Algorithm for determining elegibility of atoms." },
     };
 
     const char *bugs[] = {
@@ -725,11 +755,11 @@ gmx_contact_line(int argc, char *argv[])
     snew(grpnames, 1);
     snew(grpsizes, 1);
 
-    fprintf(stderr, "\nSelect group to collect traces for:\n");
+    fprintf(stderr, "\nSelect group to analyze:\n");
     get_index(&top->atoms, ftp2fn_null(efNDX, NFILE, fnm),
               1, grpsizes, index, grpnames);
 
-    struct CLConf conf {pa, asize(pa), rmin, rmax};
+    struct CLConf conf {pa, asize(pa), rmin, rmax, nenum(algorithm)};
 
     const auto contact_line_data = collect_contact_line_advancement(
         ftp2fn(efTRX, NFILE, fnm), *index, *grpsizes, conf, top, ePBC, oenv);
