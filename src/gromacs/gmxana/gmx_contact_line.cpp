@@ -44,7 +44,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <deque>
-#include <iterator> // end
+#include <iterator> // distance
 #include <tuple>
 #include <vector>
 
@@ -73,9 +73,10 @@ using namespace std;
  * Petter Johansson, Stockholm 2017                                         *
  ****************************************************************************/
 
-enum Algorithm {
+enum class Algorithm {
     ContactLine = 1,
-    Bottom = 2
+    Bottom = 2,
+    Hops = 3
 };
 
 struct CLConf {
@@ -83,12 +84,14 @@ struct CLConf {
            const int pasize,
            const rvec rmin_in,
            const rvec rmax_in,
-           const int test)
-        :algorithm{static_cast<Algorithm>(test)},
+           const int alg_in)
+        :algorithm{static_cast<Algorithm>(alg_in)},
          cutoff{static_cast<real>(opt2parg_real("-co", pasize, pa))},
          cutoff2{cutoff * cutoff},
          precision{static_cast<real>(opt2parg_real("-prec", pasize, pa))},
          dx{static_cast<real>(opt2parg_real("-dx", pasize, pa))},
+         hop_max{static_cast<real>(opt2parg_real("-hmax", pasize, pa))},
+         hop_max2{hop_max * hop_max},
          nmin{static_cast<int>(opt2parg_int("-nmin", pasize, pa))},
          nmax{static_cast<int>(opt2parg_int("-nmax", pasize, pa))}
     {
@@ -126,7 +129,9 @@ struct CLConf {
     real cutoff,
          cutoff2,
          precision,
-         dx;
+         dx,
+         hop_max,
+         hop_max2;
     int nmin,
         nmax;
     size_t stride;
@@ -156,15 +161,29 @@ struct Timings {
                              traj_total;
 };
 
-struct Positions {
-    Positions(const rvec *x0,
-              const vector<int> input_indices)
+struct IndexGroup {
+    IndexGroup(const rvec *x0,
+               const vector<int> input_indices)
         :indices{input_indices}
     {
         for (auto i : indices)
         {
             positions.push_back({x0[i][XX], x0[i][YY], x0[i][ZZ]});
         }
+    }
+
+    array<real, DIM> ind2pos (const int needle) const
+    {
+        const auto ip = find(indices.cbegin(), indices.cend(), needle);
+
+        if (ip == indices.cend())
+        {
+            gmx_fatal(FARGS, "Index was not found in vector");
+        }
+
+        const auto index = distance(indices.cbegin(), ip);
+
+        return positions.at(index);
     }
 
     vector<int> indices;
@@ -176,13 +195,13 @@ struct Interface {
               const vector<int> cl_indices,
               const vector<int> bottom_indices,
               const vector<int> int_indices)
-        :contact_line{Positions {x0, cl_indices}},
-         bottom{Positions {x0, bottom_indices}},
-         interface{Positions {x0, int_indices}} {}
+        :contact_line{IndexGroup {x0, cl_indices}},
+         bottom{IndexGroup {x0, bottom_indices}},
+         interface{IndexGroup {x0, int_indices}} {}
 
-    Positions contact_line,
-              bottom,
-              interface;
+    IndexGroup contact_line,
+               bottom,
+               interface;
 };
 
 static bool
@@ -228,6 +247,7 @@ find_interface_indices(const rvec          *x0,
 #endif
 
     vector<int> interface_inds;
+    interface_inds.reserve(candidates.size());
     rvec dx;
 
     for (auto i : candidates)
@@ -355,7 +375,7 @@ find_shared_indices(const vector<int> current,
 
     for (auto i : current)
     {
-        if (find(prev.cbegin(), prev.cend(), i) != end(prev))
+        if (find(prev.cbegin(), prev.cend(), i) != prev.cend())
         {
             shared_indices.push_back(i);
         }
@@ -365,9 +385,9 @@ find_shared_indices(const vector<int> current,
 }
 
 static vector<int>
-contact_line_advancements(const Positions &current,
-                          const Positions &previous,
-                          const CLConf    &conf)
+contact_line_advancements(const IndexGroup &current,
+                          const IndexGroup &previous,
+                          const CLConf     &conf)
 {
     vector<int> inds_advanced;
 
@@ -412,14 +432,32 @@ at_previous_contact_line(const vector<int> indices,
 
     switch (conf.algorithm)
     {
-        case ContactLine:
+        case Algorithm::ContactLine:
             previous_contact_line = find_shared_indices(
                 indices, previous.contact_line.indices);
             break;
 
-        case Bottom:
+        case Algorithm::Bottom:
             previous_contact_line = find_shared_indices(
                 indices, previous.bottom.indices);
+            break;
+
+        case Algorithm::Hops:
+            {
+                const auto shared = find_shared_indices(
+                    indices, previous.bottom.indices);
+
+                for (auto i : shared)
+                {
+                    const auto x1 = current.contact_line.ind2pos(i);
+                    const auto x2 = previous.bottom.ind2pos(i);
+
+                    if (distance2(x1.data(), x2.data()) <= conf.hop_max2)
+                    {
+                        previous_contact_line.push_back(i);
+                    }
+                }
+            }
             break;
 
         default:
@@ -440,8 +478,8 @@ at_previous_contact_line(const vector<int> indices,
 }
 
 static vector<real>
-analyze_advancement(const vector<size_t>& from_previous,
-                    const vector<size_t>& num_advanced)
+calculate_fractions(const vector<size_t> &from_previous,
+                    const vector<size_t> &num_advanced)
 {
     auto from = from_previous.cbegin();
     auto total = num_advanced.cbegin();
@@ -484,7 +522,7 @@ analyze_advancement(const vector<size_t>& from_previous,
 }
 
 static void
-print_a_timing(const char             *label,
+print_a_timing(const char                     *label,
                const chrono::duration<double>  length,
                const chrono::duration<double>  total)
 {
@@ -558,7 +596,6 @@ collect_contact_line_advancement(const char             *fn,
 
     Timings timings;
 
-      //std::chrono::time_point<std::chrono::system_clock> start, end;
     const auto start_total_time = chrono::system_clock::now();
     do
     {
@@ -654,7 +691,7 @@ collect_contact_line_advancement(const char             *fn,
     sfree(x0);
     delete pbc;
 
-    const auto fractions = analyze_advancement(num_from_previous, num_advanced);
+    const auto fractions = calculate_fractions(num_from_previous, num_advanced);
 
     const CLData result {
         times: times,
@@ -700,8 +737,9 @@ gmx_contact_line(int argc, char *argv[])
                stride = 1;
     static real cutoff = 1.0,
                 precision = 0.3,
-                dx = 0.3;
-    const char *algorithm[] = { NULL, "contact-line", "bottom", NULL };
+                dx = 0.3,
+                hop_max = 0.3;
+    const char *algorithm[] = { NULL, "contact-line", "bottom", "hops", NULL };
 
     t_pargs pa[] = {
         { "-rmin", FALSE, etRVEC, { rmin },
@@ -715,9 +753,11 @@ gmx_contact_line(int argc, char *argv[])
         { "-nmax", FALSE, etINT, { &nmax },
           "Maximum number of atoms within cutoff." },
         { "-prec", FALSE, etREAL, { &precision },
-          "Precision of slices along y and z (nm)." },
+          "Precision of slices along y and z." },
         { "-dx", FALSE, etREAL, { &dx },
-          "Minimum distance for contact line advancement along x (nm)." },
+          "Minimum distance for contact line advancement along x." },
+        { "-hmax", FALSE, etREAL, { &hop_max },
+          "Maximum distance for a hop to the contact line." },
         { "-stride", FALSE, etINT, { &stride },
           "Stride between contact line comparisons." },
         { "-al" , FALSE, etENUM, { &algorithm },
