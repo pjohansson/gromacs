@@ -59,6 +59,7 @@
 #include "gromacs/topology/index.h"
 #include "gromacs/topology/topology.h"
 #include "gromacs/utility/arraysize.h"
+#include "gromacs/utility/exceptions.h"
 #include "gromacs/utility/fatalerror.h"
 #include "gromacs/utility/futil.h"
 #include "gromacs/utility/gmxomp.h"
@@ -80,11 +81,11 @@ enum class Algorithm {
 };
 
 struct CLConf {
-    CLConf(t_pargs pa[],
-           const int pasize,
+    CLConf(t_pargs    pa[],
+           const int  pasize,
            const rvec rmin_in,
            const rvec rmax_in,
-           const int alg_in)
+           const int  alg_in)
         :algorithm{static_cast<Algorithm>(alg_in)},
          cutoff{opt2parg_real("-co", pasize, pa)},
          cutoff2{cutoff * cutoff},
@@ -287,11 +288,17 @@ find_contact_line_indices(const rvec *x0,
     for (auto slice : yslices)
     {
         auto iter = slice.cbegin();
+
+        // If no molecules are in the slice, ignore it!
+        if (iter == slice.cend())
+        {
+            continue;
+        }
+
         auto xmax = x0[*iter][XX];
         int imax = *iter;
 
-        while (++iter != slice.cend())
-        {
+        while (++iter != slice.cend())        {
             const auto x = x0[*iter][XX];
 
             if (x > xmax)
@@ -463,50 +470,6 @@ at_previous_contact_line(const vector<int> indices,
     return previous_contact_line;
 }
 
-static vector<real>
-calculate_fractions(const vector<size_t> &from_previous,
-                    const vector<size_t> &num_advanced)
-{
-    auto from = from_previous.cbegin();
-    auto total = num_advanced.cbegin();
-
-    real sum_total = 0.0,
-         sum_previous = 0.0,
-         sum_fractions = 0.0;
-
-    vector<real> fractions;
-
-    while (from != from_previous.cend())
-    {
-        const auto tot = static_cast<real>(*total++);
-        const auto prev = static_cast<real>(*from++);
-
-        sum_total += tot;
-        sum_previous += prev;
-
-        if (tot > 0.0)
-        {
-            fractions.push_back(prev / tot);
-            sum_fractions += fractions.back();
-        }
-    }
-
-    const auto fraction = sum_previous / sum_total;
-    const real mean = sum_fractions / static_cast<real>(fractions.size());
-    real var = 0.0;
-
-    for (auto f : fractions)
-    {
-        var += (f - mean) * (f - mean);
-    }
-    var /= static_cast<real>(fractions.size());
-    const auto std = sqrt(var);
-
-    fprintf(stdout, "Fraction of contact line molecules that came from the previous contact line:\n%.3f +/- %.3f\n", fraction, std);
-
-    return fractions;
-}
-
 template<typename T>
 struct Counter {
     Counter ()
@@ -559,6 +522,54 @@ print_timings(Timings &timings)
     fprintf(stderr, "--------------------------------------------------\n");
     fprintf(stderr, "In total the trajectory analysis took %.3f seconds.\n",
             total.total());
+}
+
+static vector<real>
+calculate_fractions(const vector<size_t> &from_previous,
+                    const vector<size_t> &num_advanced)
+{
+    auto from = from_previous.cbegin();
+    auto total = num_advanced.cbegin();
+
+    real sum_total = 0.0,
+         sum_previous = 0.0,
+         sum_fractions = 0.0;
+
+    vector<real> fractions;
+
+    while (from != from_previous.cend())
+    {
+        const auto tot = static_cast<real>(*total++);
+        const auto prev = static_cast<real>(*from++);
+
+        sum_total += tot;
+        sum_previous += prev;
+
+        if (tot > 0.0)
+        {
+            fractions.push_back(prev / tot);
+            sum_fractions += fractions.back();
+        }
+        else
+        {
+            fractions.push_back(0.0);
+        }
+    }
+
+    const auto fraction = sum_previous / sum_total;
+    const real mean = sum_fractions / static_cast<real>(fractions.size());
+    real var = 0.0;
+
+    for (auto f : fractions)
+    {
+        var += (f - mean) * (f - mean);
+    }
+    var /= static_cast<real>(fractions.size());
+    const auto std = sqrt(var);
+
+    fprintf(stdout, "Fraction of contact line molecules that came from the previous contact line:\n%.3f +/- %.3f\n", fraction, std);
+
+    return fractions;
 }
 
 struct CLData {
@@ -616,74 +627,77 @@ collect_contact_line_advancement(const char             *fn,
 
     do
     {
-        timings.loop.set();
-        gmx_rmpbc(gpbc, num_atoms, box, x0);
-
-        timings.interface.set();
-        const auto interface = find_interface_indices(
-            x0, grpindex, grpsize, conf, pbc);
-        timings.interface.stop();
-
-        timings.bottom.set();
-        const auto bottom = find_bottom_layer_indices(x0, interface, conf);
-        timings.bottom.stop();
-
-        timings.contact_line.set();
-        const auto contact_line = find_contact_line_indices(x0, bottom, conf);
-        timings.contact_line.stop();
-
-        Interface current {x0, contact_line, bottom, interface};
-        interfaces.push_back(current);
-
-        if (interfaces.size() > conf.stride)
+        try
         {
-            const auto& previous = interfaces.front();
-            const auto inds_advanced = contact_line_advancements(
-                current.contact_line, previous.contact_line, conf);
-            const auto from_previous = at_previous_contact_line(
-                inds_advanced, current, previous, conf);
+            timings.loop.set();
+            gmx_rmpbc(gpbc, num_atoms, box, x0);
 
-            num_advanced.push_back(inds_advanced.size());
-            num_from_previous.push_back(from_previous.size());
-            times.push_back(t);
+            timings.interface.set();
+            const auto interface = find_interface_indices(
+                x0, grpindex, grpsize, conf, pbc);
+            timings.interface.stop();
 
-            interfaces.pop_front();
+            timings.bottom.set();
+            const auto bottom = find_bottom_layer_indices(x0, interface, conf);
+            timings.bottom.stop();
+
+            timings.contact_line.set();
+            const auto contact_line = find_contact_line_indices(x0, bottom, conf);
+            timings.contact_line.stop();
+
+            Interface current {x0, contact_line, bottom, interface};
+            interfaces.push_back(current);
+
+            if (interfaces.size() > conf.stride)
+            {
+                const auto& previous = interfaces.front();
+                const auto inds_advanced = contact_line_advancements(
+                    current.contact_line, previous.contact_line, conf);
+                const auto from_previous = at_previous_contact_line(
+                    inds_advanced, current, previous, conf);
+
+                num_advanced.push_back(inds_advanced.size());
+                num_from_previous.push_back(from_previous.size());
+                times.push_back(t);
+
+                interfaces.pop_front();
 
 #ifdef DEBUG_CONTACTLINE
-            if (inds_advanced.size() > 0)
-            {
-                const auto fraction =
-                    static_cast<real>(num_from_previous.back())
-                    / static_cast<real>(num_advanced.back());
-                fprintf(stderr, "%lu of %lu (%.2f) advancements were hops.\n",
-                        num_from_previous.back(),
-                        num_advanced.back(),
-                        fraction);
-            }
-            else
-            {
-                fprintf(stderr, "No advancement was made.\n");
-            }
+                if (inds_advanced.size() > 0)
+                {
+                    const auto fraction =
+                        static_cast<real>(num_from_previous.back())
+                        / static_cast<real>(num_advanced.back());
+                    fprintf(stderr, "%lu of %lu (%.2f) advancements were hops.\n",
+                            num_from_previous.back(),
+                            num_advanced.back(),
+                            fraction);
+                }
+                else
+                {
+                    fprintf(stderr, "No advancement was made.\n");
+                }
 #endif
+            }
+
+#ifdef DEBUG_CONTACTLINE
+            snprintf(debug_filename, MAXLEN, "contact_line_%.1fps.gro", t);
+            snprintf(debug_title, MAXLEN, "contact_line");
+            write_sto_conf_indexed(debug_filename, debug_title,
+                                   &top->atoms, x0, NULL, ePBC, box,
+                                   contact_line.size(),
+                                   contact_line.data());
+
+            snprintf(debug_filename, MAXLEN, "interface_%.1fps.gro", t);
+            snprintf(debug_title, MAXLEN, "interface");
+            write_sto_conf_indexed(debug_filename, debug_title,
+                                   &top->atoms, x0, NULL, ePBC, box,
+                                   interface.size(),
+                                   interface.data());
+#endif
+            timings.loop.stop();
         }
-
-#ifdef DEBUG_CONTACTLINE
-        snprintf(debug_filename, MAXLEN, "contact_line_%.1fps.gro", t);
-        snprintf(debug_title, MAXLEN, "contact_line");
-        write_sto_conf_indexed(debug_filename, debug_title,
-                               &top->atoms, x0, NULL, ePBC, box,
-                               contact_line.size(),
-                               contact_line.data());
-
-        snprintf(debug_filename, MAXLEN, "interface_%.1fps.gro", t);
-        snprintf(debug_title, MAXLEN, "interface");
-        write_sto_conf_indexed(debug_filename, debug_title,
-                               &top->atoms, x0, NULL, ePBC, box,
-                               interface.size(),
-                               interface.data());
-#endif
-
-        timings.loop.stop();
+        GMX_CATCH_ALL_AND_EXIT_WITH_FATAL_ERROR;
     }
     while (read_next_x(oenv, status, &t, x0, box));
     gmx_rmpbc_done(gpbc);
@@ -726,6 +740,7 @@ save_contact_line_figure(const CLData           &data,
 
     while (t != data.times.cend())
     {
+
         fprintf(file, "%12.3f %1.3f\n", *t++, *f++);
     }
 
