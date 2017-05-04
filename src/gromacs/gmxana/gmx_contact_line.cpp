@@ -48,6 +48,7 @@
 #include <vector>
 
 #include "gromacs/commandline/pargs.h"
+#include "gromacs/commandline/viewit.h"
 #include "gromacs/fileio/confio.h"
 #include "gromacs/fileio/trxio.h"
 #include "gromacs/fileio/xvgr.h"
@@ -802,7 +803,7 @@ gmx_contact_line(int argc, char *argv[])
 #define NFILE asize(fnm)
 
     gmx_output_env_t *oenv;
-    if (!parse_common_args(&argc, argv, PCA_CAN_TIME,
+    if (!parse_common_args(&argc, argv, PCA_CAN_TIME | PCA_CAN_VIEW,
                            NFILE, fnm, asize(pa), pa, asize(desc), desc, asize(bugs), bugs,
                            &oenv))
     {
@@ -829,6 +830,8 @@ gmx_contact_line(int argc, char *argv[])
     const auto contact_line_data = collect_contact_line_advancement(
         ftp2fn(efTRX, NFILE, fnm), *index, *grpsizes, conf, top, ePBC, oenv);
     save_contact_line_figure(contact_line_data, opt2fn("-o", NFILE, fnm), oenv);
+
+    view_all(oenv, NFILE, fnm);
 
     sfree(index);
     sfree(grpnames);
