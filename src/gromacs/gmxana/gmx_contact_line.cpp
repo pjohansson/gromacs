@@ -61,6 +61,7 @@
 #include "gromacs/utility/arraysize.h"
 #include "gromacs/utility/fatalerror.h"
 #include "gromacs/utility/futil.h"
+#include "gromacs/utility/gmxomp.h"
 #include "gromacs/utility/smalloc.h"
 
 using namespace std;
@@ -184,18 +185,21 @@ find_interface_indices(const rvec          *x0,
 
     vector<int> interface_inds;
     interface_inds.reserve(candidates.size());
-    rvec dx;
 
     for (auto i : candidates)
     {
         const auto x1 = x0[i];
         int count = 0;
 
-        for (auto j : search_space)
+        #pragma omp parallel for reduction(+:count)
+        for (size_t j = 0; j < search_space.size(); ++j)
         {
-            if (i != j)
+            const auto k = search_space[j];
+            rvec dx;
+
+            if (i != k)
             {
-                const auto x2 = x0[j];
+                const auto x2 = x0[k];
                 pbc_dx(pbc, x1, x2, dx);
 
                 if (norm2(dx) <= conf.cutoff2)
@@ -210,6 +214,8 @@ find_interface_indices(const rvec          *x0,
             interface_inds.push_back(i);
         }
     }
+
+    interface_inds.shrink_to_fit();
 
 #ifdef DEBUG_CONTACTLINE
     fprintf(stderr, "Found %lu interface ", interface_inds.size());
