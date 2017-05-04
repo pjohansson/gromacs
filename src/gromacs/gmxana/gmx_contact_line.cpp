@@ -45,7 +45,6 @@
 #include <cstring>
 #include <deque>
 #include <iterator> // distance
-#include <tuple>
 #include <vector>
 
 #include "gromacs/commandline/pargs.h"
@@ -86,14 +85,14 @@ struct CLConf {
            const rvec rmax_in,
            const int alg_in)
         :algorithm{static_cast<Algorithm>(alg_in)},
-         cutoff{static_cast<real>(opt2parg_real("-co", pasize, pa))},
+         cutoff{opt2parg_real("-co", pasize, pa)},
          cutoff2{cutoff * cutoff},
-         precision{static_cast<real>(opt2parg_real("-prec", pasize, pa))},
-         dx{static_cast<real>(opt2parg_real("-dx", pasize, pa))},
-         hop_max{static_cast<real>(opt2parg_real("-hmax", pasize, pa))},
+         precision{opt2parg_real("-prec", pasize, pa)},
+         dx{opt2parg_real("-dx", pasize, pa)},
+         hop_max{opt2parg_real("-hmax", pasize, pa)},
          hop_max2{hop_max * hop_max},
-         nmin{static_cast<int>(opt2parg_int("-nmin", pasize, pa))},
-         nmax{static_cast<int>(opt2parg_int("-nmax", pasize, pa))}
+         nmin{opt2parg_int("-nmin", pasize, pa)},
+         nmax{opt2parg_int("-nmax", pasize, pa)}
     {
         copy_rvec(rmin_in, rmin);
         copy_rvec(rmax_in, rmax);
@@ -141,69 +140,6 @@ struct CLConf {
          rmax_ss;
 };
 
-struct CLData {
-    vector<real> times,
-                 fractions;
-};
-
-struct Timings {
-    Timings ()
-        :interface{0.0},
-         bottom{0.0},
-         contact_line{0.0},
-         rest{0.0},
-         traj_total{0.0} {}
-
-    chrono::duration<double> interface,
-                             bottom,
-                             contact_line,
-                             rest,
-                             traj_total;
-};
-
-struct IndexGroup {
-    IndexGroup(const rvec *x0,
-               const vector<int> input_indices)
-        :indices{input_indices}
-    {
-        for (auto i : indices)
-        {
-            positions.push_back({x0[i][XX], x0[i][YY], x0[i][ZZ]});
-        }
-    }
-
-    array<real, DIM> ind2pos (const int needle) const
-    {
-        const auto ip = find(indices.cbegin(), indices.cend(), needle);
-
-        if (ip == indices.cend())
-        {
-            gmx_fatal(FARGS, "Index was not found in vector");
-        }
-
-        const auto index = distance(indices.cbegin(), ip);
-
-        return positions.at(index);
-    }
-
-    vector<int> indices;
-    vector<array<real, DIM>> positions;
-};
-
-struct Interface {
-    Interface(const rvec *x0,
-              const vector<int> cl_indices,
-              const vector<int> bottom_indices,
-              const vector<int> int_indices)
-        :contact_line{IndexGroup {x0, cl_indices}},
-         bottom{IndexGroup {x0, bottom_indices}},
-         interface{IndexGroup {x0, int_indices}} {}
-
-    IndexGroup contact_line,
-               bottom,
-               interface;
-};
-
 static bool
 is_inside_limits(const rvec x,
                  const rvec rmin,
@@ -222,8 +158,8 @@ find_interface_indices(const rvec          *x0,
                        const t_pbc         *pbc)
 {
     // Find indices within search volume
-    vector<int> search_space;
-    vector<int> candidates;
+    vector<size_t> search_space;
+    vector<size_t> candidates;
 
     for (int i = 0; i < grpsize; ++i)
     {
@@ -296,7 +232,9 @@ slice_system_along_dir(const rvec *x0,
     for (auto i : interface)
     {
         const auto x = x0[i][dir];
-        const auto slice = static_cast<int>((x - conf.rmin[dir]) / final_slice_precision);
+        const auto slice = static_cast<size_t>(
+            (x - conf.rmin[dir]) / final_slice_precision
+        );
         slice_indices.at(slice).push_back(i);
     }
 
@@ -313,17 +251,17 @@ find_bottom_layer_indices(const rvec *x0,
     // Track the maximum count, when a decrease is found the peak
     // was in the previous slice
     int prev_slice = -1;
-    unsigned int max_value = 0;
+    size_t max_count = 0;
 
     for (auto indices : slice_indices)
     {
         const auto count = indices.size();
-        if (count < max_value)
+        if (count < max_count)
         {
             break;
         }
 
-        max_value = count;
+        max_count = count;
         ++prev_slice;
     }
 
@@ -384,6 +322,49 @@ find_shared_indices(const vector<int> current,
     return shared_indices;
 }
 
+struct IndexGroup {
+    IndexGroup(const rvec *x0,
+               const vector<int> input_indices)
+        :indices{input_indices}
+    {
+        for (auto i : indices)
+        {
+            positions.push_back({x0[i][XX], x0[i][YY], x0[i][ZZ]});
+        }
+    }
+
+    array<real, DIM> ind2pos (const int needle) const
+    {
+        const auto ip = find(indices.cbegin(), indices.cend(), needle);
+
+        if (ip == indices.cend())
+        {
+            gmx_fatal(FARGS, "Index was not found in vector");
+        }
+
+        const auto index = distance(indices.cbegin(), ip);
+
+        return positions.at(index);
+    }
+
+    vector<int> indices;
+    vector<array<real, DIM>> positions;
+};
+
+struct Interface {
+    Interface(const rvec *x0,
+              const vector<int> cl_indices,
+              const vector<int> bottom_indices,
+              const vector<int> int_indices)
+        :contact_line{IndexGroup {x0, cl_indices}},
+         bottom{IndexGroup {x0, bottom_indices}},
+         interface{IndexGroup {x0, int_indices}} {}
+
+    IndexGroup contact_line,
+               bottom,
+               interface;
+};
+
 static vector<int>
 contact_line_advancements(const IndexGroup &current,
                           const IndexGroup &previous,
@@ -427,7 +408,6 @@ at_previous_contact_line(const vector<int> indices,
                          const Interface   &previous,
                          const CLConf      &conf)
 {
-    // How many were at the contact line in the previous frame?
     vector<int> previous_contact_line;
 
     switch (conf.algorithm)
@@ -521,20 +501,46 @@ calculate_fractions(const vector<size_t> &from_previous,
     return fractions;
 }
 
+template<typename T>
+struct Counter {
+    Counter ()
+        :duration{static_cast<T>(0.0)} {}
+
+    T total() const { return this->duration.count(); }
+
+    void set() { start = chrono::system_clock::now(); }
+    void stop() { duration += chrono::system_clock::now() - start; }
+
+    chrono::system_clock::time_point start;
+    chrono::duration<T> duration;
+};
+
+struct Timings {
+    Counter<double> interface,
+                    bottom,
+                    contact_line,
+                    loop,
+                    traj_total;
+};
+
 static void
-print_a_timing(const char                     *label,
-               const chrono::duration<double>  length,
-               const chrono::duration<double>  total)
+print_a_timing(const char    *label,
+               const Counter<double>  counter,
+               const Counter<double>  total)
 {
     constexpr size_t MAXLEN = 6;
-    auto percent = new char[MAXLEN];
-    snprintf(percent, MAXLEN, "%3.1f%%", 100 * (length.count() / total.count()));
-    fprintf(stderr, "%-27s%12.3f%11s\n", label, length.count(), percent);
+    const auto percent = 100 * (counter.total() / total.total());
+    auto percent_str = new char[MAXLEN];
+    snprintf(percent_str, MAXLEN, "%3.1f%%", percent);
+    fprintf(stderr, "%-27s%12.3f%11s\n", label, counter.total(), percent_str);
 }
 
 static void
-print_timings(const Timings &timings)
+print_timings(Timings &timings)
 {
+    const auto subloop_total = timings.interface.duration
+        + timings.bottom.duration + timings.contact_line.duration;
+    timings.loop.duration -= subloop_total;
     const auto total = timings.traj_total;
 
     fprintf(stderr, "\n");
@@ -543,11 +549,16 @@ print_timings(const Timings &timings)
     print_a_timing("Collect interface", timings.interface, total);
     print_a_timing("Collect bottom", timings.bottom, total);
     print_a_timing("Collect contact line", timings.contact_line, total);
-    print_a_timing("Remainder loop", timings.rest, total);
+    print_a_timing("Remainder loop", timings.loop, total);
     fprintf(stderr, "--------------------------------------------------\n");
     fprintf(stderr, "In total the trajectory analysis took %.3f seconds.\n",
-            total.count());
+            total.total());
 }
+
+struct CLData {
+    vector<real> times,
+                 fractions;
+};
 
 static CLData
 collect_contact_line_advancement(const char             *fn,
@@ -595,26 +606,25 @@ collect_contact_line_advancement(const char             *fn,
 #endif
 
     Timings timings;
+    timings.traj_total.set();
 
-    const auto start_total_time = chrono::system_clock::now();
     do
     {
-        const auto start_loop_time = chrono::system_clock::now();
-
+        timings.loop.set();
         gmx_rmpbc(gpbc, num_atoms, box, x0);
 
-        const auto start_int_time = chrono::system_clock::now();
+        timings.interface.set();
         const auto interface = find_interface_indices(
             x0, grpindex, grpsize, conf, pbc);
-        const auto int_duration = chrono::system_clock::now() - start_int_time;
+        timings.interface.stop();
 
-        const auto start_bottom_time = chrono::system_clock::now();
+        timings.bottom.set();
         const auto bottom = find_bottom_layer_indices(x0, interface, conf);
-        const auto bottom_duration = chrono::system_clock::now() - start_bottom_time;
+        timings.bottom.stop();
 
-        const auto start_cl_time = chrono::system_clock::now();
+        timings.contact_line.set();
         const auto contact_line = find_contact_line_indices(x0, bottom, conf);
-        const auto cl_duration = chrono::system_clock::now() - start_cl_time;
+        timings.contact_line.stop();
 
         Interface current {x0, contact_line, bottom, interface};
         interfaces.push_back(current);
@@ -651,14 +661,6 @@ collect_contact_line_advancement(const char             *fn,
 #endif
         }
 
-        const auto end_loop_time = chrono::system_clock::now();
-        const auto loop_duration = end_loop_time - start_loop_time;
-        timings.interface += int_duration;
-        timings.bottom += bottom_duration;
-        timings.contact_line += cl_duration;
-        timings.rest += loop_duration - int_duration - bottom_duration
-            - cl_duration;
-
 #ifdef DEBUG_CONTACTLINE
         snprintf(debug_filename, MAXLEN, "contact_line_%.1fps.gro", t);
         snprintf(debug_title, MAXLEN, "contact_line");
@@ -674,11 +676,13 @@ collect_contact_line_advancement(const char             *fn,
                                interface.size(),
                                interface.data());
 #endif
+
+        timings.loop.stop();
     }
     while (read_next_x(oenv, status, &t, x0, box));
     gmx_rmpbc_done(gpbc);
 
-    timings.traj_total = chrono::system_clock::now() - start_total_time;
+    timings.traj_total.stop();
     print_timings(timings);
 
 #ifdef DEBUG_CONTACTLINE
