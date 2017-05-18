@@ -143,6 +143,60 @@ struct CLConf {
          rmax_ss;
 };
 
+template<typename T>
+struct Counter {
+    Counter ()
+        :duration{static_cast<T>(0.0)} {}
+
+    T total() const { return this->duration.count(); }
+
+    void set() { start = chrono::system_clock::now(); }
+    void stop() { duration += chrono::system_clock::now() - start; }
+
+    chrono::system_clock::time_point start;
+    chrono::duration<T> duration;
+};
+
+struct Timings {
+    Counter<double> interface,
+                    bottom,
+                    contact_line,
+                    loop,
+                    traj_total;
+};
+
+static void
+print_a_timing(const char    *label,
+               const Counter<double>  counter,
+               const Counter<double>  total)
+{
+    constexpr size_t MAXLEN = 6;
+    const auto percent = 100 * (counter.total() / total.total());
+    auto percent_str = new char[MAXLEN];
+    snprintf(percent_str, MAXLEN, "%3.1f%%", percent);
+    fprintf(stderr, "%-27s%12.3f%11s\n", label, counter.total(), percent_str);
+}
+
+static void
+print_timings(Timings &timings)
+{
+    const auto subloop_total = timings.interface.duration
+        + timings.bottom.duration + timings.contact_line.duration;
+    timings.loop.duration -= subloop_total;
+    const auto total = timings.traj_total;
+
+    fprintf(stderr, "\n");
+    fprintf(stderr, "Counter                        Time (s)   Of total\n");
+    fprintf(stderr, "--------------------------------------------------\n");
+    print_a_timing("Collect interface", timings.interface, total);
+    print_a_timing("Collect bottom", timings.bottom, total);
+    print_a_timing("Collect contact line", timings.contact_line, total);
+    print_a_timing("Remainder loop", timings.loop, total);
+    fprintf(stderr, "--------------------------------------------------\n");
+    fprintf(stderr, "In total the trajectory analysis took %.3f seconds.\n",
+            total.total());
+}
+
 static bool
 is_inside_limits(const rvec x,
                  const rvec rmin,
@@ -471,60 +525,6 @@ at_previous_contact_line(const vector<int> indices,
     return previous_contact_line;
 }
 
-template<typename T>
-struct Counter {
-    Counter ()
-        :duration{static_cast<T>(0.0)} {}
-
-    T total() const { return this->duration.count(); }
-
-    void set() { start = chrono::system_clock::now(); }
-    void stop() { duration += chrono::system_clock::now() - start; }
-
-    chrono::system_clock::time_point start;
-    chrono::duration<T> duration;
-};
-
-struct Timings {
-    Counter<double> interface,
-                    bottom,
-                    contact_line,
-                    loop,
-                    traj_total;
-};
-
-static void
-print_a_timing(const char    *label,
-               const Counter<double>  counter,
-               const Counter<double>  total)
-{
-    constexpr size_t MAXLEN = 6;
-    const auto percent = 100 * (counter.total() / total.total());
-    auto percent_str = new char[MAXLEN];
-    snprintf(percent_str, MAXLEN, "%3.1f%%", percent);
-    fprintf(stderr, "%-27s%12.3f%11s\n", label, counter.total(), percent_str);
-}
-
-static void
-print_timings(Timings &timings)
-{
-    const auto subloop_total = timings.interface.duration
-        + timings.bottom.duration + timings.contact_line.duration;
-    timings.loop.duration -= subloop_total;
-    const auto total = timings.traj_total;
-
-    fprintf(stderr, "\n");
-    fprintf(stderr, "Counter                        Time (s)   Of total\n");
-    fprintf(stderr, "--------------------------------------------------\n");
-    print_a_timing("Collect interface", timings.interface, total);
-    print_a_timing("Collect bottom", timings.bottom, total);
-    print_a_timing("Collect contact line", timings.contact_line, total);
-    print_a_timing("Remainder loop", timings.loop, total);
-    fprintf(stderr, "--------------------------------------------------\n");
-    fprintf(stderr, "In total the trajectory analysis took %.3f seconds.\n",
-            total.total());
-}
-
 static vector<real>
 calculate_fractions(const vector<size_t> &from_previous,
                     const vector<size_t> &num_advanced)
@@ -567,8 +567,12 @@ calculate_fractions(const vector<size_t> &from_previous,
     }
     var /= static_cast<real>(fractions.size());
     const auto std = sqrt(var);
+    const auto err = std / sqrt(fractions.size());
 
-    fprintf(stdout, "Fraction of contact line molecules that came from the previous contact line:\n%.3f +/- %.3f\n", fraction, std);
+    fprintf(stdout,
+            "Fraction of contact line molecules that came "
+            "from the previous contact line:\n%.3f +/- %.3f\n",
+            fraction, err);
 
     return fractions;
 }
