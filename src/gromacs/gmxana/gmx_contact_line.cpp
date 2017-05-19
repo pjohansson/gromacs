@@ -68,7 +68,7 @@
 
 using namespace std;
 
-// #define DEBUG_CONTACTLINE
+//#define DEBUG_CONTACTLINE
 
 /****************************************************************************
  * This program analyzes how contact line molecules advance.                *
@@ -390,65 +390,53 @@ find_shared_indices(const vector<int> current,
     return shared_indices;
 }
 
-struct IndexGroup {
-    IndexGroup(const rvec *x0,
-               const vector<int> input_indices)
-        :indices{input_indices}
-    {
-        for (auto i : indices)
-        {
-            positions.push_back({x0[i][XX], x0[i][YY], x0[i][ZZ]});
-        }
-    }
-
-    array<real, DIM> ind2pos (const int needle) const
-    {
-        const auto ip = find(indices.cbegin(), indices.cend(), needle);
-
-        if (ip == indices.cend())
-        {
-            gmx_fatal(FARGS, "Index was not found in vector");
-        }
-
-        const auto index = distance(indices.cbegin(), ip);
-
-        return positions.at(index);
-    }
-
-    vector<int> indices;
-    vector<array<real, DIM>> positions;
-};
+using VecArray = array<real, DIM>;
 
 struct Interface {
-    Interface(const rvec *x0,
-              const vector<int> cl_indices,
-              const vector<int> bottom_indices,
-              const vector<int> int_indices)
-        :contact_line{IndexGroup {x0, cl_indices}},
-         bottom{IndexGroup {x0, bottom_indices}},
-         interface{IndexGroup {x0, int_indices}} {}
+    Interface(const rvec        *x0,
+              const int          num_atoms,
+              const vector<int>  cl_indices,
+              const vector<int>  bottom_indices,
+              const vector<int>  int_indices)
+        :contact_line{cl_indices},
+         bottom{bottom_indices},
+         interface{int_indices}
+    {
+        try {
+            positions.reserve(num_atoms);
 
-    IndexGroup contact_line,
-               bottom,
-               interface;
+            for (int i = 0; i < num_atoms; ++i)
+            {
+                positions.push_back({x0[i][XX], x0[i][YY], x0[i][ZZ]});
+            }
+        }
+        catch (const bad_alloc& e) {
+            gmx_fatal(FARGS, "Could not allocate memory for all frames (%s).",
+                      e.what());
+        }
+    }
+
+    vector<int> contact_line,
+                bottom,
+                interface;
+    vector<VecArray> positions;
 };
 
 static vector<int>
-contact_line_advancements(const IndexGroup &current,
-                          const IndexGroup &previous,
-                          const CLConf     &conf)
+contact_line_advancements(const Interface &current,
+                          const Interface &previous,
+                          const CLConf    &conf)
 {
     vector<int> inds_advanced;
 
-    auto cur = current.positions.cbegin();
-    auto prev = previous.positions.cbegin();
-    auto cur_index = current.indices.cbegin();
+    auto cur_index = current.contact_line.cbegin();
+    auto prev_index = previous.contact_line.cbegin();
 
-    while ((cur != current.positions.cend())
-            && (prev != previous.positions.cend()))
+    while ((cur_index != current.contact_line.cend())
+            && (prev_index != previous.contact_line.cend()))
     {
-        const auto xcur = (*cur++)[XX];
-        const auto xprev = (*prev++)[XX];
+        const auto xcur = current.positions[*cur_index][XX];
+        const auto xprev = previous.positions[*prev_index][XX];
 
         if ((xcur - xprev) >= conf.dx)
         {
@@ -456,6 +444,7 @@ contact_line_advancements(const IndexGroup &current,
         }
 
         ++cur_index;
+        ++prev_index;
     }
 
 #ifdef DEBUG_CONTACTLINE
@@ -476,33 +465,30 @@ at_previous_contact_line(const vector<int> indices,
                          const Interface   &previous,
                          const CLConf      &conf)
 {
-    vector<int> previous_contact_line;
+    vector<int> prev_contact_line;
 
     switch (conf.algorithm)
     {
         case Algorithm::ContactLine:
-            previous_contact_line = find_shared_indices(
-                indices, previous.contact_line.indices);
+            prev_contact_line = find_shared_indices(indices, previous.contact_line);
             break;
 
         case Algorithm::Bottom:
-            previous_contact_line = find_shared_indices(
-                indices, previous.bottom.indices);
+            prev_contact_line = find_shared_indices(indices, previous.bottom);
             break;
 
         case Algorithm::Hops:
             {
-                const auto shared = find_shared_indices(
-                    indices, previous.bottom.indices);
+                const auto shared = find_shared_indices(indices, previous.bottom);
 
-                for (auto i : shared)
+                for (auto index : shared)
                 {
-                    const auto x1 = current.contact_line.ind2pos(i);
-                    const auto x2 = previous.bottom.ind2pos(i);
+                    const auto& x1 = current.positions[index];
+                    const auto& x2 = previous.positions[index];
 
                     if (distance2(x1.data(), x2.data()) <= conf.hop_max2)
                     {
-                        previous_contact_line.push_back(i);
+                        prev_contact_line.push_back(index);
                     }
                 }
             }
@@ -515,14 +501,14 @@ at_previous_contact_line(const vector<int> indices,
 
 #ifdef DEBUG_CONTACTLINE
     fprintf(stderr, "Of which were at the previous contact line:");
-    for (auto i : previous_contact_line)
+    for (auto i : prev_contact_line)
     {
         fprintf(stderr, " %d", i);
     }
     fprintf(stderr, "\n");
 #endif
 
-    return previous_contact_line;
+    return prev_contact_line;
 }
 
 static vector<real>
@@ -575,6 +561,55 @@ calculate_fractions(const vector<size_t> &from_previous,
             fraction, err);
 
     return fractions;
+}
+
+void
+analyze_replacement(const vector<int> &advanced_indices,
+                    const Interface   &current,
+                    const Interface   &previous,
+                    const CLConf      &conf)
+{
+    for (auto index : advanced_indices)
+    {
+        // This is the previous position of an atom which
+        // advanced the contact line. Find which atom in
+        // the *current* bottom layer that is closest to
+        // this position. Then find *that* atom's previous
+        // position.
+        const auto x0 = previous.positions[index];
+
+        // If there are no atoms in the current bottom layer
+        // we cannot do anything.!
+        auto other = current.bottom.cbegin();
+        if (other == current.bottom.cend())
+        {
+            gmx_fatal(FARGS,
+                      "Inconsistent behaviour: No bottom layer of atoms is "
+                      "present, but some contact line atoms were found. "
+                      "This should not happen!");
+        }
+
+        auto x1 = current.positions[*other];
+        auto imin = *other;
+        auto rmin2 = distance2(x1.data(), x0.data());
+
+        while (other != current.bottom.cend())
+        {
+            if (*other != index)
+            {
+                x1 = current.positions[*other];
+                const auto dr2 = distance2(x1.data(), x0.data());
+
+                if (dr2 < rmin2)
+                {
+                    imin = *other;
+                    rmin2 = dr2;
+                }
+            }
+
+            ++other;
+        }
+    }
 }
 
 struct CLData {
@@ -650,16 +685,18 @@ collect_contact_line_advancement(const char             *fn,
             const auto contact_line = find_contact_line_indices(x0, bottom, conf);
             timings.contact_line.stop();
 
-            Interface current {x0, contact_line, bottom, interface};
+            Interface current {x0, num_atoms, contact_line, bottom, interface};
             interfaces.push_back(current);
 
             if (interfaces.size() > conf.stride)
             {
                 const auto& previous = interfaces.front();
                 const auto inds_advanced = contact_line_advancements(
-                    current.contact_line, previous.contact_line, conf);
+                    current, previous, conf);
                 const auto from_previous = at_previous_contact_line(
                     inds_advanced, current, previous, conf);
+
+                analyze_replacement(inds_advanced, current, previous, conf);
 
                 num_advanced.push_back(inds_advanced.size());
                 num_from_previous.push_back(from_previous.size());
