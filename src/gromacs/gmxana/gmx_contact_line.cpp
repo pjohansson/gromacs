@@ -45,6 +45,7 @@
 #include <cstring>
 #include <deque>
 #include <iterator> // distance
+#include <set> // distance
 #include <vector>
 
 #include "gromacs/commandline/pargs.h"
@@ -87,15 +88,17 @@ struct CLConf {
            const rvec rmin_in,
            const rvec rmax_in,
            const int  alg_in)
-        :algorithm{static_cast<Algorithm>(alg_in)},
-         cutoff{opt2parg_real("-co", pasize, pa)},
-         cutoff2{cutoff * cutoff},
-         precision{opt2parg_real("-prec", pasize, pa)},
-         dx{opt2parg_real("-dx", pasize, pa)},
-         hop_max{opt2parg_real("-hmax", pasize, pa)},
-         hop_max2{hop_max * hop_max},
-         nmin{opt2parg_int("-nmin", pasize, pa)},
-         nmax{opt2parg_int("-nmax", pasize, pa)}
+        :algorithm{ static_cast<Algorithm>(alg_in) },
+         cutoff{ opt2parg_real("-co", pasize, pa) },
+         cutoff2{ cutoff * cutoff },
+         precision{ opt2parg_real("-prec", pasize, pa) },
+         dx{ opt2parg_real("-dx", pasize, pa) },
+         hop_min{ opt2parg_real("-hmin", pasize, pa) },
+         hop_min2{ hop_min * hop_min },
+         hop_max{ opt2parg_real("-hmax", pasize, pa) },
+         hop_max2{ hop_max * hop_max },
+         nmin{ opt2parg_int("-nmin", pasize, pa) },
+         nmax{ opt2parg_int("-nmax", pasize, pa) }
     {
         copy_rvec(rmin_in, rmin);
         copy_rvec(rmax_in, rmax);
@@ -132,6 +135,8 @@ struct CLConf {
          cutoff2,
          precision,
          dx,
+         hop_min,
+         hop_min2,
          hop_max,
          hop_max2;
     int nmin,
@@ -330,76 +335,14 @@ find_bottom_layer_indices(const rvec *x0,
     return slice_indices.at(prev_slice);
 }
 
-static vector<int>
-find_contact_line_indices(const rvec *x0,
-                          const vector<int> bottom,
-                          const CLConf &conf)
-{
-    // Slice the bottom along the y axis to find the minimum
-    // and maximum x coordinates of the contact line
-    const auto yslices = slice_system_along_dir(x0, bottom, conf, YY);
-    vector<int> indices;
-
-    for (auto slice : yslices)
-    {
-        auto iter = slice.cbegin();
-
-        // If no molecules are in the slice, ignore it!
-        if (iter == slice.cend())
-        {
-            continue;
-        }
-
-        auto xmax = x0[*iter][XX];
-        int imax = *iter;
-
-        while (++iter != slice.cend())        {
-            const auto x = x0[*iter][XX];
-
-            if (x > xmax)
-            {
-                imax = *iter;
-                xmax = x;
-            }
-        }
-
-        indices.push_back(imax);
-    }
-
-#ifdef DEBUG_CONTACTLINE
-    fprintf(stderr, "and %lu contact line atoms.\n", indices.size());
-#endif
-
-    return indices;
-}
-
-static vector<int>
-find_shared_indices(const vector<int> current,
-                    const vector<int> prev)
-{
-    vector<int> shared_indices;
-
-    for (auto i : current)
-    {
-        if (find(prev.cbegin(), prev.cend(), i) != prev.cend())
-        {
-            shared_indices.push_back(i);
-        }
-    }
-
-    return shared_indices;
-}
-
 using VecArray = array<real, DIM>;
 
 struct Interface {
     Interface(const rvec        *x0,
               const int          num_atoms,
-              const vector<int>  cl_indices,
               const vector<int>  bottom_indices,
               const vector<int>  int_indices)
-        :contact_line{cl_indices},
-         bottom{bottom_indices},
+        :bottom{bottom_indices},
          interface{int_indices}
     {
         try {
@@ -416,19 +359,105 @@ struct Interface {
         }
     }
 
-    vector<int> contact_line,
-                bottom,
+    vector<int> bottom,
                 interface;
+    set<int> contact_line;
     vector<VecArray> positions;
+
+    // Vectors for absolute contact line positions from rolling
+    // a ball over it and the corresponding closest molecular indices
+    // for every position.
+    vector<real> rolled_xs;
+    vector<int>  rolled_inds;
 };
 
-static vector<int>
+static void
+add_contact_line(Interface         &interface,
+                 const rvec        *x0,
+                 const vector<int>  bottom,
+                 const CLConf      &conf)
+{
+    // Roll a ball along the bottom of the interface to detect the contact line
+    constexpr real r = 0.28;
+    constexpr real r2 = r * r;
+    constexpr real dy_ball = r / 5.0;
+    constexpr real dx_ball = r / 10.0;
+
+    real y = conf.rmin[YY];
+
+    while (y <= conf.rmax[YY])
+    {
+        real x = conf.rmax[XX];
+
+        while (x >= conf.rmin[XX])
+        {
+            vector<int> candidates;
+            vector<real> dr2s;
+
+            for (auto index : bottom)
+            {
+                const auto dx = x - x0[index][XX];
+                const auto dy = y - x0[index][YY];
+                const auto dr2 = dx * dx + dy * dy;
+
+                if (dr2 <= r2)
+                {
+                    candidates.push_back(index);
+                    dr2s.push_back(dr2);
+                }
+            }
+
+            if (candidates.size() > 0)
+            {
+                const auto it = min_element(dr2s.cbegin(), dr2s.cend());
+                const auto dn = distance(dr2s.cbegin(), it);
+                const auto index = candidates[dn];
+
+                interface.rolled_xs.push_back(x);
+                interface.rolled_inds.push_back(index);
+                interface.contact_line.insert(index);
+
+                break;
+            }
+
+            x -= dx_ball;
+        }
+
+        y += dy_ball;
+    }
+
+#ifdef DEBUG_CONTACTLINE
+    fprintf(stderr, "and %lu contact line atoms.\n",
+            interface.contact_line.size());
+#endif
+}
+
+template<typename T>
+static set<int>
+find_shared_indices(const set<int> &current,
+                    const T &prev)
+{
+    set<int> shared_indices;
+
+    for (auto i : current)
+    {
+        if (find(prev.cbegin(), prev.cend(), i) != prev.cend())
+        {
+            shared_indices.insert(i);
+        }
+    }
+
+    return shared_indices;
+}
+
+static set<int>
 contact_line_advancements(const Interface &current,
                           const Interface &previous,
                           const CLConf    &conf)
 {
-    vector<int> inds_advanced;
+    set<int> inds_advanced;
 
+    /*
     auto cur_index = current.contact_line.cbegin();
     auto prev_index = previous.contact_line.cbegin();
 
@@ -440,11 +469,56 @@ contact_line_advancements(const Interface &current,
 
         if ((xcur - xprev) >= conf.dx)
         {
-            inds_advanced.push_back(*cur_index);
+            inds_advanced.insert(*cur_index);
         }
 
         ++cur_index;
         ++prev_index;
+    }
+
+    set<int> set_advanced;
+    */
+
+    if (current.rolled_xs.size() != previous.rolled_xs.size())
+    {
+        gmx_fatal(FARGS,
+                  "Current and previous interface are of different size. "
+                  "This should not happen.");
+    }
+
+    // The vectors contain X values and have identical order and spacing
+    // of Y values, thus we can just iterate through them and compare.
+    auto xcur = current.rolled_xs.cbegin();
+    auto xprev = previous.rolled_xs.cbegin();
+    auto icur = current.rolled_inds.cbegin();
+
+    while (xcur != current.rolled_xs.cend())
+    {
+        auto dx = *xcur - *xprev;
+
+        if (dx >= conf.dx)
+        {
+            // Assert that this delta is not due to an atom sidestepping
+            // oh-so-slightly
+            const auto x1 = current.positions[*icur];
+            const auto x2 = previous.positions[*icur];
+            const auto dr2 = distance2(x1.data(), x2.data());
+
+            if (dr2 >= conf.hop_min2)
+            {
+                inds_advanced.insert(*icur);
+            }
+#ifdef DEBUG_CONTACTLINE
+            else
+            {
+                fprintf(stderr, "Discarded a hop (dr: %.2f)\n", sqrt(dr2));
+            }
+#endif
+        }
+
+        ++xcur;
+        ++xprev;
+        ++icur;
     }
 
 #ifdef DEBUG_CONTACTLINE
@@ -459,13 +533,13 @@ contact_line_advancements(const Interface &current,
     return inds_advanced;
 }
 
-static vector<int>
-at_previous_contact_line(const vector<int> indices,
-                         const Interface   &current,
-                         const Interface   &previous,
-                         const CLConf      &conf)
+static set<int>
+at_previous_contact_line(const set<int>  &indices,
+                         const Interface &current,
+                         const Interface &previous,
+                         const CLConf    &conf)
 {
-    vector<int> prev_contact_line;
+    set<int> prev_contact_line;
 
     switch (conf.algorithm)
     {
@@ -486,9 +560,11 @@ at_previous_contact_line(const vector<int> indices,
                     const auto& x1 = current.positions[index];
                     const auto& x2 = previous.positions[index];
 
-                    if (distance2(x1.data(), x2.data()) <= conf.hop_max2)
+                    const auto dr2 = distance2(x1.data(), x2.data());
+
+                    if ((dr2 >= conf.hop_min2) && (dr2 <= conf.hop_max2))
                     {
-                        prev_contact_line.push_back(index);
+                        prev_contact_line.insert(index);
                     }
                 }
             }
@@ -564,7 +640,7 @@ calculate_fractions(const vector<size_t> &from_previous,
 }
 
 void
-analyze_replacement(const vector<int> &advanced_indices,
+analyze_replacement(const set<int>    &advanced_indices,
                     const Interface   &current,
                     const Interface   &previous,
                     const CLConf      &conf)
@@ -681,11 +757,12 @@ collect_contact_line_advancement(const char             *fn,
             const auto bottom = find_bottom_layer_indices(x0, interface, conf);
             timings.bottom.stop();
 
+            Interface current {x0, num_atoms, bottom, interface};
+
             timings.contact_line.set();
-            const auto contact_line = find_contact_line_indices(x0, bottom, conf);
+            add_contact_line(current, x0, bottom, conf);
             timings.contact_line.stop();
 
-            Interface current {x0, num_atoms, contact_line, bottom, interface};
             interfaces.push_back(current);
 
             if (interfaces.size() > conf.stride)
@@ -723,14 +800,20 @@ collect_contact_line_advancement(const char             *fn,
             }
 
 #ifdef DEBUG_CONTACTLINE
-            snprintf(debug_filename, MAXLEN, "contact_line_%.1fps.gro", t);
+            vector<int> cl_inds;
+            for (auto i : current.contact_line)
+            {
+                cl_inds.push_back(i);
+            }
+
+            snprintf(debug_filename, MAXLEN, "contact_line_%05.1fps.gro", t);
             snprintf(debug_title, MAXLEN, "contact_line");
             write_sto_conf_indexed(debug_filename, debug_title,
                                    &top->atoms, x0, NULL, ePBC, box,
-                                   contact_line.size(),
-                                   contact_line.data());
+                                   cl_inds.size(),
+                                   cl_inds.data());
 
-            snprintf(debug_filename, MAXLEN, "interface_%.1fps.gro", t);
+            snprintf(debug_filename, MAXLEN, "interface_%05.1fps.gro", t);
             snprintf(debug_title, MAXLEN, "interface");
             write_sto_conf_indexed(debug_filename, debug_title,
                                    &top->atoms, x0, NULL, ePBC, box,
@@ -805,7 +888,8 @@ gmx_contact_line(int argc, char *argv[])
     static real cutoff = 1.0,
                 precision = 0.3,
                 dx = 0.3,
-                hop_max = 0.3;
+                hop_min = 0.25,
+                hop_max = 0.35;
     const char *algorithm[] = { NULL, "contact-line", "bottom", "hops", NULL };
 
     t_pargs pa[] = {
@@ -823,6 +907,8 @@ gmx_contact_line(int argc, char *argv[])
           "Precision of slices along y and z." },
         { "-dx", FALSE, etREAL, { &dx },
           "Minimum distance for contact line advancement along x." },
+        { "-hmin", FALSE, etREAL, { &hop_min },
+          "Minimum distance for a hop to the contact line." },
         { "-hmax", FALSE, etREAL, { &hop_max },
           "Maximum distance for a hop to the contact line." },
         { "-stride", FALSE, etINT, { &stride },
