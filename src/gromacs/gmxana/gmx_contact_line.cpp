@@ -36,7 +36,7 @@
  */
 #include "gmxpre.h"
 
-#include <algorithm> // find
+#include <algorithm> // find, set_difference
 #include <array>
 #include <cctype>
 #include <chrono>
@@ -45,7 +45,10 @@
 #include <cstring>
 #include <deque>
 #include <iterator> // distance
-#include <set> // distance
+#include <numeric> // accumulate
+#include <set>
+#include <utility> // pair
+#include <tuple> // tie
 #include <vector>
 
 #include "gromacs/commandline/pargs.h"
@@ -69,7 +72,7 @@
 
 using namespace std;
 
-//#define DEBUG_CONTACTLINE
+#define DEBUG_CONTACTLINE
 
 /****************************************************************************
  * This program analyzes how contact line molecules advance.                *
@@ -82,13 +85,22 @@ enum class Algorithm {
     Hops = 3
 };
 
+using IndexVec = vector<size_t>;
+using IndexSet = set<size_t>;
+
+// rvec, but as an array instead of raw pointer
+using DimTuple = array<real, DIM>;
+
 struct CLConf {
     CLConf(t_pargs    pa[],
            const int  pasize,
            const rvec rmin_in,
            const rvec rmax_in,
-           const int  alg_in)
+           const int  alg_in,
+           const t_filenm fnm[],
+           const int fnmsize)
         :algorithm{ static_cast<Algorithm>(alg_in) },
+         calc_jump_distance{ static_cast<bool>(opt2bSet("-dist", fnmsize, fnm)) },
          cutoff{ opt2parg_real("-co", pasize, pa) },
          cutoff2{ cutoff * cutoff },
          precision{ opt2parg_real("-prec", pasize, pa) },
@@ -131,6 +143,7 @@ struct CLConf {
     }
 
     Algorithm algorithm;
+    bool calc_jump_distance;
     real cutoff,
          cutoff2,
          precision,
@@ -146,6 +159,40 @@ struct CLConf {
          rmax,
          rmin_ss,
          rmax_ss;
+};
+
+struct Interface {
+    Interface(const rvec        *x0,
+              const unsigned     num_atoms,
+              const IndexVec     bottom_indices,
+              const IndexVec     int_indices)
+        :bottom{bottom_indices},
+         interface{int_indices}
+    {
+        try {
+            positions.reserve(num_atoms);
+
+            for (unsigned i = 0; i < num_atoms; ++i)
+            {
+                positions.push_back({x0[i][XX], x0[i][YY], x0[i][ZZ]});
+            }
+        }
+        catch (const bad_alloc& e) {
+            gmx_fatal(FARGS, "Could not allocate memory for all frames (%s).",
+                      e.what());
+        }
+    }
+
+    IndexVec bottom,
+             interface;
+    IndexSet contact_line;
+    vector<DimTuple> positions;
+
+    // Vectors for absolute contact line positions from rolling
+    // a ball over it and the corresponding closest molecular indices
+    // for every position.
+    vector<real> rolled_xs;
+    IndexVec  rolled_inds;
 };
 
 template<typename T>
@@ -212,7 +259,7 @@ is_inside_limits(const rvec x,
         && x[ZZ] >= rmin[ZZ] && x[ZZ] < rmax[ZZ];
 }
 
-static vector<int>
+static IndexVec
 find_interface_indices(const rvec          *x0,
                        const int           *grpindex,
                        const int            grpsize,
@@ -220,8 +267,8 @@ find_interface_indices(const rvec          *x0,
                        const t_pbc         *pbc)
 {
     // Find indices within search volume
-    vector<size_t> search_space;
-    vector<size_t> candidates;
+    IndexVec search_space;
+    IndexVec candidates;
 
     for (int i = 0; i < grpsize; ++i)
     {
@@ -244,10 +291,10 @@ find_interface_indices(const rvec          *x0,
             candidates.size(), search_space.size());
 #endif
 
-    vector<int> interface_inds;
+    IndexVec interface_inds;
     interface_inds.reserve(candidates.size());
 
-    for (auto i : candidates)
+    for (const auto& i : candidates)
     {
         const auto x1 = x0[i];
         int count = 0;
@@ -285,18 +332,18 @@ find_interface_indices(const rvec          *x0,
     return interface_inds;
 }
 
-static vector<vector<int>>
-slice_system_along_dir(const rvec *x0,
-                       const vector<int> interface,
-                       const CLConf &conf,
-                       const int dir)
+static vector<IndexVec>
+slice_system_along_dir(const rvec     *x0,
+                       const IndexVec &interface,
+                       const CLConf   &conf,
+                       const int       dir)
 {
     // Identify the floor by slicing the system and finding the lowest peak
-    const int num_slices = static_cast<int>(ceil((conf.rmax[dir] - conf.rmin[dir]) / conf.precision));
+    const unsigned num_slices = static_cast<unsigned>(ceil((conf.rmax[dir] - conf.rmin[dir]) / conf.precision));
     const real final_slice_precision = (conf.rmax[dir] - conf.rmin[dir]) / num_slices;
 
-    vector<vector<int>> slice_indices (num_slices);
-    for (auto i : interface)
+    vector<IndexVec> slice_indices (num_slices);
+    for (const auto i : interface)
     {
         const auto x = x0[i][dir];
         const auto slice = static_cast<size_t>(
@@ -308,19 +355,19 @@ slice_system_along_dir(const rvec *x0,
     return slice_indices;
 }
 
-static vector<int>
-find_bottom_layer_indices(const rvec *x0,
-                          const vector<int> interface,
-                          const CLConf &conf)
+static IndexVec
+find_bottom_layer_indices(const rvec     *x0,
+                          const IndexVec &interface,
+                          const CLConf   &conf)
 {
     const auto slice_indices = slice_system_along_dir(x0, interface, conf, ZZ);
 
     // Track the maximum count, when a decrease is found the peak
     // was in the previous slice
     int prev_slice = -1;
-    size_t max_count = 0;
+    unsigned max_count = 0;
 
-    for (auto indices : slice_indices)
+    for (const auto& indices : slice_indices)
     {
         const auto count = indices.size();
         if (count < max_count)
@@ -335,46 +382,10 @@ find_bottom_layer_indices(const rvec *x0,
     return slice_indices.at(prev_slice);
 }
 
-using VecArray = array<real, DIM>;
-
-struct Interface {
-    Interface(const rvec        *x0,
-              const int          num_atoms,
-              const vector<int>  bottom_indices,
-              const vector<int>  int_indices)
-        :bottom{bottom_indices},
-         interface{int_indices}
-    {
-        try {
-            positions.reserve(num_atoms);
-
-            for (int i = 0; i < num_atoms; ++i)
-            {
-                positions.push_back({x0[i][XX], x0[i][YY], x0[i][ZZ]});
-            }
-        }
-        catch (const bad_alloc& e) {
-            gmx_fatal(FARGS, "Could not allocate memory for all frames (%s).",
-                      e.what());
-        }
-    }
-
-    vector<int> bottom,
-                interface;
-    set<int> contact_line;
-    vector<VecArray> positions;
-
-    // Vectors for absolute contact line positions from rolling
-    // a ball over it and the corresponding closest molecular indices
-    // for every position.
-    vector<real> rolled_xs;
-    vector<int>  rolled_inds;
-};
-
 static void
 add_contact_line(Interface         &interface,
                  const rvec        *x0,
-                 const vector<int>  bottom,
+                 const IndexVec    &bottom,
                  const CLConf      &conf)
 {
     // Roll a ball along the bottom of the interface to detect the contact line
@@ -391,10 +402,10 @@ add_contact_line(Interface         &interface,
 
         while (x >= conf.rmin[XX])
         {
-            vector<int> candidates;
+            IndexVec candidates;
             vector<real> dr2s;
 
-            for (auto index : bottom)
+            for (const auto index : bottom)
             {
                 const auto dx = x - x0[index][XX];
                 const auto dy = y - x0[index][YY];
@@ -433,13 +444,13 @@ add_contact_line(Interface         &interface,
 }
 
 template<typename T>
-static set<int>
-find_shared_indices(const set<int> &current,
-                    const T &prev)
+static IndexSet
+find_shared_indices(const IndexSet &current,
+                    const T        &prev)
 {
-    set<int> shared_indices;
+    IndexSet shared_indices;
 
-    for (auto i : current)
+    for (const auto i : current)
     {
         if (find(prev.cbegin(), prev.cend(), i) != prev.cend())
         {
@@ -450,34 +461,12 @@ find_shared_indices(const set<int> &current,
     return shared_indices;
 }
 
-static set<int>
+static IndexSet
 contact_line_advancements(const Interface &current,
                           const Interface &previous,
                           const CLConf    &conf)
 {
-    set<int> inds_advanced;
-
-    /*
-    auto cur_index = current.contact_line.cbegin();
-    auto prev_index = previous.contact_line.cbegin();
-
-    while ((cur_index != current.contact_line.cend())
-            && (prev_index != previous.contact_line.cend()))
-    {
-        const auto xcur = current.positions[*cur_index][XX];
-        const auto xprev = previous.positions[*prev_index][XX];
-
-        if ((xcur - xprev) >= conf.dx)
-        {
-            inds_advanced.insert(*cur_index);
-        }
-
-        ++cur_index;
-        ++prev_index;
-    }
-
-    set<int> set_advanced;
-    */
+    IndexSet inds_advanced;
 
     if (current.rolled_xs.size() != previous.rolled_xs.size())
     {
@@ -523,9 +512,9 @@ contact_line_advancements(const Interface &current,
 
 #ifdef DEBUG_CONTACTLINE
     fprintf(stderr, "Atoms which advanced the contact line:");
-    for (auto i : inds_advanced)
+    for (const auto i : inds_advanced)
     {
-        fprintf(stderr, " %d", i);
+        fprintf(stderr, " %lu", i);
     }
     fprintf(stderr, "\n");
 #endif
@@ -533,13 +522,13 @@ contact_line_advancements(const Interface &current,
     return inds_advanced;
 }
 
-static set<int>
-at_previous_contact_line(const set<int>  &indices,
+static IndexSet
+at_previous_contact_line(const IndexSet  &indices,
                          const Interface &current,
                          const Interface &previous,
                          const CLConf    &conf)
 {
-    set<int> prev_contact_line;
+    IndexSet prev_contact_line;
 
     switch (conf.algorithm)
     {
@@ -555,7 +544,7 @@ at_previous_contact_line(const set<int>  &indices,
             {
                 const auto shared = find_shared_indices(indices, previous.bottom);
 
-                for (auto index : shared)
+                for (const auto index : shared)
                 {
                     const auto& x1 = current.positions[index];
                     const auto& x2 = previous.positions[index];
@@ -579,7 +568,7 @@ at_previous_contact_line(const set<int>  &indices,
     fprintf(stderr, "Of which were at the previous contact line:");
     for (auto i : prev_contact_line)
     {
-        fprintf(stderr, " %d", i);
+        fprintf(stderr, " %lu", i);
     }
     fprintf(stderr, "\n");
 #endif
@@ -588,8 +577,8 @@ at_previous_contact_line(const set<int>  &indices,
 }
 
 static vector<real>
-calculate_fractions(const vector<size_t> &from_previous,
-                    const vector<size_t> &num_advanced)
+calculate_fractions(const IndexVec &from_previous,
+                    const IndexVec &num_advanced)
 {
     auto from = from_previous.cbegin();
     auto total = num_advanced.cbegin();
@@ -623,7 +612,7 @@ calculate_fractions(const vector<size_t> &from_previous,
     const real mean = sum_fractions / static_cast<real>(fractions.size());
     real var = 0.0;
 
-    for (auto f : fractions)
+    for (const auto f : fractions)
     {
         var += (f - mean) * (f - mean);
     }
@@ -639,8 +628,9 @@ calculate_fractions(const vector<size_t> &from_previous,
     return fractions;
 }
 
+/*
 void
-analyze_replacement(const set<int>    &advanced_indices,
+analyze_replacement(const IndexSet    &advanced_indices,
                     const Interface   &current,
                     const Interface   &previous,
                     const CLConf      &conf)
@@ -666,7 +656,7 @@ analyze_replacement(const set<int>    &advanced_indices,
         }
 
         auto x1 = current.positions[*other];
-        auto imin = *other;
+        //auto imin = *other;
         auto rmin2 = distance2(x1.data(), x0.data());
 
         while (other != current.bottom.cend())
@@ -678,7 +668,7 @@ analyze_replacement(const set<int>    &advanced_indices,
 
                 if (dr2 < rmin2)
                 {
-                    imin = *other;
+                    //imin = *other;
                     rmin2 = dr2;
                 }
             }
@@ -687,11 +677,183 @@ analyze_replacement(const set<int>    &advanced_indices,
         }
     }
 }
+*/
 
 struct CLData {
     vector<real> times,
-                 fractions;
+                 fractions,
+                 distances;
 };
+
+template<typename T>
+static int find_the_closest_neighbour(const DimTuple         &x0,
+                                      const T                &to,
+                                      const vector<DimTuple> &positions)
+{
+    auto iter_to = to.cbegin();
+    auto x1 = positions[*iter_to];
+
+    auto index_min = *iter_to;
+    auto min_dist = distance2(x1.data(), x0.data());
+
+    while (++iter_to != to.cend())
+    {
+        x1 = positions[*iter_to];
+        const auto dist = distance2(x1.data(), x0.data());
+
+        if (dist < min_dist)
+        {
+            min_dist = dist;
+            index_min = *iter_to;
+        }
+    }
+
+    return index_min;
+}
+
+template<typename T1, typename T2>
+static IndexSet find_second_layer(const T1               &from,
+                                  const T2               &to,
+                                  const vector<DimTuple> &positions)
+{
+    IndexSet second_layer;
+
+    for (const auto i : from)
+    {
+        const auto x0 = positions[i];
+        const auto index = find_the_closest_neighbour(x0, to, positions);
+        second_layer.insert(index);
+    }
+
+    return second_layer;
+}
+
+template<typename T1, typename T2>
+static IndexVec find_closest_neighbours(const T1               &from,
+                                        const T2               &to,
+                                        const vector<DimTuple> &positions)
+{
+    IndexVec neighbours;
+
+    for (const auto i : from)
+    {
+        const auto x0 = positions[i];
+        const auto index = find_the_closest_neighbour(x0, to, positions);
+        neighbours.push_back(index);
+    }
+
+    return neighbours;
+}
+
+using DistAndHeight = pair<real, real>;
+
+static DistAndHeight
+calc_displacement_distance(const Interface &interface)
+{
+    // Find the set of indices which are at the interface
+    // but not in the bottom layer
+    IndexVec not_bottom_layer;
+    set_difference(
+        interface.interface.cbegin(), interface.interface.cend(),
+        interface.bottom.cbegin(), interface.bottom.cend(),
+        inserter(not_bottom_layer, not_bottom_layer.begin())
+    );
+
+    // Find all indices in the second layer
+    const auto second_layer = find_second_layer(
+        interface.contact_line, not_bottom_layer, interface.positions
+    );
+
+    // Find their closest neighbours among the contact line
+    const auto closest_neighbours = find_closest_neighbours(
+        second_layer, interface.contact_line, interface.positions
+    );
+
+    // Then calculate the distance along x to them
+    vector<real> distances;
+    vector<real> heights;
+    auto from = second_layer.cbegin();
+    auto to = closest_neighbours.cbegin();
+
+    while (from != second_layer.cend())
+    {
+        const auto x0 = interface.positions[*from++];
+        const auto x1 = interface.positions[*to++];
+
+        // Calculate the movement in the xy plane as the distance
+        const auto dx = x1[XX] - x0[XX];
+        const auto dy = x1[YY] - x0[YY];
+        const int sign = dx > 0.0 ? 1 : -1;
+        const auto dr = sign * sqrt(pow(dx, 2) + pow(dy, 2));
+        distances.push_back(dr);
+
+        // Calculate the height difference
+        const auto dz = x0[ZZ] - x1[ZZ];
+        heights.push_back(dz);
+    }
+
+    // Calculate the mean and standard error
+    const auto mean_dr = accumulate(distances.cbegin(), distances.cend(), 0.0)
+                        / distances.size();
+    const auto mean_dz = accumulate(heights.cbegin(), heights.cend(), 0.0)
+                        / heights.size();
+
+    return pair<real, real> { static_cast<real>(mean_dr), static_cast<real>(mean_dz) };
+}
+
+// Calculate the arithmetic mean and variance of all values in a vector.
+// Excepts if less than two values are present in the vector.
+template <typename T>
+const static pair<T, T>
+calc_mean_and_var(const vector<T> &values)
+{
+    const auto mean = accumulate(values.cbegin(), values.cend(), 0.0)
+                        / values.size();
+    const auto var = accumulate(values.cbegin(), values.cend(), 0.0,
+                        [=] (const T& acc, const T& value) {
+                            return acc + pow(value - mean, 2);
+                        }
+                    ) / (values.size() - 1);
+
+    return pair<T, T> { mean, var };
+}
+
+// Calculate the mean distance and height between the contact line
+// and their closest second layer molecules. Return the distances
+// to use for plotting a distance figure.
+static vector<real>
+calculate_mean_distance(const vector<DistAndHeight> &values)
+{
+    vector<real> dists;
+    vector<real> heights;
+    real dr, dz;
+    for (const auto v : values)
+
+    {
+        tie(dr, dz) = v;
+        dists.push_back(dr);
+        heights.push_back(dz);
+    }
+
+    real mean_dr, var_dr,
+         mean_dz, var_dz;
+    tie(mean_dr, var_dr) = calc_mean_and_var(dists);
+    tie(mean_dz, var_dz) = calc_mean_and_var(heights);
+
+    const auto err_dr = sqrt(var_dr) / (values.size() - 1);
+    const auto err_dz = sqrt(var_dz) / (values.size() - 1);
+
+    fprintf(stdout,
+            "Average distance for second layer molecules to jump:\n"
+            "%.3f +/- %.3f (std: %.3f)\n",
+            mean_dr, err_dr, sqrt(var_dr));
+    fprintf(stdout,
+            "Average height above the first layer of the second layer molecules:\n"
+            "%.3f +/- %.3f (std: %.3f)\n",
+            mean_dz, err_dz, sqrt(var_dz));
+
+    return dists;
+}
 
 static CLData
 collect_contact_line_advancement(const char             *fn,
@@ -702,7 +864,7 @@ collect_contact_line_advancement(const char             *fn,
                                  const int               ePBC,
                                  const gmx_output_env_t *oenv)
 {
-    int num_atoms;
+    unsigned num_atoms;
     rvec *x0;
     matrix box;
     t_trxstatus *status;
@@ -723,9 +885,13 @@ collect_contact_line_advancement(const char             *fn,
     // who advanced the contact line and the number of those who
     // came from the previous contact line. Keep them in a vector
     // to analyze the entire set at the end of the trajectory analysis.
-    vector<size_t> num_advanced;
-    vector<size_t> num_from_previous;
+    IndexVec num_advanced;
+    IndexVec num_from_previous;
     vector<real> times;
+
+    // Also save the distance from second layer atoms to their closest
+    // contact line atom
+    vector<DistAndHeight> distances;
 
     // To compare against previous frames when calculating which
     // indices advanced the contact line we need to save this
@@ -745,6 +911,8 @@ collect_contact_line_advancement(const char             *fn,
     {
         try
         {
+            times.push_back(t);
+
             timings.loop.set();
             gmx_rmpbc(gpbc, num_atoms, box, x0);
 
@@ -765,6 +933,11 @@ collect_contact_line_advancement(const char             *fn,
 
             interfaces.push_back(current);
 
+            if (conf.calc_jump_distance)
+            {
+                distances.push_back(calc_displacement_distance(current));
+            }
+
             if (interfaces.size() > conf.stride)
             {
                 const auto& previous = interfaces.front();
@@ -773,11 +946,12 @@ collect_contact_line_advancement(const char             *fn,
                 const auto from_previous = at_previous_contact_line(
                     inds_advanced, current, previous, conf);
 
-                analyze_replacement(inds_advanced, current, previous, conf);
+                // This analysis function is no longer used, but may be
+                // some time?
+                // analyze_replacement(inds_advanced, current, previous, conf);
 
                 num_advanced.push_back(inds_advanced.size());
                 num_from_previous.push_back(from_previous.size());
-                times.push_back(t);
 
                 interfaces.pop_front();
 
@@ -800,11 +974,13 @@ collect_contact_line_advancement(const char             *fn,
             }
 
 #ifdef DEBUG_CONTACTLINE
-            vector<int> cl_inds;
-            for (auto i : current.contact_line)
-            {
-                cl_inds.push_back(i);
-            }
+            // write_sto_conf_indexed requires [int] data, not [size_t]
+            // this is debugging so we don't care about performance,
+            // just copy them
+            const vector<int> int_inds(current.interface.cbegin(),
+                                       current.interface.cend()),
+                              cl_inds(current.contact_line.cbegin(),
+                                      current.contact_line.cend());
 
             snprintf(debug_filename, MAXLEN, "contact_line_%05.1fps.gro", t);
             snprintf(debug_title, MAXLEN, "contact_line");
@@ -817,8 +993,8 @@ collect_contact_line_advancement(const char             *fn,
             snprintf(debug_title, MAXLEN, "interface");
             write_sto_conf_indexed(debug_filename, debug_title,
                                    &top->atoms, x0, NULL, ePBC, box,
-                                   interface.size(),
-                                   interface.data());
+                                   int_inds.size(),
+                                   int_inds.data());
 #endif
             timings.loop.stop();
         }
@@ -842,12 +1018,41 @@ collect_contact_line_advancement(const char             *fn,
 
     const auto fractions = calculate_fractions(num_from_previous, num_advanced);
 
+    vector<real> dists;
+    if (conf.calc_jump_distance)
+    {
+        dists = calculate_mean_distance(distances);
+    }
+
     const CLData result {
         times: times,
-        fractions: fractions
+        fractions: fractions,
+        distances: dists
     };
 
     return result;
+}
+
+static void
+save_distances_figure(const CLData           &data,
+                      const char             *filename,
+                      const gmx_output_env_t *oenv)
+{
+    const auto title = "Molecule distance data";
+    const auto xlabel = "Time (ps)";
+    const auto ylabel = "Distance (nm)";
+
+    auto file = xvgropen(filename, title, xlabel, ylabel, oenv);
+    auto t = data.times.cbegin();
+    auto d = data.distances.cbegin();
+
+    while (t != data.times.cend())
+    {
+
+        fprintf(file, "%12.3f %1.3f\n", *t++, *d++);
+    }
+
+    xvgrclose(file);
 }
 
 static void
@@ -862,6 +1067,15 @@ save_contact_line_figure(const CLData           &data,
     auto file = xvgropen(filename, title, xlabel, ylabel, oenv);
     auto t = data.times.cbegin();
     auto f = data.fractions.cbegin();
+
+    // Make sure that the time and data are correct
+    // because we collect the fraction data only after
+    // an initial stride (difference in frames)
+    const auto diff = data.times.size() - data.fractions.size();
+    for (unsigned i = 0; i < diff; ++i)
+    {
+        ++t;
+    }
 
     while (t != data.times.cend())
     {
@@ -925,6 +1139,7 @@ gmx_contact_line(int argc, char *argv[])
         { efNDX, NULL, NULL,  ffOPTRD },
         { efTPR, NULL, NULL,  ffREAD },
         { efXVG, "-o", "clfrac", ffWRITE },
+        { efXVG, "-dist", "dist", ffOPTWR },
     };
 
 #define NFILE asize(fnm)
@@ -952,11 +1167,16 @@ gmx_contact_line(int argc, char *argv[])
     get_index(&top->atoms, ftp2fn_null(efNDX, NFILE, fnm),
               1, grpsizes, index, grpnames);
 
-    struct CLConf conf {pa, asize(pa), rmin, rmax, nenum(algorithm)};
+    struct CLConf conf {pa, asize(pa), rmin, rmax, nenum(algorithm), fnm, asize(fnm)};
 
     const auto contact_line_data = collect_contact_line_advancement(
         ftp2fn(efTRX, NFILE, fnm), *index, *grpsizes, conf, top, ePBC, oenv);
     save_contact_line_figure(contact_line_data, opt2fn("-o", NFILE, fnm), oenv);
+
+    if (conf.calc_jump_distance)
+    {
+        save_distances_figure(contact_line_data, opt2fn("-dist", NFILE, fnm), oenv);
+    }
 
     view_all(oenv, NFILE, fnm);
 
