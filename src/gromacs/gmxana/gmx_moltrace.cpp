@@ -151,7 +151,7 @@ FrameData collect_positions(const char             *fn,
         fprintf(stderr, "  Z: [%8.3f, %8.3f]\n\n", rlim.rmin[ZZ], rlim.rmax[ZZ]);
 
         // Rewind doesn't work properly, instead close and reopen
-        close_trj(status);
+        close_trx(status);
         read_first_x(oenv, &status, fn, &t, &x0, box);
     }
 
@@ -178,7 +178,7 @@ FrameData collect_positions(const char             *fn,
     while (read_next_x(oenv, status, &t, x0, box));
     gmx_rmpbc_done(gpbc);
 
-    close_trj(status);
+    close_trx(status);
     fprintf(stderr, "\nRead %d frames from trajectory.\n",
             static_cast<int>(frames.size()));
 

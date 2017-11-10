@@ -1131,10 +1131,7 @@ double gmx::do_md(FILE *fplog, t_commrec *cr, const gmx::MDLogger &mdlog,
          */
         if (bFlowOutput)
         {
-            bCPT = (((signals[eglsCHKPT].set && (bNS || ir->nstlist == 0)) ||
-                     (bLastStep && (Flags & MD_CONFOUT))) &&
-                    step > ir->init_step && !bRerunMD &&
-                    step % flowcr->step_output == 0);
+            bCPT = bCPT && (step % flowcr->step_output == 0);
         }
 
         if (bCPT)

@@ -1,6 +1,8 @@
 #ifndef MD_PETTER
 #define MD_PETTER
 
+#include "gromacs/mdtypes/state.h"
+
 // Indices for X and Z axes, to not confuse with XX and YY
 typedef enum {
     xi,
