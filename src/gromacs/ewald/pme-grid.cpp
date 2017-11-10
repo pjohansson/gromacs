@@ -3,7 +3,7 @@
  *
  * Copyright (c) 1991-2000, University of Groningen, The Netherlands.
  * Copyright (c) 2001-2004, The GROMACS development team.
- * Copyright (c) 2013,2014,2015,2016, by the GROMACS development team, led by
+ * Copyright (c) 2013,2014,2015,2016,2017, by the GROMACS development team, led by
  * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
  * and including many others, as listed in the AUTHORS file in the
  * top-level source directory and at http://www.gromacs.org.
@@ -44,10 +44,13 @@
 #include <cstdlib>
 
 #include "gromacs/ewald/pme.h"
+#include "gromacs/fft/parallel_3dfft.h"
 #include "gromacs/math/vec.h"
 #include "gromacs/timing/cyclecounter.h"
 #include "gromacs/utility/fatalerror.h"
 #include "gromacs/utility/smalloc.h"
+
+#include "pme-internal.h"
 
 #ifdef DEBUG_PME
 #include "gromacs/fileio/pdbio.h"
@@ -232,7 +235,7 @@ void gmx_sum_qgrid_dd(struct gmx_pme_t *pme, real *grid, int direction)
 #endif
 
 
-int copy_pmegrid_to_fftgrid(struct gmx_pme_t *pme, real *pmegrid, real *fftgrid, int grid_index)
+int copy_pmegrid_to_fftgrid(const gmx_pme_t *pme, real *pmegrid, real *fftgrid, int grid_index)
 {
     ivec    local_fft_ndata, local_fft_offset, local_fft_size;
     ivec    local_pme_size;
@@ -373,7 +376,7 @@ int copy_fftgrid_to_pmegrid(struct gmx_pme_t *pme, const real *fftgrid, real *pm
 }
 
 
-void wrap_periodic_pmegrid(struct gmx_pme_t *pme, real *pmegrid)
+void wrap_periodic_pmegrid(const gmx_pme_t *pme, real *pmegrid)
 {
     int     nx, ny, nz, pny, pnz, ny_x, overlap, ix, iy, iz;
 
@@ -567,7 +570,7 @@ void pmegrid_init(pmegrid_t *grid,
     }
 
     grid->order = pme_order;
-    if (ptr == NULL)
+    if (ptr == nullptr)
     {
         gridsize = grid->s[XX]*grid->s[YY]*grid->s[ZZ];
         set_gridsize_alignment(&gridsize, pme_order);
@@ -627,7 +630,7 @@ static void make_subgrid_division(const ivec n, int ovl, int nthread,
     }
 
     env = getenv("GMX_PME_THREAD_DIVISION");
-    if (env != NULL)
+    if (env != nullptr)
     {
         sscanf(env, "%20d %20d %20d", &nsub[XX], &nsub[YY], &nsub[ZZ]);
     }
@@ -658,7 +661,7 @@ void pmegrids_init(pmegrids_t *grids,
     n_base[ZZ] = nz_base;
 
     pmegrid_init(&grids->grid, 0, 0, 0, 0, 0, 0, n[XX], n[YY], n[ZZ], FALSE, pme_order,
-                 NULL);
+                 nullptr);
 
     grids->nthread = nthread;
 
@@ -716,10 +719,9 @@ void pmegrids_init(pmegrids_t *grids,
     }
     else
     {
-        grids->grid_th = NULL;
+        grids->grid_th = nullptr;
     }
 
-    snew(grids->g2t, DIM);
     tfac = 1;
     for (d = DIM-1; d >= 0; d--)
     {
@@ -751,7 +753,7 @@ void pmegrids_init(pmegrids_t *grids,
         {
             grids->nthread_comm[d]++;
         }
-        if (debug != NULL)
+        if (debug != nullptr)
         {
             fprintf(debug, "pmegrid thread grid communication range in %c: %d\n",
                     'x'+d, grids->nthread_comm[d]);
@@ -768,43 +770,42 @@ void pmegrids_init(pmegrids_t *grids,
 
 void pmegrids_destroy(pmegrids_t *grids)
 {
-    int t;
-
-    if (grids->grid.grid != NULL)
+    if (grids->grid.grid != nullptr)
     {
-        sfree(grids->grid.grid);
+        sfree_aligned(grids->grid.grid);
 
         if (grids->nthread > 0)
         {
-            for (t = 0; t < grids->nthread; t++)
-            {
-                sfree(grids->grid_th[t].grid);
-            }
+            sfree_aligned(grids->grid_all);
             sfree(grids->grid_th);
+        }
+        for (int d = 0; d < DIM; d++)
+        {
+            sfree(grids->g2t[d]);
         }
     }
 }
 
 void
-make_gridindex5_to_localindex(int n, int local_start, int local_range,
-                              int **global_to_local,
-                              real **fraction_shift)
+make_gridindex_to_localindex(int n, int local_start, int local_range,
+                             int **global_to_local,
+                             real **fraction_shift)
 {
     /* Here we construct array for looking up the grid line index and
      * fraction for particles. This is done because it is slighlty
      * faster than the modulo operation and to because we need to take
      * care of rounding issues, see below.
-     * We use an array size of 5 times the grid size to allow for particles
-     * to be out of the triclinic unit-cell by up to 2 box lengths, which
-     * can be needed along dimension x for a very skewed unit-cell.
+     * We use an array size of c_pmeNeighborUnitcellCount times the grid size
+     * to allow for particles to be out of the triclinic unit-cell.
      */
-    int  * gtl;
-    real * fsh;
+    const int arraySize = c_pmeNeighborUnitcellCount * n;
+    int     * gtl;
+    real    * fsh;
 
-    snew(gtl, 5*n);
-    snew(fsh, 5*n);
+    snew(gtl, arraySize);
+    snew(fsh, arraySize);
 
-    for (int i = 0; i < 5*n; i++)
+    for (int i = 0; i < arraySize; i++)
     {
         /* Transform global grid index to the local grid index.
          * Our local grid always runs from 0 to local_range-1.
@@ -861,54 +862,13 @@ void reuse_pmegrids(const pmegrids_t *oldgrid, pmegrids_t *newgrid)
     sfree_aligned(newgrid->grid.grid);
     newgrid->grid.grid = oldgrid->grid.grid;
 
-    if (newgrid->grid_th != NULL && newgrid->nthread == oldgrid->nthread)
+    if (newgrid->grid_th != nullptr && newgrid->nthread == oldgrid->nthread)
     {
         sfree_aligned(newgrid->grid_all);
+        newgrid->grid_all = oldgrid->grid_all;
         for (t = 0; t < newgrid->nthread; t++)
         {
             newgrid->grid_th[t].grid = oldgrid->grid_th[t].grid;
         }
     }
-}
-
-static void dump_grid(FILE *fp,
-                      int sx, int sy, int sz, int nx, int ny, int nz,
-                      int my, int mz, const real *g)
-{
-    int x, y, z;
-
-    for (x = 0; x < nx; x++)
-    {
-        for (y = 0; y < ny; y++)
-        {
-            for (z = 0; z < nz; z++)
-            {
-                fprintf(fp, "%2d %2d %2d %6.3f\n",
-                        sx+x, sy+y, sz+z, g[(x*my + y)*mz + z]);
-            }
-        }
-    }
-}
-
-/* This function is called from gmx_pme_do() only from debugging code
-   that is commented out. */
-void dump_local_fftgrid(struct gmx_pme_t *pme, const real *fftgrid)
-{
-    ivec local_fft_ndata, local_fft_offset, local_fft_size;
-
-    gmx_parallel_3dfft_real_limits(pme->pfft_setup[PME_GRID_QA],
-                                   local_fft_ndata,
-                                   local_fft_offset,
-                                   local_fft_size);
-
-    dump_grid(stderr,
-              pme->pmegrid_start_ix,
-              pme->pmegrid_start_iy,
-              pme->pmegrid_start_iz,
-              pme->pmegrid_nx-pme->pme_order+1,
-              pme->pmegrid_ny-pme->pme_order+1,
-              pme->pmegrid_nz-pme->pme_order+1,
-              local_fft_size[YY],
-              local_fft_size[ZZ],
-              fftgrid);
 }

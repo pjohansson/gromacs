@@ -3,7 +3,7 @@
  *
  * Copyright (c) 1991-2000, University of Groningen, The Netherlands.
  * Copyright (c) 2001-2004, The GROMACS development team.
- * Copyright (c) 2013,2014,2015, by the GROMACS development team, led by
+ * Copyright (c) 2013,2014,2015,2016,2017, by the GROMACS development team, led by
  * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
  * and including many others, as listed in the AUTHORS file in the
  * top-level source directory and at http://www.gromacs.org.
@@ -38,6 +38,7 @@
 
 #include "xvgr.h"
 
+#include <cassert>
 #include <cctype>
 #include <cstring>
 
@@ -64,11 +65,11 @@ gmx_bool output_env_get_print_xvgr_codes(const gmx_output_env_t *oenv)
     return (xvg_format == exvgXMGRACE || xvg_format == exvgXMGR);
 }
 
-static char *xvgrstr(const char *gmx, const gmx_output_env_t *oenv,
+static char *xvgrstr(const std::string &gmx, const gmx_output_env_t *oenv,
                      char *buf, int buflen)
 {
     /* Supported greek letter names and corresponding xmgrace/xmgr symbols */
-    const char *sym[]  = { "beta", "chi", "delta", "eta", "lambda", "mu", "omega", "phi", "psi", "rho", "theta", NULL };
+    const char *sym[]  = { "beta", "chi", "delta", "eta", "lambda", "mu", "omega", "phi", "psi", "rho", "theta", nullptr };
     const char  symc[] = { 'b',    'c',   'd',     'h',   'l',      'm',  'w',     'f',   'y',   'r',   'q',     '\0' };
     int         xvgf;
     gmx_bool    bXVGR;
@@ -85,7 +86,7 @@ static char *xvgrstr(const char *gmx, const gmx_output_env_t *oenv,
         /* Check with the largest string we have ("lambda"), add one for \0 */
         if (b + 6 + 1 >= buflen)
         {
-            gmx_fatal(FARGS, "Output buffer length in xvgstr (%d) too small to process xvg input string '%s'", buflen, gmx);
+            gmx_fatal(FARGS, "Output buffer length in xvgstr (%d) too small to process xvg input string '%s'", buflen, gmx.c_str());
         }
         if (gmx[g] == '\\')
         {
@@ -175,12 +176,12 @@ static char *xvgrstr(const char *gmx, const gmx_output_env_t *oenv,
             {
                 /* Check for special symbol */
                 i = 0;
-                while (sym[i] != NULL &&
-                       gmx_strncasecmp(sym[i], gmx+g, std::strlen(sym[i])) != 0)
+                while (sym[i] != nullptr &&
+                       gmx_strncasecmp(sym[i], &gmx[g], std::strlen(sym[i])) != 0)
                 {
                     i++;
                 }
-                if (sym[i] != NULL)
+                if (sym[i] != nullptr)
                 {
                     c = symc[i];
                     if (std::isupper(gmx[g]))
@@ -196,7 +197,7 @@ static char *xvgrstr(const char *gmx, const gmx_output_env_t *oenv,
                             sprintf(buf+b, "%s%c%s", "\\8", c, "\\4");
                             break;
                         default:
-                            std::strncat(buf+b, gmx+g, std::strlen(sym[i]));
+                            std::strncat(buf+b, &gmx[g], std::strlen(sym[i]));
                             b += std::strlen(sym[i]);
                             if (gmx[g+std::strlen(sym[i])] != ' ')
                             {
@@ -230,8 +231,8 @@ static char *xvgrstr(const char *gmx, const gmx_output_env_t *oenv,
     return buf;
 }
 
-void xvgr_header(FILE *fp, const char *title, const char *xaxis,
-                 const char *yaxis, int exvg_graph_type,
+void xvgr_header(FILE *fp, const char *title, const std::string &xaxis,
+                 const std::string &yaxis, int exvg_graph_type,
                  const gmx_output_env_t *oenv)
 {
     char buf[STRLEN];
@@ -279,8 +280,8 @@ void xvgr_header(FILE *fp, const char *title, const char *xaxis,
     }
 }
 
-FILE *xvgropen_type(const char *fn, const char *title, const char *xaxis,
-                    const char *yaxis, int exvg_graph_type,
+FILE *xvgropen_type(const char *fn, const char *title, const std::string &xaxis,
+                    const std::string &yaxis, int exvg_graph_type,
                     const gmx_output_env_t *oenv)
 {
     FILE  *fp;
@@ -292,8 +293,8 @@ FILE *xvgropen_type(const char *fn, const char *title, const char *xaxis,
     return fp;
 }
 
-FILE *xvgropen(const char *fn, const char *title, const char *xaxis,
-               const char *yaxis, const gmx_output_env_t *oenv)
+FILE *xvgropen(const char *fn, const char *title, const std::string &xaxis,
+               const std::string &yaxis, const gmx_output_env_t *oenv)
 {
     return xvgropen_type(fn, title, xaxis, yaxis, exvggtXNY, oenv);
 }
@@ -461,25 +462,25 @@ static char *fgets3(FILE *fp, char **ptr, int *len, int maxlen)
                 curp          = 0;
             }
         }
-        if (fgets(*ptr + curp, len_remaining, fp) == NULL)
+        if (fgets(*ptr + curp, len_remaining, fp) == nullptr)
         {
             /* if last line, skip */
-            return NULL;
+            return nullptr;
         }
         curp         += len_remaining-1; /* overwrite the nul char in next iteration */
         len_remaining = 1;
     }
-    while ((std::strchr(*ptr, '\n') == NULL) && (!feof(fp)));
+    while ((std::strchr(*ptr, '\n') == nullptr) && (!feof(fp)));
 
     if (*len + STRLEN >= maxlen)
     {
-        return NULL; /* this line was too long */
+        return nullptr; /* this line was too long */
     }
 
     if (feof(fp))
     {
         /* We reached EOF before '\n', skip this last line. */
-        return NULL;
+        return nullptr;
     }
     {
         /* now remove newline */
@@ -499,7 +500,7 @@ static int wordcount(char *ptr)
     int cur = 0;
 #define prev (1-cur)
 
-    if (NULL != ptr)
+    if (nullptr != ptr)
     {
         for (i = 0; (ptr[i] != '\0'); i++)
         {
@@ -524,11 +525,11 @@ static char *read_xvgr_string(const char *line)
     char       *str;
 
     ptr0 = std::strchr(line, '"');
-    if (ptr0 != NULL)
+    if (ptr0 != nullptr)
     {
         ptr0++;
         ptr1 = std::strchr(ptr0, '"');
-        if (ptr1 != NULL)
+        if (ptr1 != nullptr)
         {
             str            = gmx_strdup(ptr0);
             str[ptr1-ptr0] = '\0';
@@ -551,11 +552,11 @@ int read_xvg_legend(const char *fn, double ***y, int *ny,
 {
     FILE    *fp;
     char    *ptr;
-    char    *base = NULL;
-    char    *fmt  = NULL;
+    char    *base = nullptr;
+    char    *fmt  = nullptr;
     int      k, line = 0, nny, nx, maxx, rval, legend_nalloc, set, nchar;
     double   lf;
-    double **yy = NULL;
+    double **yy = nullptr;
     char    *tmpbuf;
     int      len = STRLEN;
     *ny  = 0;
@@ -565,23 +566,23 @@ int read_xvg_legend(const char *fn, double ***y, int *ny,
     fp   = gmx_fio_fopen(fn, "r");
 
     snew(tmpbuf, len);
-    if (subtitle != NULL)
+    if (subtitle != nullptr)
     {
-        *subtitle = NULL;
+        *subtitle = nullptr;
     }
     legend_nalloc = 0;
-    if (legend != NULL)
+    if (legend != nullptr)
     {
-        *legend = NULL;
+        *legend = nullptr;
     }
 
-    while ((ptr = fgets3(fp, &tmpbuf, &len, 10*STRLEN)) != NULL && ptr[0] != '&')
+    while ((ptr = fgets3(fp, &tmpbuf, &len, 10*STRLEN)) != nullptr && ptr[0] != '&')
     {
         line++;
         trim(ptr);
         if (ptr[0] == '@')
         {
-            if (legend != NULL)
+            if (legend != nullptr)
             {
                 ptr++;
                 trim(ptr);
@@ -589,7 +590,7 @@ int read_xvg_legend(const char *fn, double ***y, int *ny,
                 if (std::strncmp(ptr, "subtitle", 8) == 0)
                 {
                     ptr += 8;
-                    if (subtitle != NULL)
+                    if (subtitle != nullptr)
                     {
                         *subtitle = read_xvgr_string(ptr);
                     }
@@ -692,10 +693,11 @@ int read_xvg_legend(const char *fn, double ***y, int *ny,
     {
         if (*ny - 1 > legend_nalloc)
         {
+            assert(legend);
             srenew(*legend, *ny-1);
             for (set = legend_nalloc; set < *ny-1; set++)
             {
-                (*legend)[set] = NULL;
+                (*legend)[set] = nullptr;
             }
         }
     }
@@ -705,7 +707,7 @@ int read_xvg_legend(const char *fn, double ***y, int *ny,
 
 int read_xvg(const char *fn, double ***y, int *ny)
 {
-    return read_xvg_legend(fn, y, ny, NULL, NULL);
+    return read_xvg_legend(fn, y, ny, nullptr, nullptr);
 }
 
 void write_xvg(const char *fn, const char *title, int nx, int ny, real **y,
@@ -744,9 +746,9 @@ real **read_xvg_time(const char *fn,
     real     **val;
 
     t_nalloc   = 0;
-    *t         = NULL;
-    val        = NULL;
-    val_nalloc = NULL;
+    *t         = nullptr;
+    val        = nullptr;
+    val_nalloc = nullptr;
     *nset      = 0;
     *dt        = 0;
     fp         = gmx_fio_fopen(fn, "r");
@@ -840,7 +842,7 @@ real **read_xvg_time(const char *fn,
                                 srenew(val, *nset);
                                 srenew(val_nalloc, *nset);
                                 val_nalloc[set] = 0;
-                                val[set]        = NULL;
+                                val[set]        = nullptr;
                             }
                         }
                         if (set == -1)

@@ -4,7 +4,7 @@ Build system overview
 =====================
 
 The |Gromacs| build system uses CMake (version
-|GMX_CMAKE_MINIMUM_REQUIRED_VERSION| or newer is required) to generate the
+|CMAKE_MINIMUM_REQUIRED_VERSION| or newer is required) to generate the
 actual build system for the build tool choosen by the user.  See CMake
 documentation for general introduction to CMake and how to use it.  This
 documentation focuses on how the |Gromacs| build system is organized and
@@ -217,7 +217,7 @@ Variables affecting compilation/linking
 
 .. cmake:: GMX_DOUBLE
 
-   Many part of GROMACS are implemented in terms of "real" precision,
+   Many part of |Gromacs| are implemented in terms of "real" precision,
    which is actually either a single- or double-precision type,
    according to the value of this flag. Some parts of the code
    deliberately use single- or double-precision types, and these are
@@ -256,6 +256,14 @@ Variables affecting compilation/linking
    :file:`cmake/gmxVersionInfo.cmake` is used.
 
 .. cmake:: GMX_GPU
+
+.. cmake:: GMX_CLANG_CUDA
+
+   Use clang for compiling CUDA GPU code, both host and device.
+
+.. cmake:: GMX_CUDA_CLANG_FLAGS
+
+    Pass additional CUDA-only compiler flags to clang using this variable.
 
 .. cmake:: GMX_LIB_INSTALL_DIR
 

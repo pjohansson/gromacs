@@ -1,7 +1,7 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2012,2013,2014,2015,2016, by the GROMACS development team, led by
+ * Copyright (c) 2012,2013,2014,2015,2016,2017, by the GROMACS development team, led by
  * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
  * and including many others, as listed in the AUTHORS file in the
  * top-level source directory and at http://www.gromacs.org.
@@ -183,11 +183,6 @@ typedef struct {
     unsigned int *fep;              /* FEP signal bits for sub cells               */
     int           nc_nalloc;        /* Allocation size for the pointers above      */
 
-    float        *bbcz_simple;      /* bbcz for simple grid converted from super   */
-    nbnxn_bb_t   *bb_simple;        /* bb for simple grid converted from super     */
-    int          *flags_simple;     /* flags for simple grid converted from super  */
-    int           nc_nalloc_simple; /* Allocation size for the pointers above   */
-
     int           nsubc_tot;        /* Total number of subcell, used for printing  */
 } nbnxn_grid_t;
 
@@ -225,13 +220,6 @@ typedef void
                        real shx, real shy, real shz,
                        int stride, const real *x,
                        nbnxn_list_work_t *work);
-
-static gmx_icell_set_x_t icell_set_x_simple;
-#if GMX_SIMD
-static gmx_icell_set_x_t icell_set_x_simple_simd_4xn;
-static gmx_icell_set_x_t icell_set_x_simple_simd_2xnn;
-#endif
-static gmx_icell_set_x_t icell_set_x_supersub;
 
 /* Local cycle count struct for profiling */
 typedef struct {
@@ -298,12 +286,12 @@ typedef struct nbnxn_search {
 } nbnxn_search_t_t;
 
 
-static void nbs_cycle_start(nbnxn_cycle_t *cc)
+static inline void nbs_cycle_start(nbnxn_cycle_t *cc)
 {
     cc->start = gmx_cycles_read();
 }
 
-static void nbs_cycle_stop(nbnxn_cycle_t *cc)
+static inline void nbs_cycle_stop(nbnxn_cycle_t *cc)
 {
     cc->c += gmx_cycles_read() - cc->start;
     cc->count++;

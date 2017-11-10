@@ -3,7 +3,7 @@
  *
  * Copyright (c) 1991-2000, University of Groningen, The Netherlands.
  * Copyright (c) 2001-2004, The GROMACS development team.
- * Copyright (c) 2013,2014,2015, by the GROMACS development team, led by
+ * Copyright (c) 2013,2014,2015,2017, by the GROMACS development team, led by
  * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
  * and including many others, as listed in the AUTHORS file in the
  * top-level source directory and at http://www.gromacs.org.
@@ -36,7 +36,7 @@
  */
 #include "gmxpre.h"
 
-#include <math.h>
+#include <cmath>
 
 #include "gromacs/gmxlib/nrnb.h"
 #include "gromacs/math/functions.h"
@@ -66,10 +66,10 @@ gmx_shakedata_t shake_init()
     snew(d, 1);
 
     d->nalloc                      = 0;
-    d->rij                         = NULL;
-    d->half_of_reduced_mass        = NULL;
-    d->distance_squared_tolerance  = NULL;
-    d->constraint_distance_squared = NULL;
+    d->rij                         = nullptr;
+    d->half_of_reduced_mass        = nullptr;
+    d->distance_squared_tolerance  = nullptr;
+    d->constraint_distance_squared = nullptr;
 
     /* SOR initialization */
     d->delta = 0.1;
@@ -202,13 +202,13 @@ void cshake(const int iatom[], int ncon, int *nnit, int maxnit,
     *nerror = error;
 }
 
-int vec_shakef(FILE *fplog, gmx_shakedata_t shaked,
-               real invmass[], int ncon,
-               t_iparams ip[], t_iatom *iatom,
-               real tol, rvec x[], rvec prime[], real omega,
-               gmx_bool bFEP, real lambda, real scaled_lagrange_multiplier[],
-               real invdt, rvec *v,
-               gmx_bool bCalcVir, tensor vir_r_m_dr, int econq)
+static int vec_shakef(FILE *fplog, gmx_shakedata_t shaked,
+                      real invmass[], int ncon,
+                      t_iparams ip[], t_iatom *iatom,
+                      real tol, rvec x[], rvec prime[], real omega,
+                      gmx_bool bFEP, real lambda, real scaled_lagrange_multiplier[],
+                      real invdt, rvec *v,
+                      gmx_bool bCalcVir, tensor vir_r_m_dr, int econq)
 {
     rvec    *rij;
     real    *half_of_reduced_mass, *distance_squared_tolerance, *constraint_distance_squared;
@@ -301,7 +301,7 @@ int vec_shakef(FILE *fplog, gmx_shakedata_t shaked,
         i     = ia[1];
         j     = ia[2];
 
-        if ((econq == econqCoord) && v != NULL)
+        if ((econq == econqCoord) && v != nullptr)
         {
             /* Correct the velocities */
             mm = scaled_lagrange_multiplier[ll]*invmass[i]*invdt;

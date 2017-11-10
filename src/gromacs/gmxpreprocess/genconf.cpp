@@ -3,7 +3,7 @@
  *
  * Copyright (c) 1991-2000, University of Groningen, The Netherlands.
  * Copyright (c) 2001-2004, The GROMACS development team.
- * Copyright (c) 2013,2014,2015,2016, by the GROMACS development team, led by
+ * Copyright (c) 2013,2014,2015,2016,2017, by the GROMACS development team, led by
  * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
  * and including many others, as listed in the AUTHORS file in the
  * top-level source directory and at http://www.gromacs.org.
@@ -40,7 +40,6 @@
 
 #include "gromacs/commandline/pargs.h"
 #include "gromacs/fileio/confio.h"
-#include "gromacs/fileio/readinp.h"
 #include "gromacs/fileio/trxio.h"
 #include "gromacs/math/3dtransforms.h"
 #include "gromacs/math/utilities.h"
@@ -138,15 +137,15 @@ int gmx_genconf(int argc, char *argv[])
     t_filenm          fnm[] = {
         { efSTX, "-f", "conf", ffREAD  },
         { efSTO, "-o", "out",  ffWRITE },
-        { efTRX, "-trj", NULL,  ffOPTRD }
+        { efTRX, "-trj", nullptr,  ffOPTRD }
     };
 #define NFILE asize(fnm)
-    static rvec       nrbox    = {1, 1, 1};
-    static int        seed     = 0;               /* seed for random number generator */
-    static gmx_bool   bRandom  = FALSE;           /* False: no random rotations */
-    static gmx_bool   bRenum   = TRUE;            /* renumber residues */
-    static rvec       dist     = {0, 0, 0};       /* space added between molecules ? */
-    static rvec       max_rot  = {180, 180, 180}; /* maximum rotation */
+    rvec              nrbox    = {1, 1, 1};
+    int               seed     = 0;               /* seed for random number generator */
+    gmx_bool          bRandom  = FALSE;           /* False: no random rotations */
+    gmx_bool          bRenum   = TRUE;            /* renumber residues */
+    rvec              dist     = {0, 0, 0};       /* space added between molecules ? */
+    rvec              max_rot  = {180, 180, 180}; /* maximum rotation */
     t_pargs           pa[]     = {
         { "-nbox",   FALSE, etRVEC, {nrbox},   "Number of boxes" },
         { "-dist",   FALSE, etRVEC, {dist},    "Distance between boxes" },
@@ -285,7 +284,7 @@ int gmx_genconf(int argc, char *argv[])
     }
     if (bTRX)
     {
-        close_trj(status);
+        close_trx(status);
     }
 
     /* make box bigger */
@@ -312,6 +311,16 @@ int gmx_genconf(int argc, char *argv[])
     }
 
     write_sto_conf(opt2fn("-o", NFILE, fnm), *top->name, atoms, x, v, ePBC, box);
+
+    sfree(x);
+    sfree(v);
+    sfree(xrot);
+    sfree(vrot);
+    sfree(xx);
+    done_top(top);
+    sfree(top);
+    done_filenms(NFILE, fnm);
+    output_env_done(oenv);
 
     return 0;
 }

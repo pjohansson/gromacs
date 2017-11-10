@@ -1,7 +1,7 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2012,2013,2014,2015,2016, by the GROMACS development team, led by
+ * Copyright (c) 2012,2013,2014,2015,2016,2017, by the GROMACS development team, led by
  * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
  * and including many others, as listed in the AUTHORS file in the
  * top-level source directory and at http://www.gromacs.org.
@@ -36,8 +36,6 @@
 #include "gmxpre.h"
 
 #include "nbnxn_atomdata.h"
-
-#include "config.h"
 
 #include <assert.h>
 #include <stdlib.h>
@@ -89,7 +87,7 @@ void nbnxn_realloc_void(void **ptr,
 
     ma(&ptr_new, nbytes_new);
 
-    if (nbytes_new > 0 && ptr_new == NULL)
+    if (nbytes_new > 0 && ptr_new == nullptr)
     {
         gmx_fatal(FARGS, "Allocation of %d bytes failed", nbytes_new);
     }
@@ -102,7 +100,7 @@ void nbnxn_realloc_void(void **ptr,
         }
         memcpy(ptr_new, *ptr, nbytes_copy);
     }
-    if (*ptr != NULL)
+    if (*ptr != nullptr)
     {
         mf(*ptr);
     }
@@ -157,7 +155,7 @@ static void nbnxn_atomdata_output_init(nbnxn_atomdata_output_t *out,
                                        int nenergrp, int stride,
                                        nbnxn_alloc_t *ma)
 {
-    out->f = NULL;
+    out->f = nullptr;
     ma((void **)&out->fshift, SHIFTS*DIM*sizeof(*out->fshift));
     out->nV = nenergrp*nenergrp;
     ma((void **)&out->Vvdw, out->nV*sizeof(*out->Vvdw));
@@ -191,67 +189,6 @@ static void copy_int_to_nbat_int(const int *a, int na, int na_round,
     for (; i < na_round; i++)
     {
         innb[j++] = fill;
-    }
-}
-
-static void clear_nbat_real(int na, int nbatFormat, real *xnb, int a0)
-{
-    int j, c;
-
-    switch (nbatFormat)
-    {
-        case nbatXYZ:
-            for (int a = 0; a < na; a++)
-            {
-                for (int d = 0; d < DIM; d++)
-                {
-                    xnb[(a0+a)*STRIDE_XYZ+d] = 0;
-                }
-            }
-            break;
-        case nbatXYZQ:
-            for (int a = 0; a < na; a++)
-            {
-                for (int d = 0; d < DIM; d++)
-                {
-                    xnb[(a0+a)*STRIDE_XYZQ+d] = 0;
-                }
-            }
-            break;
-        case nbatX4:
-            j = atom_to_x_index<c_packX4>(a0);
-            c = a0 & (c_packX4 - 1);
-            for (int a = 0; a < na; a++)
-            {
-                xnb[j+XX*c_packX4] = 0;
-                xnb[j+YY*c_packX4] = 0;
-                xnb[j+ZZ*c_packX4] = 0;
-                j++;
-                c++;
-                if (c == c_packX4)
-                {
-                    j += (DIM-1)*c_packX4;
-                    c  = 0;
-                }
-            }
-            break;
-        case nbatX8:
-            j = atom_to_x_index<c_packX8>(a0);
-            c = a0 & (c_packX8-1);
-            for (int a = 0; a < na; a++)
-            {
-                xnb[j+XX*c_packX8] = 0;
-                xnb[j+YY*c_packX8] = 0;
-                xnb[j+ZZ*c_packX8] = 0;
-                j++;
-                c++;
-                if (c == c_packX8)
-                {
-                    j += (DIM-1)*c_packX8;
-                    c  = 0;
-                }
-            }
-            break;
     }
 }
 
@@ -557,7 +494,7 @@ void nbnxn_atomdata_init(FILE *fp,
     char    *ptr;
     gmx_bool simple, bCombGeom, bCombLB, bSIMD;
 
-    if (alloc == NULL)
+    if (alloc == nullptr)
     {
         nbat->alloc = nbnxn_alloc_aligned;
     }
@@ -565,7 +502,7 @@ void nbnxn_atomdata_init(FILE *fp,
     {
         nbat->alloc = alloc;
     }
-    if (free == NULL)
+    if (free == nullptr)
     {
         nbat->free = nbnxn_free_aligned;
     }
@@ -588,7 +525,7 @@ void nbnxn_atomdata_init(FILE *fp,
      */
     tol = 1e-5;
     ptr = getenv("GMX_LJCOMB_TOL");
-    if (ptr != NULL)
+    if (ptr != nullptr)
     {
         double dbl;
 
@@ -723,8 +660,8 @@ void nbnxn_atomdata_init(FILE *fp,
     set_lj_parameter_data(nbat, bSIMD);
 
     nbat->natoms  = 0;
-    nbat->type    = NULL;
-    nbat->lj_comb = NULL;
+    nbat->type    = nullptr;
+    nbat->lj_comb = nullptr;
     if (simple)
     {
         int pack_x;
@@ -757,12 +694,12 @@ void nbnxn_atomdata_init(FILE *fp,
         nbat->XFormat = nbatXYZQ;
         nbat->FFormat = nbatXYZ;
     }
-    nbat->q        = NULL;
+    nbat->q        = nullptr;
     nbat->nenergrp = n_energygroups;
     if (!simple)
     {
         /* Energy groups not supported yet for super-sub lists */
-        if (n_energygroups > 1 && fp != NULL)
+        if (n_energygroups > 1 && fp != nullptr)
         {
             fprintf(fp, "\nNOTE: With GPUs, reporting energy group contributions is not supported\n\n");
         }
@@ -778,11 +715,11 @@ void nbnxn_atomdata_init(FILE *fp,
     {
         nbat->neg_2log++;
     }
-    nbat->energrp = NULL;
+    nbat->energrp = nullptr;
     nbat->alloc((void **)&nbat->shift_vec, SHIFTS*sizeof(*nbat->shift_vec));
     nbat->xstride = (nbat->XFormat == nbatXYZQ ? STRIDE_XYZQ : DIM);
     nbat->fstride = (nbat->FFormat == nbatXYZQ ? STRIDE_XYZQ : DIM);
-    nbat->x       = NULL;
+    nbat->x       = nullptr;
 
 #if GMX_SIMD
     if (simple)
@@ -802,15 +739,15 @@ void nbnxn_atomdata_init(FILE *fp,
                                    nbat->nenergrp, 1<<nbat->neg_2log,
                                    nbat->alloc);
     }
-    nbat->buffer_flags.flag        = NULL;
+    nbat->buffer_flags.flag        = nullptr;
     nbat->buffer_flags.flag_nalloc = 0;
 
     nth = gmx_omp_nthreads_get(emntNonbonded);
 
     ptr = getenv("GMX_USE_TREEREDUCE");
-    if (ptr != NULL)
+    if (ptr != nullptr)
     {
-        nbat->bUseTreeReduce = strtol(ptr, 0, 10);
+        nbat->bUseTreeReduce = strtol(ptr, nullptr, 10);
     }
 #if defined __MIC__
     else if (nth > 8) /*on the CPU we currently don't benefit even at 32*/
@@ -853,11 +790,10 @@ static void copy_lj_to_nbat_lj_comb(const real *ljparam_type,
 
 /* Sets the atom type in nbnxn_atomdata_t */
 static void nbnxn_atomdata_set_atomtypes(nbnxn_atomdata_t    *nbat,
-                                         int                  ngrid,
                                          const nbnxn_search_t nbs,
                                          const int           *type)
 {
-    for (int g = 0; g < ngrid; g++)
+    for (int g = 0; g < nbs->ngrid; g++)
     {
         const nbnxn_grid_t * grid = &nbs->grid[g];
 
@@ -875,12 +811,11 @@ static void nbnxn_atomdata_set_atomtypes(nbnxn_atomdata_t    *nbat,
 
 /* Sets the LJ combination rule parameters in nbnxn_atomdata_t */
 static void nbnxn_atomdata_set_ljcombparams(nbnxn_atomdata_t    *nbat,
-                                            int                  ngrid,
                                             const nbnxn_search_t nbs)
 {
     if (nbat->comb_rule != ljcrNONE)
     {
-        for (int g = 0; g < ngrid; g++)
+        for (int g = 0; g < nbs->ngrid; g++)
         {
             const nbnxn_grid_t * grid = &nbs->grid[g];
 
@@ -918,14 +853,13 @@ static void nbnxn_atomdata_set_ljcombparams(nbnxn_atomdata_t    *nbat,
 
 /* Sets the charges in nbnxn_atomdata_t *nbat */
 static void nbnxn_atomdata_set_charges(nbnxn_atomdata_t    *nbat,
-                                       int                  ngrid,
                                        const nbnxn_search_t nbs,
                                        const real          *charge)
 {
     int                 i;
     real               *q;
 
-    for (int g = 0; g < ngrid; g++)
+    for (int g = 0; g < nbs->ngrid; g++)
     {
         const nbnxn_grid_t * grid = &nbs->grid[g];
 
@@ -977,7 +911,6 @@ static void nbnxn_atomdata_set_charges(nbnxn_atomdata_t    *nbat,
  * using the original charge and LJ data, not nbnxn_atomdata_t.
  */
 static void nbnxn_atomdata_mask_fep(nbnxn_atomdata_t    *nbat,
-                                    int                  ngrid,
                                     const nbnxn_search_t nbs)
 {
     real               *q;
@@ -994,7 +927,7 @@ static void nbnxn_atomdata_mask_fep(nbnxn_atomdata_t    *nbat,
         stride_q = 1;
     }
 
-    for (int g = 0; g < ngrid; g++)
+    for (int g = 0; g < nbs->ngrid; g++)
     {
         const nbnxn_grid_t * grid = &nbs->grid[g];
         if (grid->bSimple)
@@ -1062,7 +995,6 @@ static void copy_egp_to_nbat_egps(const int *a, int na, int na_round,
 
 /* Set the energy group indices for atoms in nbnxn_atomdata_t */
 static void nbnxn_atomdata_set_energygroups(nbnxn_atomdata_t    *nbat,
-                                            int                  ngrid,
                                             const nbnxn_search_t nbs,
                                             const int           *atinfo)
 {
@@ -1071,7 +1003,7 @@ static void nbnxn_atomdata_set_energygroups(nbnxn_atomdata_t    *nbat,
         return;
     }
 
-    for (int g = 0; g < ngrid; g++)
+    for (int g = 0; g < nbs->ngrid; g++)
     {
         const nbnxn_grid_t * grid = &nbs->grid[g];
 
@@ -1090,35 +1022,23 @@ static void nbnxn_atomdata_set_energygroups(nbnxn_atomdata_t    *nbat,
 
 /* Sets all required atom parameter data in nbnxn_atomdata_t */
 void nbnxn_atomdata_set(nbnxn_atomdata_t    *nbat,
-                        int                  locality,
                         const nbnxn_search_t nbs,
                         const t_mdatoms     *mdatoms,
                         const int           *atinfo)
 {
-    int ngrid;
+    nbnxn_atomdata_set_atomtypes(nbat, nbs, mdatoms->typeA);
 
-    if (locality == eatLocal)
-    {
-        ngrid = 1;
-    }
-    else
-    {
-        ngrid = nbs->ngrid;
-    }
-
-    nbnxn_atomdata_set_atomtypes(nbat, ngrid, nbs, mdatoms->typeA);
-
-    nbnxn_atomdata_set_charges(nbat, ngrid, nbs, mdatoms->chargeA);
+    nbnxn_atomdata_set_charges(nbat, nbs, mdatoms->chargeA);
 
     if (nbs->bFEP)
     {
-        nbnxn_atomdata_mask_fep(nbat, ngrid, nbs);
+        nbnxn_atomdata_mask_fep(nbat, nbs);
     }
 
     /* This must be done after masking types for FEP */
-    nbnxn_atomdata_set_ljcombparams(nbat, ngrid, nbs);
+    nbnxn_atomdata_set_ljcombparams(nbat, nbs);
 
-    nbnxn_atomdata_set_energygroups(nbat, ngrid, nbs, atinfo);
+    nbnxn_atomdata_set_energygroups(nbat, nbs, atinfo);
 }
 
 /* Copies the shift vector array to nbnxn_atomdata_t */
@@ -1222,7 +1142,7 @@ nbnxn_atomdata_clear_reals(real * gmx_restrict dest,
     }
 }
 
-static void
+gmx_unused static void
 nbnxn_atomdata_reduce_reals(real * gmx_restrict dest,
                             gmx_bool bDestSet,
                             real ** gmx_restrict src,
@@ -1254,7 +1174,7 @@ nbnxn_atomdata_reduce_reals(real * gmx_restrict dest,
     }
 }
 
-static void
+gmx_unused static void
 nbnxn_atomdata_reduce_reals_simd(real gmx_unused * gmx_restrict dest,
                                  gmx_bool gmx_unused bDestSet,
                                  real gmx_unused ** gmx_restrict src,
@@ -1271,10 +1191,10 @@ nbnxn_atomdata_reduce_reals_simd(real gmx_unused * gmx_restrict dest,
     {
         for (int i = i0; i < i1; i += GMX_SIMD_REAL_WIDTH)
         {
-            dest_SSE = load(dest+i);
+            dest_SSE = load<SimdReal>(dest+i);
             for (int s = 0; s < nsrc; s++)
             {
-                src_SSE  = load(src[s]+i);
+                src_SSE  = load<SimdReal>(src[s]+i);
                 dest_SSE = dest_SSE + src_SSE;
             }
             store(dest+i, dest_SSE);
@@ -1284,10 +1204,10 @@ nbnxn_atomdata_reduce_reals_simd(real gmx_unused * gmx_restrict dest,
     {
         for (int i = i0; i < i1; i += GMX_SIMD_REAL_WIDTH)
         {
-            dest_SSE = load(src[0]+i);
+            dest_SSE = load<SimdReal>(src[0]+i);
             for (int s = 1; s < nsrc; s++)
             {
-                src_SSE  = load(src[s]+i);
+                src_SSE  = load<SimdReal>(src[s]+i);
                 dest_SSE = dest_SSE + src_SSE;
             }
             store(dest+i, dest_SSE);

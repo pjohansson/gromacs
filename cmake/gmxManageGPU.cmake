@@ -1,7 +1,7 @@
 #
 # This file is part of the GROMACS molecular simulation package.
 #
-# Copyright (c) 2012,2013,2014,2015,2016, by the GROMACS development team, led by
+# Copyright (c) 2012,2013,2014,2015,2016,2017, by the GROMACS development team, led by
 # Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
 # and including many others, as listed in the AUTHORS file in the
 # top-level source directory and at http://www.gromacs.org.
@@ -42,6 +42,12 @@ if (NOT DEFINED GMX_GPU)
 endif()
 option(GMX_GPU "Enable GPU acceleration" OFF)
 
+option(GMX_CLANG_CUDA "Use clang for CUDA" OFF)
+if (GMX_CLANG_CUDA)
+    # CUDA 7.0 or later required, override req. version
+    set(REQUIRED_CUDA_VERSION 7.0)
+endif()
+
 if(GMX_GPU AND GMX_DOUBLE)
     message(FATAL_ERROR "GPU acceleration is not available in double precision!")
 endif()
@@ -57,18 +63,8 @@ if ((GMX_GPU OR GMX_GPU_AUTO) AND NOT GMX_GPU_DETECTION_DONE)
     gmx_detect_gpu()
 endif()
 
-# CMake 3.0-3.1 has a bug in the following case, which breaks
-# configuration on at least BlueGene/Q. Fixed in 3.1.1
-if ((NOT CMAKE_VERSION VERSION_LESS "3.0.0") AND
-    (CMAKE_VERSION VERSION_LESS "3.1.1") AND
-        (CMAKE_CROSSCOMPILING AND NOT CMAKE_SYSTEM_PROCESSOR))
-    message(STATUS "Cannot search for CUDA because the CMake find package has a bug. Set a valid CMAKE_SYSTEM_PROCESSOR if you need to detect CUDA")
-else()
-    set(CAN_RUN_CUDA_FIND_PACKAGE 1)
-endif()
-
 # We need to call find_package even when we've already done the detection/setup
-if(GMX_GPU OR GMX_GPU_AUTO AND CAN_RUN_CUDA_FIND_PACKAGE)
+if(GMX_GPU OR GMX_GPU_AUTO)
     if(NOT GMX_GPU AND NOT GMX_DETECT_GPU_AVAILABLE)
         # Stay quiet when detection has occured and found no GPU.
         # Noise is acceptable when there is a GPU or the user required one.
@@ -82,23 +78,6 @@ if(GMX_GPU OR GMX_GPU_AUTO AND CAN_RUN_CUDA_FIND_PACKAGE)
     endif()
 
     find_package(CUDA ${REQUIRED_CUDA_VERSION} ${FIND_CUDA_QUIETLY})
-
-    # Cmake 2.8.12 (and CMake 3.0) introduced a new bug where the cuda
-    # library dir is added twice as an rpath on APPLE, which in turn causes
-    # the install_name_tool to wreck the binaries when it tries to remove this
-    # path. Since this is set inside the cuda module, we remove the extra rpath
-    # added in the library string - an rpath is not a library anyway, and at
-    # least for Gromacs this works on all CMake versions. This should be
-    # reasonably future-proof, since newer versions of CMake appear to handle
-    # the rpath automatically based on the provided library path, meaning
-    # the explicit rpath specification is no longer needed.
-    if(APPLE AND (CMAKE_VERSION VERSION_GREATER 2.8.11))
-        foreach(elem ${CUDA_LIBRARIES})
-            if(elem MATCHES "-Wl,.*")
-                list(REMOVE_ITEM CUDA_LIBRARIES ${elem})
-            endif()
-        endforeach(elem)
-    endif()
 endif()
 
 # Depending on the current vale of GMX_GPU and GMX_GPU_AUTO:
@@ -182,13 +161,13 @@ endif()
 # We need to mark these advanced outside the conditional, otherwise, if the
 # user turns GMX_GPU=OFF after a failed cmake pass, these variables will be
 # left behind in the cache.
-mark_as_advanced(CUDA_BUILD_CUBIN CUDA_BUILD_EMULATION CUDA_SDK_ROOT_DIR CUDA_VERBOSE_BUILD # cmake 2.8.9 still spews these, check again when requirements change
-                 CUDA_SEPARABLE_COMPILATION      # not present at least with cmake 3.2, remove when required
-                 CUDA_USE_STATIC_CUDA_RUNTIME    # since cmake 3.3
-                 CUDA_dl_LIBRARY CUDA_rt_LIBRARY # - || -
+mark_as_advanced(CUDA_SDK_ROOT_DIR
+                 CUDA_USE_STATIC_CUDA_RUNTIME
+                 CUDA_dl_LIBRARY CUDA_rt_LIBRARY
                  )
 if(NOT GMX_GPU)
     mark_as_advanced(CUDA_TOOLKIT_ROOT_DIR)
+    mark_as_advanced(CUDA_HOST_COMPILER)
 endif()
 
 # Try to execute ${CUDA_NVCC_EXECUTABLE} --version and set the output
@@ -201,43 +180,58 @@ endif()
 #   COMPILER_FLAGS  - [output variable] flags for the compiler
 #
 macro(get_cuda_compiler_info COMPILER_INFO COMPILER_FLAGS)
-    if(CUDA_NVCC_EXECUTABLE)
+    if(NOT GMX_CLANG_CUDA)
+        if(CUDA_NVCC_EXECUTABLE)
 
-        # Get the nvcc version string. This is multi-line, but since it is only 4 lines
-        # and might change in the future it is better to store than trying to parse out
-        # the version from the current format.
-        execute_process(COMMAND ${CUDA_NVCC_EXECUTABLE} --version
-            RESULT_VARIABLE _nvcc_version_res
-            OUTPUT_VARIABLE _nvcc_version_out
-            ERROR_VARIABLE  _nvcc_version_err
-            OUTPUT_STRIP_TRAILING_WHITESPACE)
-        if (${_nvcc_version_res} EQUAL 0)
-            # Fix multi-line mess: Replace newline with ";" so we can use it in a define
-            string(REPLACE "\n" ";" _nvcc_info_singleline ${_nvcc_version_out})
-            SET(${COMPILER_INFO} "${CUDA_NVCC_EXECUTABLE} ${_nvcc_info_singleline}")
-            string(TOUPPER ${CMAKE_BUILD_TYPE} _build_type)
-            SET(_compiler_flags "${CUDA_NVCC_FLAGS_${_build_type}}")
-            if(CUDA_PROPAGATE_HOST_FLAGS)
-                string(REGEX REPLACE "[ ]+" ";" _cxx_flags_nospace "${BUILD_CXXFLAGS}")
+            # Get the nvcc version string. This is multi-line, but since it is only 4 lines
+            # and might change in the future it is better to store than trying to parse out
+            # the version from the current format.
+            execute_process(COMMAND ${CUDA_NVCC_EXECUTABLE} --version
+                RESULT_VARIABLE _nvcc_version_res
+                OUTPUT_VARIABLE _nvcc_version_out
+                ERROR_VARIABLE  _nvcc_version_err
+                OUTPUT_STRIP_TRAILING_WHITESPACE)
+            if (${_nvcc_version_res} EQUAL 0)
+                # Fix multi-line mess: Replace newline with ";" so we can use it in a define
+                string(REPLACE "\n" ";" _nvcc_info_singleline ${_nvcc_version_out})
+                SET(${COMPILER_INFO} "${CUDA_NVCC_EXECUTABLE} ${_nvcc_info_singleline}")
+                string(TOUPPER ${CMAKE_BUILD_TYPE} _build_type)
+                SET(_compiler_flags "${CUDA_NVCC_FLAGS_${_build_type}}")
+                if(CUDA_PROPAGATE_HOST_FLAGS)
+                    string(REGEX REPLACE "[ ]+" ";" _cxx_flags_nospace "${BUILD_CXXFLAGS}")
+                endif()
+                SET(${COMPILER_FLAGS} "${CUDA_NVCC_FLAGS}${CUDA_NVCC_FLAGS_${_build_type}}; ${_cxx_flags_nospace}")
+            else()
+                SET(${COMPILER_INFO} "N/A")
+                SET(${COMPILER_FLAGS} "N/A")
             endif()
-            SET(${COMPILER_FLAGS} "${CUDA_NVCC_FLAGS}${CUDA_NVCC_FLAGS_${_build_type}}; ${_cxx_flags_nospace}")
-        else()
-            SET(${COMPILER_INFO} "N/A")
-            SET(${COMPILER_FLAGS} "N/A")
         endif()
+    else()
+        # CXX compiler is the CUDA compiler
+        set(${COMPILER_INFO} "${CMAKE_CXX_COMPILER}  ${CMAKE_CXX_COMPILER_ID} ${CMAKE_CXX_COMPILER_VERSION}")
+        # there are some extra flags
+        set(${COMPILER_FLAGS} "${CMAKE_CXX_FLAGS} ${CMAKE_CXX_FLAGS_${_build_type}} ${GMX_CUDA_CLANG_FLAGS}")
     endif()
 endmacro ()
+
+macro(enable_multiple_cuda_compilation_units)
+    message(STATUS "Enabling multiple compilation units for the CUDA non-bonded module.")
+    set_property(CACHE GMX_CUDA_NB_SINGLE_COMPILATION_UNIT PROPERTY VALUE OFF)
+endmacro()
 
 include(CMakeDependentOption)
 include(gmxOptionUtilities)
 macro(gmx_gpu_setup)
     if(GMX_GPU)
-        if(NOT CUDA_NVCC_EXECUTABLE)
-            message(FATAL_ERROR "nvcc is required for a CUDA build, please set CUDA_TOOLKIT_ROOT_DIR appropriately")
+        if(NOT GMX_CLANG_CUDA)
+            if(NOT CUDA_NVCC_EXECUTABLE)
+                message(FATAL_ERROR "nvcc is required for a CUDA build, please set CUDA_TOOLKIT_ROOT_DIR appropriately")
+            endif()
+            # set up nvcc options
+            include(gmxManageNvccConfig)
+        else()
+            include(gmxManageClangCudaConfig)
         endif()
-
-        # set up nvcc options
-        include(gmxManageNvccConfig)
 
         gmx_check_if_changed(_cuda_version_changed CUDA_VERSION)
 
@@ -276,19 +270,25 @@ macro(gmx_gpu_setup)
         endif()
     endif() # GMX_GPU
 
+    if (GMX_CLANG_CUDA)
+        set (_GMX_CUDA_NB_SINGLE_COMPILATION_UNIT_DEFAULT FALSE)
+    else()
+        set (_GMX_CUDA_NB_SINGLE_COMPILATION_UNIT_DEFAULT TRUE)
+    endif()
     cmake_dependent_option(GMX_CUDA_NB_SINGLE_COMPILATION_UNIT
-        "Whether to compile the CUDA non-bonded module using a single compilation unit." ON
+        "Whether to compile the CUDA non-bonded module using a single compilation unit." ${_GMX_CUDA_NB_SINGLE_COMPILATION_UNIT_DEFAULT}
         "GMX_GPU" ON)
     mark_as_advanced(GMX_CUDA_NB_SINGLE_COMPILATION_UNIT)
 
-    if (GMX_GPU)
+    if (GMX_GPU AND NOT GMX_CLANG_CUDA)
         # We need to use single compilation unit for kernels:
-        # - when compiling for CC 2.x devices where buggy kernel code is generated
+        # when compiling with nvcc for CC 2.x devices where buggy kernel code is generated
         gmx_check_if_changed(_gmx_cuda_target_changed GMX_CUDA_TARGET_SM GMX_CUDA_TARGET_COMPUTE CUDA_NVCC_FLAGS)
+
         if(_gmx_cuda_target_changed OR NOT GMX_GPU_DETECTION_DONE)
             if((NOT GMX_CUDA_TARGET_SM AND NOT GMX_CUDA_TARGET_COMPUTE) OR
-               (GMX_CUDA_TARGET_SM MATCHES "2[01]" OR GMX_CUDA_TARGET_COMPUTE MATCHES "2[01]"))
-               message(STATUS "Enabling single compilation unit for the CUDA non-bonded module. Multiple compilation units are not compatible with CC 2.x devices, to enable the feature specify only CC >=3.0 target architectures in GMX_CUDA_TARGET_SM/GMX_CUDA_TARGET_COMPUTE.")
+                (GMX_CUDA_TARGET_SM MATCHES "2[01]" OR GMX_CUDA_TARGET_COMPUTE MATCHES "2[01]"))
+                message(STATUS "Enabling single compilation unit for the CUDA non-bonded module. Multiple compilation units are not compatible with CC 2.x devices, to enable the feature specify only CC >=3.0 target architectures in GMX_CUDA_TARGET_SM/GMX_CUDA_TARGET_COMPUTE.")
                 set_property(CACHE GMX_CUDA_NB_SINGLE_COMPILATION_UNIT PROPERTY VALUE ON)
             else()
                 message(STATUS "Enabling multiple compilation units for the CUDA non-bonded module.")

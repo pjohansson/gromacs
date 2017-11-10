@@ -3,7 +3,7 @@
  *
  * Copyright (c) 1991-2000, University of Groningen, The Netherlands.
  * Copyright (c) 2001-2004, The GROMACS development team.
- * Copyright (c) 2013,2014,2015,2016, by the GROMACS development team, led by
+ * Copyright (c) 2013,2014,2015,2016,2017, by the GROMACS development team, led by
  * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
  * and including many others, as listed in the AUTHORS file in the
  * top-level source directory and at http://www.gromacs.org.
@@ -41,6 +41,8 @@
 #include <cstdlib>
 #include <cstring>
 
+#include <algorithm>
+
 #include "gromacs/listed-forces/bonded.h"
 #include "gromacs/pbcutil/rmpbc.h"
 #include "gromacs/utility/cstringutil.h"
@@ -51,24 +53,19 @@
 static const char *pp_pat[] = { "C", "N", "CA", "C", "N" };
 #define NPP (sizeof(pp_pat)/sizeof(pp_pat[0]))
 
-static int d_comp(const void *a, const void *b)
+static bool d_comp(const t_dih &a, const t_dih &b)
 {
-    t_dih *da, *db;
-
-    da = (t_dih *)a;
-    db = (t_dih *)b;
-
-    if (da->ai[1] < db->ai[1])
+    if (a.ai[1] < b.ai[1])
     {
-        return -1;
+        return true;
     }
-    else if (da->ai[1] == db->ai[1])
+    else if (a.ai[1] == b.ai[1])
     {
-        return (da->ai[2] - db->ai[2]);
+        return a.ai[2] < b.ai[2];
     }
     else
     {
-        return 1;
+        return false;
     }
 }
 
@@ -77,9 +74,8 @@ static void calc_dihs(t_xrama *xr)
 {
     int          i, t1, t2, t3;
     rvec         r_ij, r_kj, r_kl, m, n;
-    real         sign;
     t_dih       *dd;
-    gmx_rmpbc_t  gpbc = NULL;
+    gmx_rmpbc_t  gpbc = nullptr;
 
     gpbc = gmx_rmpbc_init(xr->idef, xr->ePBC, xr->natoms);
     gmx_rmpbc(gpbc, xr->natoms, xr->box, xr->x);
@@ -90,8 +86,8 @@ static void calc_dihs(t_xrama *xr)
         dd      = &(xr->dih[i]);
         dd->ang = dih_angle(xr->x[dd->ai[0]], xr->x[dd->ai[1]],
                             xr->x[dd->ai[2]], xr->x[dd->ai[3]],
-                            NULL,
-                            r_ij, r_kj, r_kl, m, n, &sign, &t1, &t2, &t3);
+                            nullptr,
+                            r_ij, r_kj, r_kl, m, n, &t1, &t2, &t3);
     }
 }
 
@@ -217,8 +213,8 @@ static void get_dih_props(t_xrama *xr, const t_idef *idef, int mult)
 
         key.ai[1] = ia[2];
         key.ai[2] = ia[3];
-        if ((dd = (t_dih *)bsearch(&key, xr->dih, xr->ndih, (size_t)sizeof(key), d_comp))
-            != NULL)
+        dd        = std::lower_bound(xr->dih, xr->dih+xr->ndih, key, d_comp);
+        if (dd < xr->dih+xr->ndih && !d_comp(key, *dd))
         {
             dd->mult = idef->iparams[ft].pdihs.mult;
             dd->phi0 = idef->iparams[ft].pdihs.phiA;

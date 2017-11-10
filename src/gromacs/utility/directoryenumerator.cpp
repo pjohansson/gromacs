@@ -1,7 +1,7 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2010,2011,2014,2015,2016, by the GROMACS development team, led by
+ * Copyright (c) 2010,2011,2014,2015,2016,2017, by the GROMACS development team, led by
  * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
  * and including many others, as listed in the AUTHORS file in the
  * top-level source directory and at http://www.gromacs.org.
@@ -163,7 +163,7 @@ class DirectoryEnumerator::Impl
         {
             errno       = 0;
             DIR *handle = opendir(dirname);
-            if (handle == NULL)
+            if (handle == nullptr)
             {
                 if (bThrow)
                 {
@@ -173,50 +173,41 @@ class DirectoryEnumerator::Impl
                                      dirname);
                     GMX_THROW_WITH_ERRNO(FileIOError(message), "opendir", code);
                 }
-                return NULL;
+                return nullptr;
             }
             return new Impl(handle);
         }
-        explicit Impl(DIR *handle) : dirent_handle(handle)
-        {
-            // TODO: Use memory allocation that throws, and handle
-            // exception safety (close handle) in such a case.
-            /* On some platforms no space is present for d_name in dirent.
-             * Since d_name is guaranteed to be the last entry, allocating
-             * extra space for dirent will allow more size for d_name.
-             * GMX_MAX_PATH should always be >= the max possible d_name.
-             */
-            smalloc(direntp_large, sizeof(*direntp_large) + GMX_PATH_MAX);
-        }
+        explicit Impl(DIR *handle) : dirent_handle(handle) {}
         ~Impl()
         {
-            sfree(direntp_large);
             closedir(dirent_handle);
         }
 
         bool nextFile(std::string *filename)
         {
             errno = 0;
-            dirent *p;
-            int     rc = readdir_r(dirent_handle, direntp_large, &p);
-            if (p == NULL && rc == 0)
+            dirent *p = readdir(dirent_handle);
+            if (p == nullptr)
             {
-                filename->clear();
-                return false;
+                if (errno == 0)
+                {
+                    // All the files have been found.
+                    filename->clear();
+                    return false;
+                }
+                else
+                {
+                    GMX_THROW_WITH_ERRNO(
+                            FileIOError("Failed to list files in a directory"),
+                            "readdir", errno);
+                }
             }
-            else if (rc != 0)
-            {
-                GMX_THROW_WITH_ERRNO(
-                        FileIOError("Failed to list files in a directory"),
-                        "readdir_r", errno);
-            }
-            *filename = direntp_large->d_name;
+            *filename = p->d_name;
             return true;
         }
 
     private:
         DIR    *dirent_handle;
-        dirent *direntp_large;
 };
 #else
 class DirectoryEnumerator::Impl
@@ -275,7 +266,7 @@ DirectoryEnumerator::enumerateFilesWithExtension(
 DirectoryEnumerator::DirectoryEnumerator(const char *dirname, bool bThrow)
     : impl_(nullptr)
 {
-    GMX_RELEASE_ASSERT(dirname != NULL && dirname[0] != '\0',
+    GMX_RELEASE_ASSERT(dirname != nullptr && dirname[0] != '\0',
                        "Attempted to open empty/null directory path");
     impl_.reset(Impl::init(dirname, bThrow));
 }

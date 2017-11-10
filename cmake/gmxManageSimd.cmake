@@ -1,7 +1,7 @@
 #
 # This file is part of the GROMACS molecular simulation package.
 #
-# Copyright (c) 2012,2013,2014,2015,2016, by the GROMACS development team, led by
+# Copyright (c) 2012,2013,2014,2015,2016,2017, by the GROMACS development team, led by
 # Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
 # and including many others, as listed in the AUTHORS file in the
 # top-level source directory and at http://www.gromacs.org.
@@ -32,8 +32,7 @@
 # To help us fund GROMACS development, we humbly ask that you cite
 # the research papers on the package. Check out http://www.gromacs.org.
 
-# include avx test source, used if the AVX flags are set below
-include(gmxTestAVXMaskload)
+include(gmxDetectCpu)
 include(gmxFindFlagsForSource)
 
 # Macro that manages setting the respective C and C++ toolchain
@@ -60,7 +59,8 @@ macro(prepare_power_vsx_toolchain TOOLCHAIN_C_FLAGS_VARIABLE TOOLCHAIN_CXX_FLAGS
         # VSX uses the same function API as Altivec/VMX, so make sure we tune for the current CPU and not VMX.
         # By putting these flags here rather than in the general compiler flags file we can safely assume
         # that we are at least on Power7 since that is when VSX appeared.
-        if(BUILD_CPU_BRAND MATCHES "POWER7")
+        gmx_run_cpu_detection(brand)
+        if(CPU_DETECTION_BRAND MATCHES "POWER7")
             gmx_test_cflag(GNU_C_VSX_POWER7   "-mcpu=power7 -mtune=power7" ${TOOLCHAIN_C_FLAGS_VARIABLE})
             gmx_test_cflag(GNU_CXX_VSX_POWER7 "-mcpu=power7 -mtune=power7" ${TOOLCHAIN_CXX_FLAGS_VARIABLE})
         else()
@@ -72,6 +72,11 @@ macro(prepare_power_vsx_toolchain TOOLCHAIN_C_FLAGS_VARIABLE TOOLCHAIN_CXX_FLAGS
         # to support the double-precision features in VSX.
         if(GMX_DOUBLE AND CMAKE_CXX_COMPILER_VERSION VERSION_LESS "4.9")
             message(FATAL_ERROR "Using VSX SIMD in double precision with GCC requires GCC-4.9 or later.")
+        endif()
+    endif()
+    if(${CMAKE_CXX_COMPILER_ID} MATCHES "XL" OR ${CMAKE_C_COMPILER_ID} MATCHES "XL")
+        if(CMAKE_CXX_COMPILER_VERSION VERSION_LESS "13.1.5" OR CMAKE_C_COMPILER_VERSION VERSION_LESS "13.1.5")
+            message(FATAL_ERROR "Using VSX SIMD requires XL compiler version 13.1.5 or later.")
         endif()
     endif()
 endmacro()
@@ -121,33 +126,41 @@ endif()
 #
 # Section to set (and test) compiler flags for SIMD.
 #
-# The flags will be set based on the GMX_SIMD choice provided by the user.
-# Automatic detection of the architecture on the build host is done prior to
-# calling this macro.
+# If the user chose the (default) automatic behaviour, then detection
+# is run to suggest a SIMD choice suitable for the build
+# host. Otherwise, the users's choice is always honoured. The compiler
+# flags will be set based on that choice.
 #
 
-if(GMX_SIMD STREQUAL "NONE")
+set(GMX_SIMD_ACTIVE ${GMX_SIMD})
+if(GMX_SIMD STREQUAL "AUTO")
+    include(gmxDetectSimd)
+    gmx_detect_simd(GMX_SUGGESTED_SIMD)
+    set(GMX_SIMD_ACTIVE ${GMX_SUGGESTED_SIMD})
+endif()
+
+if(GMX_SIMD_ACTIVE STREQUAL "NONE")
     # nothing to do configuration-wise
     set(SIMD_STATUS_MESSAGE "SIMD instructions disabled")
-elseif(GMX_SIMD STREQUAL "SSE2")
+elseif(GMX_SIMD_ACTIVE STREQUAL "SSE2")
 
     gmx_find_flags(
         "#include<xmmintrin.h>
          int main(){__m128 x=_mm_set1_ps(0.5);x=_mm_rsqrt_ps(x);return _mm_movemask_ps(x);}"
         TOOLCHAIN_C_FLAGS TOOLCHAIN_CXX_FLAGS
-        SIMD_${GMX_SIMD}_C_FLAGS SIMD_${GMX_SIMD}_CXX_FLAGS
+        SIMD_${GMX_SIMD_ACTIVE}_C_FLAGS SIMD_${GMX_SIMD_ACTIVE}_CXX_FLAGS
         "-msse2" "/arch:SSE2" "-hgnu")
 
-    if(NOT SIMD_${GMX_SIMD}_C_FLAGS OR NOT SIMD_${GMX_SIMD}_CXX_FLAGS)
+    if(NOT SIMD_${GMX_SIMD_ACTIVE}_C_FLAGS OR NOT SIMD_${GMX_SIMD_ACTIVE}_CXX_FLAGS)
         gmx_give_fatal_error_when_simd_support_not_found("SSE2" "disable SIMD support (slow)" "${SUGGEST_BINUTILS_UPDATE}")
     endif()
 
     set(SIMD_C_FLAGS "${TOOLCHAIN_C_FLAGS}")
     set(SIMD_CXX_FLAGS "${TOOLCHAIN_CXX_FLAGS}")
-    set(GMX_SIMD_X86_${GMX_SIMD} 1)
+    set(GMX_SIMD_X86_${GMX_SIMD_ACTIVE} 1)
     set(SIMD_STATUS_MESSAGE "Enabling SSE2 SIMD instructions")
 
-elseif(GMX_SIMD STREQUAL "SSE4.1")
+elseif(GMX_SIMD_ACTIVE STREQUAL "SSE4.1")
 
     # Note: MSVC enables SSE4.1 with the SSE2 flag, so we include that in testing.
     gmx_find_flags(
@@ -166,7 +179,7 @@ elseif(GMX_SIMD STREQUAL "SSE4.1")
     set(GMX_SIMD_X86_SSE4_1 1)
     set(SIMD_STATUS_MESSAGE "Enabling SSE4.1 SIMD instructions")
 
-elseif(GMX_SIMD STREQUAL "AVX_128_FMA")
+elseif(GMX_SIMD_ACTIVE STREQUAL "AVX_128_FMA")
 
     prepare_x86_toolchain(TOOLCHAIN_C_FLAGS TOOLCHAIN_CXX_FLAGS)
 
@@ -224,11 +237,11 @@ elseif(GMX_SIMD STREQUAL "AVX_128_FMA")
         ${INCLUDE_INTRIN_H}
         int main(){__m128 x=_mm_set1_ps(0.5);x=_mm_macc_ps(x,x,x);return _mm_movemask_ps(x);}"
         TOOLCHAIN_C_FLAGS TOOLCHAIN_CXX_FLAGS
-        SIMD_${GMX_SIMD}_C_FLAGS SIMD_${GMX_SIMD}_CXX_FLAGS
+        SIMD_${GMX_SIMD_ACTIVE}_C_FLAGS SIMD_${GMX_SIMD_ACTIVE}_CXX_FLAGS
         "-mfma4" "-hgnu")
 
     # We only need to check the last (FMA) test; that will always fail if the generic AVX test failed
-    if(NOT SIMD_${GMX_SIMD}_C_FLAGS OR NOT SIMD_${GMX_SIMD}_CXX_FLAGS)
+    if(NOT SIMD_${GMX_SIMD_ACTIVE}_C_FLAGS OR NOT SIMD_${GMX_SIMD_ACTIVE}_CXX_FLAGS)
         gmx_give_fatal_error_when_simd_support_not_found("128-bit AVX with FMA support" "choose SSE4.1 SIMD (slower)" "${SUGGEST_BINUTILS_UPDATE}")
     endif()
 
@@ -244,12 +257,10 @@ elseif(GMX_SIMD STREQUAL "AVX_128_FMA")
 
     set(SIMD_C_FLAGS "${TOOLCHAIN_C_FLAGS}")
     set(SIMD_CXX_FLAGS "${TOOLCHAIN_CXX_FLAGS}")
-    set(GMX_SIMD_X86_${GMX_SIMD} 1)
+    set(GMX_SIMD_X86_${GMX_SIMD_ACTIVE} 1)
     set(SIMD_STATUS_MESSAGE "Enabling 128-bit AVX SIMD GROMACS SIMD (with fused-multiply add)")
 
-    gmx_test_avx_gcc_maskload_bug(GMX_SIMD_X86_AVX_GCC_MASKLOAD_BUG "${SIMD_C_FLAGS}")
-
-elseif(GMX_SIMD STREQUAL "AVX_256")
+elseif(GMX_SIMD_ACTIVE STREQUAL "AVX_256")
 
     prepare_x86_toolchain(TOOLCHAIN_C_FLAGS TOOLCHAIN_CXX_FLAGS)
 
@@ -257,21 +268,19 @@ elseif(GMX_SIMD STREQUAL "AVX_256")
         "#include<immintrin.h>
          int main(){__m256 x=_mm256_set1_ps(0.5);x=_mm256_add_ps(x,x);return _mm256_movemask_ps(x);}"
         TOOLCHAIN_C_FLAGS TOOLCHAIN_CXX_FLAGS
-        SIMD_${GMX_SIMD}_C_FLAGS SIMD_${GMX_SIMD}_CXX_FLAGS
+        SIMD_${GMX_SIMD_ACTIVE}_C_FLAGS SIMD_${GMX_SIMD_ACTIVE}_CXX_FLAGS
         "-mavx" "/arch:AVX" "-hgnu")
 
-    if(NOT SIMD_${GMX_SIMD}_C_FLAGS OR NOT SIMD_${GMX_SIMD}_CXX_FLAGS)
+    if(NOT SIMD_${GMX_SIMD_ACTIVE}_C_FLAGS OR NOT SIMD_${GMX_SIMD_ACTIVE}_CXX_FLAGS)
         gmx_give_fatal_error_when_simd_support_not_found("AVX" "choose SSE4.1 SIMD (slower)" "${SUGGEST_BINUTILS_UPDATE}")
     endif()
 
     set(SIMD_C_FLAGS "${TOOLCHAIN_C_FLAGS}")
     set(SIMD_CXX_FLAGS "${TOOLCHAIN_CXX_FLAGS}")
-    set(GMX_SIMD_X86_${GMX_SIMD} 1)
+    set(GMX_SIMD_X86_${GMX_SIMD_ACTIVE} 1)
     set(SIMD_STATUS_MESSAGE "Enabling 256-bit AVX SIMD instructions")
 
-    gmx_test_avx_gcc_maskload_bug(GMX_SIMD_X86_AVX_GCC_MASKLOAD_BUG "${SIMD_C_FLAGS}")
-
-elseif(GMX_SIMD STREQUAL "AVX2_256")
+elseif(GMX_SIMD_ACTIVE MATCHES "AVX2_")
 
     prepare_x86_toolchain(TOOLCHAIN_C_FLAGS TOOLCHAIN_CXX_FLAGS)
 
@@ -279,27 +288,30 @@ elseif(GMX_SIMD STREQUAL "AVX2_256")
         "#include<immintrin.h>
          int main(){__m256i x=_mm256_set1_epi32(5);x=_mm256_add_epi32(x,x);return _mm256_movemask_epi8(x);}"
         TOOLCHAIN_C_FLAGS TOOLCHAIN_CXX_FLAGS
-        SIMD_${GMX_SIMD}_C_FLAGS SIMD_${GMX_SIMD}_CXX_FLAGS
+        SIMD_${GMX_SIMD_ACTIVE}_C_FLAGS SIMD_${GMX_SIMD_ACTIVE}_CXX_FLAGS
         "-march=core-avx2" "-mavx2" "/arch:AVX" "-hgnu") # no AVX2-specific flag for MSVC yet
 
-    if(NOT SIMD_${GMX_SIMD}_C_FLAGS OR NOT SIMD_${GMX_SIMD}_CXX_FLAGS)
+    if(NOT SIMD_${GMX_SIMD_ACTIVE}_C_FLAGS OR NOT SIMD_${GMX_SIMD_ACTIVE}_CXX_FLAGS)
         gmx_give_fatal_error_when_simd_support_not_found("AVX2" "choose AVX SIMD (slower)" "${SUGGEST_BINUTILS_UPDATE}")
     endif()
 
     set(SIMD_C_FLAGS "${TOOLCHAIN_C_FLAGS}")
     set(SIMD_CXX_FLAGS "${TOOLCHAIN_CXX_FLAGS}")
-    set(GMX_SIMD_X86_${GMX_SIMD} 1)
-    set(SIMD_STATUS_MESSAGE "Enabling 256-bit AVX2 SIMD instructions")
+    set(GMX_SIMD_X86_${GMX_SIMD_ACTIVE} 1)
 
-    # No need to test for Maskload bug - it was fixed before gcc added AVX2 support
+    if(GMX_SIMD_ACTIVE STREQUAL "AVX2_128")
+        set(SIMD_STATUS_MESSAGE "Enabling 128-bit AVX2 SIMD instructions")
+    else()
+        set(SIMD_STATUS_MESSAGE "Enabling 256-bit AVX2 SIMD instructions")
+    endif()
 
-elseif(GMX_SIMD STREQUAL "MIC")
+elseif(GMX_SIMD_ACTIVE STREQUAL "MIC")
 
     # No flags needed. Not testing.
     set(GMX_SIMD_X86_MIC 1)
     set(SIMD_STATUS_MESSAGE "Enabling MIC (Xeon Phi) SIMD instructions")
 
-elseif(GMX_SIMD STREQUAL "AVX_512")
+elseif(GMX_SIMD_ACTIVE STREQUAL "AVX_512")
 
     prepare_x86_toolchain(TOOLCHAIN_C_FLAGS TOOLCHAIN_CXX_FLAGS)
 
@@ -307,19 +319,19 @@ elseif(GMX_SIMD STREQUAL "AVX_512")
         "#include<immintrin.h>
          int main(){__m512 y,x=_mm512_set1_ps(0.5);y=_mm512_fmadd_ps(x,x,x);return (int)_mm512_cmp_ps_mask(x,y,_CMP_LT_OS);}"
         TOOLCHAIN_C_FLAGS TOOLCHAIN_CXX_FLAGS
-        SIMD_${GMX_SIMD}_C_FLAGS SIMD_${GMX_SIMD}_CXX_FLAGS
-        "-xMIC-AVX512" "-mavx512f -mfma" "-mavx512f" "/arch:AVX" "-hgnu") # no AVX_512F flags known for MSVC yet
+        SIMD_${GMX_SIMD_ACTIVE}_C_FLAGS SIMD_${GMX_SIMD_ACTIVE}_CXX_FLAGS
+        "-xCORE-AVX512 -qopt-zmm-usage=high" "-xCORE-AVX512" "-mavx512f -mfma" "-mavx512f" "/arch:AVX" "-hgnu") # no AVX_512F flags known for MSVC yet. ICC should use ZMM if code anyhow uses ZMM
 
-    if(NOT SIMD_${GMX_SIMD}_C_FLAGS OR NOT SIMD_${GMX_SIMD}_CXX_FLAGS)
+    if(NOT SIMD_${GMX_SIMD_ACTIVE}_C_FLAGS OR NOT SIMD_${GMX_SIMD_ACTIVE}_CXX_FLAGS)
         gmx_give_fatal_error_when_simd_support_not_found("AVX 512F" "choose a lower level of SIMD (slower)" "${SUGGEST_BINUTILS_UPDATE}")
     endif()
 
     set(SIMD_C_FLAGS "${TOOLCHAIN_C_FLAGS}")
     set(SIMD_CXX_FLAGS "${TOOLCHAIN_CXX_FLAGS}")
-    set(GMX_SIMD_X86_${GMX_SIMD} 1)
+    set(GMX_SIMD_X86_${GMX_SIMD_ACTIVE} 1)
     set(SIMD_STATUS_MESSAGE "Enabling 512-bit AVX-512 SIMD instructions")
 
-elseif(GMX_SIMD STREQUAL "AVX_512_KNL")
+elseif(GMX_SIMD_ACTIVE STREQUAL "AVX_512_KNL")
 
     prepare_x86_toolchain(TOOLCHAIN_C_FLAGS TOOLCHAIN_CXX_FLAGS)
 
@@ -327,87 +339,91 @@ elseif(GMX_SIMD STREQUAL "AVX_512_KNL")
         "#include<immintrin.h>
         int main(){__m512 y,x=_mm512_set1_ps(0.5);y=_mm512_rsqrt28_ps(x);return (int)_mm512_cmp_ps_mask(x,y,_CMP_LT_OS);}"
         TOOLCHAIN_C_FLAGS TOOLCHAIN_CXX_FLAGS
-        SIMD_${GMX_SIMD}_C_FLAGS SIMD_${GMX_SIMD}_CXX_FLAGS
+        SIMD_${GMX_SIMD_ACTIVE}_C_FLAGS SIMD_${GMX_SIMD_ACTIVE}_CXX_FLAGS
         "-xMIC-AVX512" "-mavx512er -mfma" "-mavx512er" "/arch:AVX" "-hgnu") # no AVX_512ER flags known for MSVC yet
 
-    if(NOT SIMD_${GMX_SIMD}_C_FLAGS OR NOT SIMD_${GMX_SIMD}_CXX_FLAGS)
+    if(NOT SIMD_${GMX_SIMD_ACTIVE}_C_FLAGS OR NOT SIMD_${GMX_SIMD_ACTIVE}_CXX_FLAGS)
         gmx_give_fatal_error_when_simd_support_not_found("AVX 512ER" "choose a lower level of SIMD (slower)" "${SUGGEST_BINUTILS_UPDATE}")
     endif()
 
     set(SIMD_C_FLAGS "${TOOLCHAIN_C_FLAGS}")
     set(SIMD_CXX_FLAGS "${TOOLCHAIN_CXX_FLAGS}")
-    set(GMX_SIMD_X86_${GMX_SIMD} 1)
+    set(GMX_SIMD_X86_${GMX_SIMD_ACTIVE} 1)
     set(SIMD_STATUS_MESSAGE "Enabling 512-bit AVX-512-KNL SIMD instructions")
 
-elseif(GMX_SIMD STREQUAL "ARM_NEON")
+elseif(GMX_SIMD_ACTIVE STREQUAL "ARM_NEON")
+
+    if (GMX_DOUBLE)
+        message(FATAL_ERROR "ARM_NEON SIMD support is not available for a double precision build because the architecture lacks double-precision support")
+    endif()
 
     gmx_find_flags(
         "#include<arm_neon.h>
          int main(){float32x4_t x=vdupq_n_f32(0.5);x=vmlaq_f32(x,x,x);return vgetq_lane_f32(x,0)>0;}"
         TOOLCHAIN_C_FLAGS TOOLCHAIN_CXX_FLAGS
-        SIMD_${GMX_SIMD}_C_FLAGS SIMD_${GMX_SIMD}_CXX_FLAGS
+        SIMD_${GMX_SIMD_ACTIVE}_C_FLAGS SIMD_${GMX_SIMD_ACTIVE}_CXX_FLAGS
         "-mfpu=neon-vfpv4" "-mfpu=neon" "")
 
-    if(NOT SIMD_${GMX_SIMD}_C_FLAGS OR NOT SIMD_${GMX_SIMD}_CXX_FLAGS)
+    if(NOT SIMD_${GMX_SIMD_ACTIVE}_C_FLAGS OR NOT SIMD_${GMX_SIMD_ACTIVE}_CXX_FLAGS)
         gmx_give_fatal_error_when_simd_support_not_found("ARM NEON" "disable SIMD support (slower)" "${SUGGEST_BINUTILS_UPDATE}")
     endif()
 
     set(SIMD_C_FLAGS "${TOOLCHAIN_C_FLAGS}")
     set(SIMD_CXX_FLAGS "${TOOLCHAIN_CXX_FLAGS}")
-    set(GMX_SIMD_${GMX_SIMD} 1)
+    set(GMX_SIMD_${GMX_SIMD_ACTIVE} 1)
     set(SIMD_STATUS_MESSAGE "Enabling 32-bit ARM NEON SIMD instructions")
 
-elseif(GMX_SIMD STREQUAL "ARM_NEON_ASIMD")
+elseif(GMX_SIMD_ACTIVE STREQUAL "ARM_NEON_ASIMD")
 
     gmx_find_flags(
         "#include<arm_neon.h>
          int main(){float64x2_t x=vdupq_n_f64(0.5);x=vfmaq_f64(x,x,x);x=vrndnq_f64(x);return vgetq_lane_f64(x,0)>0;}"
         TOOLCHAIN_C_FLAGS TOOLCHAIN_CXX_FLAGS
-        SIMD_${GMX_SIMD}_C_FLAGS SIMD_${GMX_SIMD}_CXX_FLAGS
+        SIMD_${GMX_SIMD_ACTIVE}_C_FLAGS SIMD_${GMX_SIMD_ACTIVE}_CXX_FLAGS
         "")
 
-    if(NOT SIMD_${GMX_SIMD}_C_FLAGS OR NOT SIMD_${GMX_SIMD}_CXX_FLAGS)
+    if(NOT SIMD_${GMX_SIMD_ACTIVE}_C_FLAGS OR NOT SIMD_${GMX_SIMD_ACTIVE}_CXX_FLAGS)
         gmx_give_fatal_error_when_simd_support_not_found("ARM (AArch64) NEON Advanced SIMD" "particularly gcc version 4.9 or later, or disable SIMD support (slower)" "${SUGGEST_BINUTILS_UPDATE}")
     endif()
 
     set(SIMD_C_FLAGS "${TOOLCHAIN_C_FLAGS}")
     set(SIMD_CXX_FLAGS "${TOOLCHAIN_CXX_FLAGS}")
-    set(GMX_SIMD_${GMX_SIMD} 1)
+    set(GMX_SIMD_${GMX_SIMD_ACTIVE} 1)
     set(SIMD_STATUS_MESSAGE "Enabling ARM (AArch64) NEON Advanced SIMD instructions")
 
-elseif(GMX_SIMD STREQUAL "IBM_QPX")
+elseif(GMX_SIMD_ACTIVE STREQUAL "IBM_QPX")
 
     try_compile(TEST_QPX ${CMAKE_BINARY_DIR}
         "${CMAKE_SOURCE_DIR}/cmake/TestQPX.c")
 
     if (TEST_QPX)
         message(WARNING "IBM QPX SIMD instructions selected. This will work, but SIMD kernels are only available for the Verlet cut-off scheme. The plain C kernels that are used for the group cut-off scheme kernels will be slow, so please consider using the Verlet cut-off scheme.")
-        set(GMX_SIMD_${GMX_SIMD} 1)
+        set(GMX_SIMD_${GMX_SIMD_ACTIVE} 1)
         set(SIMD_STATUS_MESSAGE "Enabling IBM QPX SIMD instructions")
 
     else()
-        gmx_give_fatal_error_when_simd_support_not_found("IBM QPX" "or 'cmake .. -DCMAKE_TOOLCHAIN_FILE=Platform/BlueGeneQ-static-XL-CXX' to set up the tool chain" "${SUGGEST_BINUTILS_UPDATE}")
+        gmx_give_fatal_error_when_simd_support_not_found("IBM QPX" "or 'cmake .. -DCMAKE_TOOLCHAIN_FILE=Platform/BlueGeneQ-static-bgclang-CXX' to set up the tool chain" "${SUGGEST_BINUTILS_UPDATE}")
     endif()
 
-elseif(GMX_SIMD STREQUAL "IBM_VMX")
+elseif(GMX_SIMD_ACTIVE STREQUAL "IBM_VMX")
 
     gmx_find_flags(
         "#include<altivec.h>
          int main(){vector float x,y=vec_ctf(vec_splat_s32(1),0);x=vec_madd(y,y,y);return vec_all_ge(y,x);}"
         TOOLCHAIN_C_FLAGS TOOLCHAIN_CXX_FLAGS
-        SIMD_${GMX_SIMD}_C_FLAGS SIMD_${GMX_SIMD}_CXX_FLAGS
+        SIMD_${GMX_SIMD_ACTIVE}_C_FLAGS SIMD_${GMX_SIMD_ACTIVE}_CXX_FLAGS
         "-maltivec -mabi=altivec" "-qarch=auto -qaltivec")
 
-    if(NOT SIMD_${GMX_SIMD}_C_FLAGS OR NOT SIMD_${GMX_SIMD}_CXX_FLAGS)
+    if(NOT SIMD_${GMX_SIMD_ACTIVE}_C_FLAGS OR NOT SIMD_${GMX_SIMD_ACTIVE}_CXX_FLAGS)
         gmx_give_fatal_error_when_simd_support_not_found("IBM VMX" "disable SIMD support (slower)" "${SUGGEST_BINUTILS_UPDATE}")
     endif()
 
     set(SIMD_C_FLAGS "${TOOLCHAIN_C_FLAGS}")
     set(SIMD_CXX_FLAGS "${TOOLCHAIN_CXX_FLAGS}")
-    set(GMX_SIMD_${GMX_SIMD} 1)
+    set(GMX_SIMD_${GMX_SIMD_ACTIVE} 1)
     set(SIMD_STATUS_MESSAGE "Enabling IBM VMX SIMD instructions")
 
-elseif(GMX_SIMD STREQUAL "IBM_VSX")
+elseif(GMX_SIMD_ACTIVE STREQUAL "IBM_VSX")
 
     prepare_power_vsx_toolchain(TOOLCHAIN_C_FLAGS TOOLCHAIN_CXX_FLAGS)
 
@@ -415,26 +431,31 @@ elseif(GMX_SIMD STREQUAL "IBM_VSX")
         "#include<altivec.h>
          int main(){vector double x,y=vec_splats(1.0);x=vec_madd(y,y,y);return vec_all_ge(y,x);}"
         TOOLCHAIN_C_FLAGS TOOLCHAIN_CXX_FLAGS
-        SIMD_${GMX_SIMD}_C_FLAGS SIMD_${GMX_SIMD}_CXX_FLAGS
+        SIMD_${GMX_SIMD_ACTIVE}_C_FLAGS SIMD_${GMX_SIMD_ACTIVE}_CXX_FLAGS
         "-mvsx" "-maltivec -mabi=altivec" "-qarch=auto -qaltivec")
 
-    if(NOT SIMD_${GMX_SIMD}_C_FLAGS OR NOT SIMD_${GMX_SIMD}_CXX_FLAGS)
+    # Usually we check also for the C compiler here, but a C compiler
+    # is not required for SIMD support on this platform. cmake through
+    # at least version 3.7 cannot pass this check with the C compiler
+    # in the latest xlc 13.1.5, but the C++ compiler has different
+    # behaviour and is OK. See Redmine #2102.
+    if(NOT SIMD_${GMX_SIMD_ACTIVE}_CXX_FLAGS)
         gmx_give_fatal_error_when_simd_support_not_found("IBM VSX" "disable SIMD support (slower)" "${SUGGEST_BINUTILS_UPDATE}")
     endif()
 
     set(SIMD_C_FLAGS "${TOOLCHAIN_C_FLAGS}")
     set(SIMD_CXX_FLAGS "${TOOLCHAIN_CXX_FLAGS}")
-    set(GMX_SIMD_${GMX_SIMD} 1)
+    set(GMX_SIMD_${GMX_SIMD_ACTIVE} 1)
     set(SIMD_STATUS_MESSAGE "Enabling IBM VSX SIMD instructions")
 
-elseif(GMX_SIMD STREQUAL "SPARC64_HPC_ACE")
+elseif(GMX_SIMD_ACTIVE STREQUAL "SPARC64_HPC_ACE")
 
     # Note that GMX_RELAXED_DOUBLE_PRECISION is enabled by default in the top-level CMakeLists.txt
 
-    set(GMX_SIMD_${GMX_SIMD} 1)
+    set(GMX_SIMD_${GMX_SIMD_ACTIVE} 1)
     set(SIMD_STATUS_MESSAGE "Enabling Sparc64 HPC-ACE SIMD instructions")
 
-elseif(GMX_SIMD STREQUAL "REFERENCE")
+elseif(GMX_SIMD_ACTIVE STREQUAL "REFERENCE")
 
     # NB: This file handles settings for the SIMD module, so in the interest 
     # of proper modularization, please do NOT put any verlet kernel settings in this file.
@@ -446,15 +467,15 @@ elseif(GMX_SIMD STREQUAL "REFERENCE")
       	add_definitions(-DGMX_SIMD_REF_DOUBLE_WIDTH=${GMX_SIMD_REF_DOUBLE_WIDTH})
     endif()
 
-    set(GMX_SIMD_${GMX_SIMD} 1)
+    set(GMX_SIMD_${GMX_SIMD_ACTIVE} 1)
     set(SIMD_STATUS_MESSAGE "Enabling reference (emulated) SIMD instructions.")
 
 else()
-    gmx_invalid_option_value(GMX_SIMD)
+    gmx_invalid_option_value(GMX_SIMD_ACTIVE)
 endif()
 
 
-gmx_check_if_changed(SIMD_CHANGED GMX_SIMD)
+gmx_check_if_changed(SIMD_CHANGED GMX_SIMD_ACTIVE)
 if (SIMD_CHANGED AND DEFINED SIMD_STATUS_MESSAGE)
     message(STATUS "${SIMD_STATUS_MESSAGE}")
 endif()
@@ -476,22 +497,43 @@ endif()
 # rather than actual vector data. For now we disable __vectorcall with clang
 # when using the reference build.
 # 
+# xlc 13.1.5 does not seem recognize any attribute, and warns about invalid ones
+# so we avoid searching for any.
+#
 if(NOT DEFINED GMX_SIMD_CALLING_CONVENTION)
     if(GMX_TARGET_BGQ)
         set(CALLCONV_LIST " ")
-    elseif(CMAKE_CXX_COMPILER_ID MATCHES "Clang" AND GMX_SIMD STREQUAL "REFERENCE")
+    elseif(CMAKE_CXX_COMPILER_ID MATCHES "Clang" AND GMX_SIMD_ACTIVE STREQUAL "REFERENCE")
         set(CALLCONV_LIST __regcall " ")
+   elseif(CMAKE_CXX_COMPILER_ID MATCHES "XL")
+        set(CALLCONV_LIST " ")
     else()
         set(CALLCONV_LIST __vectorcall __regcall " ")
     endif()
     foreach(callconv ${CALLCONV_LIST})
         set(callconv_compile_var "_callconv_${callconv}")
-        check_c_source_compiles("int ${callconv} f(int i) {return i;} int main(void) {return f(0);}" ${callconv_compile_var})
+        # Some compilers warn about targets for which attributes are
+        # ignored (e.g. clang on ARM), and in such cases we want this
+        # check to lead to using no attribute in subsequent GROMACS
+        # compilation, to avoid issuing the warning for lots of files.
+        check_c_source_compiles("
+#pragma GCC diagnostic error \"-Wignored-attributes\"
+int ${callconv} f(int i) {return i;} int main(void) {return f(0);}
+" ${callconv_compile_var})
         if(${callconv_compile_var})
             set(GMX_SIMD_CALLING_CONVENTION "${callconv}" CACHE INTERNAL "Calling convention for SIMD routines" FORCE)
             break()
         endif()
     endforeach()
+endif()
+
+if("${CMAKE_CXX_COMPILER_ID}" STREQUAL "GNU")
+    # GCC bug 49001, 54412 on Windows (just warn, since it might be fixed in later versions)
+    if((CMAKE_CXX_COMPILER_VERSION VERSION_LESS "4.9.0" OR CMAKE_SIZEOF_VOID_P EQUAL 8)
+            AND (WIN32 OR CYGWIN)
+            AND (GMX_SIMD_ACTIVE MATCHES "AVX") AND NOT (GMX_SIMD_ACTIVE STREQUAL "AVX_128_FMA"))
+        message(WARNING "GCC on Windows (GCC older than 4.9 in 32-bit mode, or any version in 64-bit mode) with 256-bit AVX will probably crash. You might want to choose a different GMX_SIMD or a different compiler.")
+    endif()
 endif()
 
 endmacro()

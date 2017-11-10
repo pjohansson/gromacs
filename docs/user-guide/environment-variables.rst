@@ -74,6 +74,10 @@ Output Control
         :ref:`pdb` file, which allows to check whether multimeric channels have
         the correct PBC representation.
 
+``GMX_TRAJECTORY_IO_VERBOSITY``
+        Defaults to 1, which prints frame count e.g. when reading trajectory
+        files. Set to 0 for quiet operation.
+
 Debugging
 ---------
 ``GMX_PRINT_DEBUG_LINES``
@@ -136,6 +140,9 @@ Performance and Run Control
         disable the use of the lower-latency cudaLaunchKernel API even when supported (CUDA >=v7.0).
         Should only be used for benchmarking purposes.
 
+``GMX_DISABLE_CUDA_TIMING``
+        Disables GPU timing of CUDA tasks; synonymous with ``GMX_DISABLE_GPU_TIMING``.
+
 ``GMX_CYCLE_ALL``
         times all code during runs.  Incompatible with threads.
 
@@ -173,7 +180,7 @@ Performance and Run Control
         disables architecture-specific SIMD-optimized (SSE2, SSE4.1, AVX, etc.)
         non-bonded kernels thus forcing the use of plain C kernels.
 
-``GMX_DISABLE_CUDA_TIMING``
+``GMX_DISABLE_GPU_TIMING``
         timing of asynchronously executed GPU operations can have a
         non-negligible overhead with short step times. Disabling timing can improve performance in these cases.
 
@@ -192,8 +199,6 @@ Performance and Run Control
 ``GMX_EMULATE_GPU``
         emulate GPU runs by using algorithmically equivalent CPU reference code instead of
         GPU-accelerated functions. As the CPU code is slow, it is intended to be used only for debugging purposes.
-        The behavior is automatically triggered if non-bonded calculations are turned off using ``GMX_NO_NONBONDED``
-        case in which the non-bonded calculations will not be called, but the CPU-GPU transfer will also be skipped.
 
 ``GMX_ENX_NO_FATAL``
         disable exiting upon encountering a corrupted frame in an :ref:`edr`
@@ -281,6 +286,7 @@ Performance and Run Control
         skip non-bonded calculations; can be used to estimate the possible
         performance gain from adding a GPU accelerator to the current hardware setup -- assuming that this is
         fast enough to complete the non-bonded calculations while the CPU does bonded force and PME computation.
+        Freezing the particles will be required to stop the system blowing up.
 
 ``GMX_NO_PULLVIR``
         when set, do not add virial contribution to COM pull forces.
@@ -349,9 +355,15 @@ Performance and Run Control
 ``MDRUN``
         the :ref:`gmx mdrun` command used by :ref:`gmx tune_pme`.
 
-``GMX_NSTLIST``
-        sets the default value for :mdp:`nstlist`, preventing it from being tuned during
-        :ref:`gmx mdrun` startup when using the Verlet cutoff scheme.
+``GMX_DISABLE_DYNAMICPRUNING``
+        disables dynamic pair-list pruning. Note that :ref:`gmx mdrun` will
+        still tune nstlist to the optimal value picked assuming dynamic pruning. Thus
+        for good performance the -nstlist option should be used.
+
+``GMX_NSTLIST_DYNAMICPRUNING``
+        overrides the dynamic pair-list pruning interval chosen heuristically
+        by mdrun. Values should be between the pruning frequency value
+        (1 for CPU and 2 for GPU) and :mdp:`nstlist` ``- 1``.
 
 ``GMX_USE_TREEREDUCE``
         use tree reduction for nbnxn force reduction. Potentially faster for large number of
@@ -381,10 +393,8 @@ compilation of OpenCL kernels, but they are also used in device selection.
         only the flavor required for the simulation is generated and
         compiled.
 
-``GMX_OCL_FASTMATH``
-        Adds the option ``cl-fast-relaxed-math`` to the compiler
-        options (in the CUDA version this is enabled by default, it is likely that
-        the same will happen with the OpenCL version soon)
+``GMX_OCL_DISABLE_FASTMATH``
+        Prevents the use of ``-cl-fast-relaxed-math`` compiler option.
 
 ``GMX_OCL_DUMP_LOG``
         If defined, the OpenCL build log is always written to the
@@ -452,6 +462,11 @@ compilation of OpenCL kernels, but they are also used in device selection.
         kernels from a custom location. Use it only if you want to
         override |Gromacs| default behavior, or if you want to test
         your own kernels.
+
+``GMX_OCL_DISABLE_COMPATIBILITY_CHECK``
+        Disables the hardware compatibility check. Useful for developers
+        and allows testing the OpenCL kernels on non-supported platforms
+        (like Intel iGPUs) without source code modification.
 
 Analysis and Core Functions
 ---------------------------

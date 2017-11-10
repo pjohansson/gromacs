@@ -1,7 +1,7 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2010,2011,2012,2013,2014,2015,2016, by the GROMACS development team, led by
+ * Copyright (c) 2010,2011,2012,2013,2014,2015,2016,2017, by the GROMACS development team, led by
  * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
  * and including many others, as listed in the AUTHORS file in the
  * top-level source directory and at http://www.gromacs.org.
@@ -41,19 +41,21 @@
 #include <algorithm>
 
 #include "gromacs/commandline/pargs.h"
+#include "gromacs/ewald/ewald-utils.h"
+#include "gromacs/ewald/pme.h"
 #include "gromacs/fft/calcgrid.h"
 #include "gromacs/fileio/checkpoint.h"
-#include "gromacs/fileio/readinp.h"
 #include "gromacs/fileio/tpxio.h"
 #include "gromacs/gmxana/gmx_ana.h"
 #include "gromacs/gmxlib/network.h"
-#include "gromacs/math/calculate-ewald-splitting-coefficient.h"
 #include "gromacs/math/functions.h"
 #include "gromacs/math/units.h"
 #include "gromacs/math/vec.h"
+#include "gromacs/mdlib/broadcaststructs.h"
 #include "gromacs/mdtypes/commrec.h"
 #include "gromacs/mdtypes/inputrec.h"
 #include "gromacs/mdtypes/md_enums.h"
+#include "gromacs/mdtypes/state.h"
 #include "gromacs/random/threefry.h"
 #include "gromacs/random/uniformintdistribution.h"
 #include "gromacs/topology/mtop_util.h"
@@ -63,10 +65,6 @@
 #include "gromacs/utility/pleasecite.h"
 #include "gromacs/utility/smalloc.h"
 
-/* We use the same defines as in broadcaststructs.cpp here */
-#define  block_bc(cr,   d) gmx_bcast(     sizeof(d),     &(d), (cr))
-#define nblock_bc(cr, nr, d) gmx_bcast((nr)*sizeof((d)[0]), (d), (cr))
-#define   snew_bc(cr, d, nr) { if (!MASTER(cr)) {snew((d), (nr)); }}
 /* #define TAKETIME */
 /* #define DEBUG  */
 
@@ -457,7 +455,7 @@ static real estimate_reciprocal(
     real      tmp2   = 0;
     gmx_bool  bFraction;
 
-    int      *numbers = NULL;
+    int      *numbers = nullptr;
 
     /* Index variables for parallel work distribution */
     int startglobal, stopglobal;
@@ -817,7 +815,6 @@ static int prepare_x_q(real *q[], rvec *x[], const gmx_mtop_t *mtop, const rvec 
     int                     i;
     int                     nq; /* number of charged particles */
     gmx_mtop_atomloop_all_t aloop;
-    t_atom                 *atom;
 
 
     if (MASTER(cr))
@@ -827,7 +824,7 @@ static int prepare_x_q(real *q[], rvec *x[], const gmx_mtop_t *mtop, const rvec 
         nq = 0;
 
         aloop = gmx_mtop_atomloop_all_init(mtop);
-
+        const t_atom *atom;
         while (gmx_mtop_atomloop_all_next(aloop, &i, &atom))
         {
             if (is_charge(atom->q))
@@ -926,17 +923,17 @@ static void estimate_PME_error(t_inputinfo *info, const t_state *state,
                                const gmx_mtop_t *mtop, FILE *fp_out, gmx_bool bVerbose, unsigned int seed,
                                t_commrec *cr)
 {
-    rvec *x     = NULL; /* The coordinates */
-    real *q     = NULL; /* The charges     */
-    real  edir  = 0.0;  /* real space error */
-    real  erec  = 0.0;  /* reciprocal space error */
-    real  derr  = 0.0;  /* difference of real and reciprocal space error */
-    real  derr0 = 0.0;  /* difference of real and reciprocal space error */
-    real  beta  = 0.0;  /* splitting parameter beta */
-    real  beta0 = 0.0;  /* splitting parameter beta */
-    int   ncharges;     /* The number of atoms with charges */
-    int   nsamples;     /* The number of samples used for the calculation of the
-                         * self-energy error term */
+    rvec *x     = nullptr; /* The coordinates */
+    real *q     = nullptr; /* The charges     */
+    real  edir  = 0.0;     /* real space error */
+    real  erec  = 0.0;     /* reciprocal space error */
+    real  derr  = 0.0;     /* difference of real and reciprocal space error */
+    real  derr0 = 0.0;     /* difference of real and reciprocal space error */
+    real  beta  = 0.0;     /* splitting parameter beta */
+    real  beta0 = 0.0;     /* splitting parameter beta */
+    int   ncharges;        /* The number of atoms with charges */
+    int   nsamples;        /* The number of samples used for the calculation of the
+                            * self-energy error term */
     int   i = 0;
 
     if (MASTER(cr))
@@ -945,7 +942,7 @@ static void estimate_PME_error(t_inputinfo *info, const t_state *state,
     }
 
     /* Prepare an x and q array with only the charged atoms */
-    ncharges = prepare_x_q(&q, &x, mtop, state->x, cr);
+    ncharges = prepare_x_q(&q, &x, mtop, as_rvec_array(state->x.data()), cr);
     if (MASTER(cr))
     {
         calc_q2all(mtop, &(info->q2all), &(info->q2allnr));
@@ -1094,10 +1091,10 @@ int gmx_pme_error(int argc, char *argv[])
     real            user_beta = -1.0;
     real            fracself  = 1.0;
     t_inputinfo     info;
-    t_state         state;     /* The state from the tpr input file */
-    gmx_mtop_t      mtop;      /* The topology from the tpr input file */
-    t_inputrec     *ir = NULL; /* The inputrec from the tpr file */
-    FILE           *fp = NULL;
+    t_state         state;        /* The state from the tpr input file */
+    gmx_mtop_t      mtop;         /* The topology from the tpr input file */
+    t_inputrec     *ir = nullptr; /* The inputrec from the tpr file */
+    FILE           *fp = nullptr;
     t_commrec      *cr;
     unsigned long   PCA_Flags;
     gmx_bool        bTUNE    = FALSE;
@@ -1106,12 +1103,12 @@ int gmx_pme_error(int argc, char *argv[])
 
 
     static t_filenm   fnm[] = {
-        { efTPR, "-s",     NULL,    ffREAD },
+        { efTPR, "-s",     nullptr,    ffREAD },
         { efOUT, "-o",    "error",  ffWRITE },
         { efTPR, "-so",   "tuned",  ffOPTWR }
     };
 
-    gmx_output_env_t *oenv = NULL;
+    gmx_output_env_t *oenv = nullptr;
 
     t_pargs           pa[] = {
         { "-beta",     FALSE, etREAL, {&user_beta},
@@ -1134,8 +1131,9 @@ int gmx_pme_error(int argc, char *argv[])
 
     if (!parse_common_args(&argc, argv, PCA_Flags,
                            NFILE, fnm, asize(pa), pa, asize(desc), desc,
-                           0, NULL, &oenv))
+                           0, nullptr, &oenv))
     {
+        sfree(cr);
         return 0;
     }
 
@@ -1152,8 +1150,7 @@ int gmx_pme_error(int argc, char *argv[])
 
     if (MASTER(cr))
     {
-        /* Read in the tpr file */
-        snew(ir, 1);
+        ir = new t_inputrec();
         read_tpr_file(opt2fn("-s", NFILE, fnm), &info, &state, &mtop, ir, user_beta, fracself);
         /* Open logfile for reading */
         fp = fopen(opt2fn("-o", NFILE, fnm), "w");
@@ -1172,7 +1169,8 @@ int gmx_pme_error(int argc, char *argv[])
         info.nkx[0] = 0;
         info.nky[0] = 0;
         info.nkz[0] = 0;
-        calc_grid(stdout, state.box, info.fourier_sp[0], &(info.nkx[0]), &(info.nky[0]), &(info.nkz[0]));
+        calcFftGrid(stdout, state.box, info.fourier_sp[0], minimalPmeGridSize(info.pme_order[0]),
+                    &(info.nkx[0]), &(info.nky[0]), &(info.nkz[0]));
         if ( (ir->nkx != info.nkx[0]) || (ir->nky != info.nky[0]) || (ir->nkz != info.nkz[0]) )
         {
             gmx_fatal(FARGS, "Wrong fourierspacing %f nm, input file grid = %d x %d x %d, computed grid = %d x %d x %d",

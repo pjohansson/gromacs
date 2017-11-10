@@ -3,7 +3,7 @@
  *
  * Copyright (c) 1991-2000, University of Groningen, The Netherlands.
  * Copyright (c) 2001-2004, The GROMACS development team.
- * Copyright (c) 2013,2014,2015,2016, by the GROMACS development team, led by
+ * Copyright (c) 2013,2014,2015,2016,2017, by the GROMACS development team, led by
  * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
  * and including many others, as listed in the AUTHORS file in the
  * top-level source directory and at http://www.gromacs.org.
@@ -41,13 +41,13 @@
 #include <cstring>
 
 #include <algorithm>
+#include <string>
 
 #include "gromacs/commandline/pargs.h"
 #include "gromacs/fileio/confio.h"
 #include "gromacs/fileio/gmxfio.h"
 #include "gromacs/fileio/pdbio.h"
 #include "gromacs/fileio/tngio.h"
-#include "gromacs/fileio/tngio_for_tools.h"
 #include "gromacs/fileio/trxio.h"
 #include "gromacs/fileio/xtcio.h"
 #include "gromacs/fileio/xvgr.h"
@@ -130,7 +130,7 @@ static void scan_trj_files(char **fnms, int nfiles, real *readtime,
             timestep[i] = 0;
         }
 
-        close_trj(status);
+        close_trx(status);
         if (fr.bX)
         {
             sfree(fr.x);
@@ -184,6 +184,7 @@ static void edit_files(char **fnms, int nfiles, real *readtime, real *timestep,
     gmx_bool ok;
     char     inputstring[STRLEN], *chptr;
 
+    auto     timeUnit = output_env_get_time_unit(oenv);
     if (bSetTime)
     {
         fprintf(stderr, "\n\nEnter the new start time (%s) for each file.\n"
@@ -195,22 +196,22 @@ static void edit_files(char **fnms, int nfiles, real *readtime, real *timestep,
                 "same amount as in the previous. Use it when the time in the\n"
                 "new run continues from the end of the previous one,\n"
                 "since this takes possible overlap into account.\n\n",
-                output_env_get_time_unit(oenv));
+                timeUnit.c_str());
 
         fprintf(
                 stderr,
                 "          File             Current start (%s)  New start (%s)\n"
                 "---------------------------------------------------------\n",
-                output_env_get_time_unit(oenv), output_env_get_time_unit(oenv));
+                timeUnit.c_str(), timeUnit.c_str());
 
         for (i = 0; i < nfiles; i++)
         {
             fprintf(stderr, "%25s   %10.3f %s          ", fnms[i],
-                    output_env_conv_time(oenv, readtime[i]), output_env_get_time_unit(oenv));
+                    output_env_conv_time(oenv, readtime[i]), timeUnit.c_str());
             ok = FALSE;
             do
             {
-                if (NULL == fgets(inputstring, STRLEN - 1, stdin))
+                if (nullptr == fgets(inputstring, STRLEN - 1, stdin))
                 {
                     gmx_fatal(FARGS, "Error reading user input" );
                 }
@@ -282,8 +283,8 @@ static void edit_files(char **fnms, int nfiles, real *readtime, real *timestep,
             case TIME_EXPLICIT:
                 fprintf(stderr, "%25s   %10.3f %s   %10.3f %s",
                         fnms[i],
-                        output_env_conv_time(oenv, settime[i]), output_env_get_time_unit(oenv),
-                        output_env_conv_time(oenv, timestep[i]), output_env_get_time_unit(oenv));
+                        output_env_conv_time(oenv, settime[i]), timeUnit.c_str(),
+                        output_env_conv_time(oenv, timestep[i]), timeUnit.c_str());
                 if (i > 0 &&
                     cont_type[i-1] == TIME_EXPLICIT && settime[i] == settime[i-1])
                 {
@@ -384,11 +385,11 @@ static void do_demux(int nset, char *fnms[], char *fnms_out[], int nval,
             {
                 if (index)
                 {
-                    write_trxframe_indexed(fp_out[j], &trx[i], isize, index, NULL);
+                    write_trxframe_indexed(fp_out[j], &trx[i], isize, index, nullptr);
                 }
                 else
                 {
-                    write_trxframe(fp_out[j], &trx[i], NULL);
+                    write_trxframe(fp_out[j], &trx[i], nullptr);
                 }
             }
         }
@@ -438,7 +439,6 @@ int gmx_trjcat(int argc, char *argv[])
         "the trajectory does not match that in the [REF].xvg[ref] file then the program",
         "tries to be smart. Beware."
     };
-    static gmx_bool bVels           = TRUE;
     static gmx_bool bCat            = FALSE;
     static gmx_bool bSort           = TRUE;
     static gmx_bool bKeepLast       = FALSE;
@@ -459,8 +459,6 @@ int gmx_trjcat(int argc, char *argv[])
           { &end }, "Last time to use (%t)" },
         { "-dt", FALSE, etTIME,
           { &dt }, "Only write frame when t MOD dt = first time (%t)" },
-        { "-vel", FALSE, etBOOL,
-          { &bVels }, "Read and write velocities if possible" },
         { "-settime", FALSE, etBOOL,
           { &bSetTime }, "Change starting time interactively" },
         { "-sort", FALSE, etBOOL,
@@ -474,7 +472,7 @@ int gmx_trjcat(int argc, char *argv[])
     };
 #define npargs asize(pa)
     int               ftpin, i, frame, frame_out;
-    t_trxstatus      *status, *trxout = NULL;
+    t_trxstatus      *status, *trxout = nullptr;
     real              t_corr;
     t_trxframe        fr, frout;
     char            **fnms, **fnms_out, *out_file;
@@ -486,16 +484,16 @@ int gmx_trjcat(int argc, char *argv[])
     gmx_bool          lastTimeSet = FALSE;
     real              last_frame_time, searchtime;
     int               isize = 0, j;
-    int              *index = NULL, imax;
+    int              *index = nullptr, imax;
     char             *grpname;
-    real            **val = NULL, *t = NULL, dt_remd;
+    real            **val = nullptr, *t = nullptr, dt_remd;
     int               n, nset, ftpout = -1, prevEndStep = 0, filetype;
     gmx_off_t         fpos;
     gmx_output_env_t *oenv;
     t_filenm          fnm[] =
     {
-        { efTRX, "-f", NULL, ffRDMULT },
-        { efTRO, "-o", NULL, ffWRMULT },
+        { efTRX, "-f", nullptr, ffRDMULT },
+        { efTRO, "-o", nullptr, ffWRMULT },
         { efNDX, "-n", "index", ffOPTRD },
         { efXVG, "-demux", "remd", ffOPTRD }
     };
@@ -503,10 +501,11 @@ int gmx_trjcat(int argc, char *argv[])
 #define NFILE asize(fnm)
 
     if (!parse_common_args(&argc, argv, PCA_TIME_UNIT, NFILE, fnm,
-                           asize(pa), pa, asize(desc), desc, 0, NULL, &oenv))
+                           asize(pa), pa, asize(desc), desc, 0, nullptr, &oenv))
     {
         return 0;
     }
+    auto timeUnit = output_env_get_time_unit(oenv);
 
     bIndex = ftp2bSet(efNDX, NFILE, fnm);
     bDeMux = ftp2bSet(efXVG, NFILE, fnm);
@@ -652,13 +651,13 @@ int gmx_trjcat(int argc, char *argv[])
                 }
                 if (bIndex)
                 {
-                    trjtools_gmx_prepare_tng_writing(out_file, 'w', NULL, &trxout,
-                                                     fnms[0], isize, NULL, index, grpname);
+                    trjtools_gmx_prepare_tng_writing(out_file, 'w', nullptr, &trxout,
+                                                     fnms[0], isize, nullptr, index, grpname);
                 }
                 else
                 {
-                    trjtools_gmx_prepare_tng_writing(out_file, 'w', NULL, &trxout,
-                                                     fnms[0], -1, NULL, NULL, NULL);
+                    trjtools_gmx_prepare_tng_writing(out_file, 'w', nullptr, &trxout,
+                                                     fnms[0], -1, nullptr, nullptr, nullptr);
                 }
             }
             else
@@ -703,7 +702,7 @@ int gmx_trjcat(int argc, char *argv[])
                 }
                 lastTimeSet     = TRUE;
                 bKeepLastAppend = TRUE;
-                close_trj(status);
+                close_trx(status);
                 trxout = open_trx(out_file, "a");
             }
             else if (bOverwrite)
@@ -739,7 +738,7 @@ int gmx_trjcat(int argc, char *argv[])
                 lasttime    = fr.time;
                 lastTimeSet = TRUE;
                 fpos        = gmx_fio_ftell(stfio);
-                close_trj(status);
+                close_trx(status);
                 trxout = open_trx(out_file, "r+");
                 if (gmx_fio_seek(trx_get_fileio(trxout), fpos))
                 {
@@ -800,7 +799,7 @@ int gmx_trjcat(int argc, char *argv[])
                                 "spacing than the rest,\n"
                                 "might be a gap or overlap that couldn't be corrected "
                                 "automatically.\n", output_env_conv_time(oenv, frout.time),
-                                output_env_get_time_unit(oenv));
+                                timeUnit.c_str());
                     }
                 }
             }
@@ -890,7 +889,7 @@ int gmx_trjcat(int argc, char *argv[])
                         {
                             fprintf(stderr, "\nContinue writing frames from %s t=%g %s, "
                                     "frame=%d      \n",
-                                    fnms[i], output_env_conv_time(oenv, frout.time), output_env_get_time_unit(oenv),
+                                    fnms[i], output_env_conv_time(oenv, frout.time), timeUnit.c_str(),
                                     frame);
                             bNewFile = FALSE;
                         }
@@ -898,16 +897,16 @@ int gmx_trjcat(int argc, char *argv[])
                         if (bIndex)
                         {
                             write_trxframe_indexed(trxout, &frout, isize, index,
-                                                   NULL);
+                                                   nullptr);
                         }
                         else
                         {
-                            write_trxframe(trxout, &frout, NULL);
+                            write_trxframe(trxout, &frout, nullptr);
                         }
                         if ( ((frame % 10) == 0) || (frame < 10) )
                         {
                             fprintf(stderr, " ->  frame %6d time %8.3f %s     \r",
-                                    frame_out, output_env_conv_time(oenv, frout.time), output_env_get_time_unit(oenv));
+                                    frame_out, output_env_conv_time(oenv, frout.time), timeUnit.c_str());
                             fflush(stderr);
                         }
                     }
@@ -915,14 +914,14 @@ int gmx_trjcat(int argc, char *argv[])
             }
             while (read_next_frame(oenv, status, &fr));
 
-            close_trj(status);
+            close_trx(status);
         }
         if (trxout)
         {
             close_trx(trxout);
         }
         fprintf(stderr, "\nLast frame written was %d, time %f %s\n",
-                frame, output_env_conv_time(oenv, last_ok_t), output_env_get_time_unit(oenv));
+                frame, output_env_conv_time(oenv, last_ok_t), timeUnit.c_str());
     }
 
     return 0;

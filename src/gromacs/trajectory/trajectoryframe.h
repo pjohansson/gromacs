@@ -3,7 +3,7 @@
  *
  * Copyright (c) 1991-2000, University of Groningen, The Netherlands.
  * Copyright (c) 2001-2004, The GROMACS development team.
- * Copyright (c) 2013,2014,2015,2016, by the GROMACS development team, led by
+ * Copyright (c) 2013,2014,2015,2016,2017, by the GROMACS development team, led by
  * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
  * and including many others, as listed in the AUTHORS file in the
  * top-level source directory and at http://www.gromacs.org.
@@ -39,9 +39,10 @@
  * Do not try to use a pointer when its gmx_bool is FALSE, as memory might
  * not be allocated.
  */
-
 #ifndef GMX_TRAJECTORY_TRX_H
 #define GMX_TRAJECTORY_TRX_H
+
+#include <cstdio>
 
 #include "gromacs/math/vectypes.h"
 #include "gromacs/utility/basedefinitions.h"
@@ -54,8 +55,6 @@ typedef struct t_trxframe
     int             not_ok;    /* integrity flags                  */
     gmx_bool        bDouble;   /* Double precision?                */
     int             natoms;    /* number of atoms (atoms, x, v, f, index) */
-    gmx_bool        bTitle;
-    const char     *title;     /* title of the frame            */
     gmx_bool        bStep;
     gmx_int64_t     step;      /* MD step number                   */
     gmx_bool        bTime;
@@ -81,5 +80,10 @@ typedef struct t_trxframe
     gmx_bool        bIndex;
     int            *index;     /* atom indices of contained coordinates */
 } t_trxframe;
+
+void comp_frame(FILE *fp, t_trxframe *fr1, t_trxframe *fr2,
+                gmx_bool bRMSD, real ftol, real abstol);
+
+void done_frame(t_trxframe *frame);
 
 #endif

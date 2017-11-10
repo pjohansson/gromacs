@@ -3,7 +3,7 @@
  *
  * Copyright (c) 1991-2000, University of Groningen, The Netherlands.
  * Copyright (c) 2001-2004, The GROMACS development team.
- * Copyright (c) 2013,2014,2015,2016, by the GROMACS development team, led by
+ * Copyright (c) 2013,2014,2015,2016,2017, by the GROMACS development team, led by
  * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
  * and including many others, as listed in the AUTHORS file in the
  * top-level source directory and at http://www.gromacs.org.
@@ -38,16 +38,13 @@
 #define GMX_FILEIO_ENXIO_H
 
 #include "gromacs/fileio/xdr_datatype.h"
-#include "gromacs/mdtypes/state.h"
 #include "gromacs/trajectory/energy.h"
-
-#ifdef __cplusplus
-extern "C" {
-#endif
+#include "gromacs/utility/basedefinitions.h"
 
 struct gmx_groups_t;
 struct t_fileio;
 struct t_inputrec;
+class t_state;
 
 /**************************************************************
  * These are the base datatypes + functions for reading and
@@ -216,10 +213,8 @@ t_enxblock *find_block_id_enxframe(t_enxframe *ef, int id, t_enxblock *prev);
    subbblocks. */
 void add_subblocks_enxblock(t_enxblock *eb, int n);
 
-
-
-#ifdef __cplusplus
-}
-#endif
+void comp_enx(const char *fn1, const char *fn2, real ftol, real abstol,
+              const char *lastener);
+/* Compare two binary energy files */
 
 #endif

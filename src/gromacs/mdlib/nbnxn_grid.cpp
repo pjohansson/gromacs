@@ -1,7 +1,7 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2012,2013,2014,2015,2016, by the GROMACS development team, led by
+ * Copyright (c) 2012,2013,2014,2015,2016,2017, by the GROMACS development team, led by
  * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
  * and including many others, as listed in the AUTHORS file in the
  * top-level source directory and at http://www.gromacs.org.
@@ -37,8 +37,6 @@
 
 #include "nbnxn_grid.h"
 
-#include "config.h"
-
 #include <assert.h>
 #include <string.h>
 
@@ -65,11 +63,11 @@ struct gmx_domdec_zones_t;
 
 static void nbnxn_grid_init(nbnxn_grid_t * grid)
 {
-    grid->cxy_na      = NULL;
-    grid->cxy_ind     = NULL;
+    grid->cxy_na      = nullptr;
+    grid->cxy_ind     = nullptr;
     grid->cxy_nalloc  = 0;
-    grid->bb          = NULL;
-    grid->bbj         = NULL;
+    grid->bb          = nullptr;
+    grid->bbj         = nullptr;
     grid->nc_nalloc   = 0;
 }
 
@@ -505,8 +503,8 @@ static void calc_bounding_box_x_x8(int na, const real *x, nbnxn_bb_t *bb)
 }
 
 /* Packed coordinates, bb order xyz0 */
-static void calc_bounding_box_x_x4_halves(int na, const real *x,
-                                          nbnxn_bb_t *bb, nbnxn_bb_t *bbj)
+gmx_unused static void calc_bounding_box_x_x4_halves(int na, const real *x,
+                                                     nbnxn_bb_t *bb, nbnxn_bb_t *bbj)
 {
     // TODO: During SIMDv2 transition only some archs use namespace (remove when done)
     using namespace gmx;
@@ -1008,7 +1006,7 @@ static void sort_columns_simple(const nbnxn_search_t nbs,
 
             fill_cell(nbs, grid, nbat,
                       ash_c, ash_c+na_c, atinfo, x,
-                      NULL);
+                      nullptr);
 
             /* This copy to bbcz is not really necessary.
              * But it allows to use the same grid search code
@@ -1162,7 +1160,7 @@ static void calc_column_indices(nbnxn_grid_t *grid,
         /* Home zone */
         for (int i = n0; i < n1; i++)
         {
-            if (move == NULL || move[i] >= 0)
+            if (move == nullptr || move[i] >= 0)
             {
                 /* We need to be careful with rounding,
                  * particles might be a few bits outside the local zone.
@@ -1409,21 +1407,6 @@ static void calc_cell_indices(const nbnxn_search_t nbs,
     }
 }
 
-static void init_buffer_flags(nbnxn_buffer_flags_t *flags,
-                              int                   natoms)
-{
-    flags->nflag = (natoms + NBNXN_BUFFERFLAG_SIZE - 1)/NBNXN_BUFFERFLAG_SIZE;
-    if (flags->nflag > flags->flag_nalloc)
-    {
-        flags->flag_nalloc = over_alloc_large(flags->nflag);
-        srenew(flags->flag, flags->flag_nalloc);
-    }
-    for (int b = 0; b < flags->nflag; b++)
-    {
-        bitmask_clear(&(flags->flag[b]));
-    }
-}
-
 /* Sets up a grid and puts the atoms on the grid.
  * This function only operates on one domain of the domain decompostion.
  * Note that without domain decomposition there is only one domain.
@@ -1562,111 +1545,16 @@ void nbnxn_put_on_grid_nonlocal(nbnxn_search_t                   nbs,
             c1[d] = zones->size[zone].bb_x1[d];
         }
 
-        nbnxn_put_on_grid(nbs, nbs->ePBC, NULL,
+        nbnxn_put_on_grid(nbs, nbs->ePBC, nullptr,
                           zone, c0, c1,
                           zones->cg_range[zone],
                           zones->cg_range[zone+1],
                           -1,
                           atinfo,
                           x,
-                          0, NULL,
+                          0, nullptr,
                           nb_kernel_type,
                           nbat);
-    }
-}
-
-/* Add simple grid type information to the local super/sub grid */
-void nbnxn_grid_add_simple(nbnxn_search_t    nbs,
-                           nbnxn_atomdata_t *nbat)
-{
-    nbnxn_grid_t *grid;
-    float        *bbcz;
-    nbnxn_bb_t   *bb;
-    int           ncd;
-
-    grid = &nbs->grid[0];
-
-    if (grid->bSimple)
-    {
-        gmx_incons("nbnxn_grid_simple called with a simple grid");
-    }
-
-    ncd = grid->na_sc/NBNXN_CPU_CLUSTER_I_SIZE;
-
-    if (grid->nc*ncd > grid->nc_nalloc_simple)
-    {
-        grid->nc_nalloc_simple = over_alloc_large(grid->nc*ncd);
-        srenew(grid->bbcz_simple, grid->nc_nalloc_simple*NNBSBB_D);
-        srenew(grid->bb_simple, grid->nc_nalloc_simple);
-        srenew(grid->flags_simple, grid->nc_nalloc_simple);
-        if (nbat->XFormat)
-        {
-            sfree_aligned(grid->bbj);
-            snew_aligned(grid->bbj, grid->nc_nalloc_simple/2, 16);
-        }
-    }
-
-    bbcz = grid->bbcz_simple;
-    bb   = grid->bb_simple;
-
-#if GMX_OPENMP && !(defined __clang_analyzer__)
-    // cppcheck-suppress unreadVariable
-    int nthreads = gmx_omp_nthreads_get(emntPairsearch);
-#endif
-
-#pragma omp parallel for num_threads(nthreads) schedule(static)
-    for (int sc = 0; sc < grid->nc; sc++)
-    {
-        try
-        {
-            for (int c = 0; c < ncd; c++)
-            {
-                int tx = sc*ncd + c;
-                int na = NBNXN_CPU_CLUSTER_I_SIZE;
-                while (na > 0 &&
-                       nbat->type[tx*NBNXN_CPU_CLUSTER_I_SIZE+na-1] == nbat->ntype-1)
-                {
-                    na--;
-                }
-
-                if (na > 0)
-                {
-                    switch (nbat->XFormat)
-                    {
-                        case nbatX4:
-                            /* c_packX4==NBNXN_CPU_CLUSTER_I_SIZE, so this is simple */
-                            calc_bounding_box_x_x4(na, nbat->x+tx*STRIDE_P4,
-                                                   bb+tx);
-                            break;
-                        case nbatX8:
-                            /* c_packX8>NBNXN_CPU_CLUSTER_I_SIZE, more complicated */
-                            calc_bounding_box_x_x8(na, nbat->x + atom_to_x_index<c_packX8>(tx*NBNXN_CPU_CLUSTER_I_SIZE),
-                                                   bb+tx);
-                            break;
-                        default:
-                            calc_bounding_box(na, nbat->xstride,
-                                              nbat->x+tx*NBNXN_CPU_CLUSTER_I_SIZE*nbat->xstride,
-                                              bb+tx);
-                            break;
-                    }
-                    bbcz[tx*NNBSBB_D+0] = bb[tx].lower[BB_Z];
-                    bbcz[tx*NNBSBB_D+1] = bb[tx].upper[BB_Z];
-
-                    /* No interaction optimization yet here */
-                    grid->flags_simple[tx] = NBNXN_CI_DO_LJ(0) | NBNXN_CI_DO_COUL(0);
-                }
-                else
-                {
-                    grid->flags_simple[tx] = 0;
-                }
-            }
-        }
-        GMX_CATCH_ALL_AND_EXIT_WITH_FATAL_ERROR;
-    }
-
-    if (grid->bSimple && nbat->XFormat == nbatX8)
-    {
-        combine_bounding_box_pairs(grid, grid->bb_simple);
     }
 }
 

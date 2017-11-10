@@ -15,7 +15,7 @@ These instructions pertain to building |Gromacs|
 Quick and dirty installation
 ----------------------------
 1. Get the latest version of your C and C++ compilers.
-2. Check that you have CMake version |GMX_CMAKE_MINIMUM_REQUIRED_VERSION| or later.
+2. Check that you have CMake version |CMAKE_MINIMUM_REQUIRED_VERSION| or later.
 3. Get and unpack the latest version of the |Gromacs| tarball.
 4. Make a separate build directory and change to it. 
 5. Run ``cmake`` with the path to the source as an argument
@@ -46,6 +46,15 @@ fast. If you want to get the maximum value for your hardware with
 hardware, libraries, and compilers are only going to continue to get
 more complex.
 
+Quick and dirty cluster installation
+------------------------------------
+
+On a cluster where users are expected to be running across multiple
+nodes using MPI, make one installation similar to the above, and
+another using an MPI wrapper compiler and which is `building only
+mdrun`_, because that is the only component of |Gromacs| that uses
+MPI.
+
 Typical installation
 --------------------
 As above, and with further details below, but you should consider
@@ -54,7 +63,7 @@ appropriate value instead of ``xxx`` :
 
 * ``-DCMAKE_C_COMPILER=xxx`` equal to the name of the C99 `Compiler`_ you wish to use (or the environment variable ``CC``)
 * ``-DCMAKE_CXX_COMPILER=xxx`` equal to the name of the C++98 `compiler`_ you wish to use (or the environment variable ``CXX``)
-* ``-DGMX_MPI=on`` to build using `MPI support`_
+* ``-DGMX_MPI=on`` to build using `MPI support`_ (generally good to combine with `building only mdrun`_)
 * ``-DGMX_GPU=on`` to build using nvcc to run using NVIDIA `CUDA GPU acceleration`_ or an OpenCL_ GPU
 * ``-DGMX_USE_OPENCL=on`` to build with OpenCL_ support enabled. ``GMX_GPU`` must also be set.
 * ``-DGMX_SIMD=xxx`` to specify the level of `SIMD support`_ of the node on which |Gromacs| will run
@@ -91,11 +100,14 @@ compiler. We recommend gcc, because it is free, widely available and
 frequently provides the best performance.
 
 You should strive to use the most recent version of your
-compiler. Minimum supported compiler versions are
-* GNU (gcc) 4.6
-* Intel (icc) 14
-* LLVM (clang) 3.4
+compiler. Since we require full C++11 support the minimum supported
+compiler versions are
+
+* GNU (gcc) 4.8.1
+* Intel (icc) 15.0
+* LLVM (clang) 3.3
 * Microsoft (MSVC) 2015
+
 Other compilers may work (Cray, Pathscale, older clang) but do
 not offer competitive performance. We recommend against PGI because
 the performance with C++ is very bad.
@@ -111,7 +123,7 @@ other compilers, read on.
 
 On Linux, both the Intel and clang compiler use the libstdc++ which
 comes with gcc as the default C++ library. For |Gromacs|, we require
-the compiler to support libstc++ version 4.6.1 or higher. To select a
+the compiler to support libstc++ version 4.8.1 or higher. To select a
 particular libstdc++ library, use:
 
 * For Intel: ``-DGMX_STDLIB_CXX_FLAGS=-gcc-name=/path/to/gcc/binary``
@@ -140,6 +152,11 @@ For all non-x86 platforms, your best option is typically to use gcc or
 the vendor's default or recommended compiler, and check for
 specialized information below.
 
+For updated versions of gcc to add to your Linux OS, see
+
+* Ubuntu: `Ubuntu toolchain ppa page`_
+* RHEL/CentOS: `EPEL page`_ or the RedHat Developer Toolset
+
 Compiling with parallelization options
 --------------------------------------
 
@@ -151,8 +168,10 @@ generally built into your compiler and detected automatically.
 GPU support
 ^^^^^^^^^^^
 |Gromacs| has excellent support for NVIDIA GPUs supported via CUDA.
-NVIDIA's CUDA_ version |REQUIRED_CUDA_VERSION| software development kit is required,
-and the latest version is strongly encouraged. NVIDIA GPUs with at
+On Linux with gcc, NVIDIA's CUDA_ version |REQUIRED_CUDA_VERSION|
+software development kit is required, and the latest
+version is strongly encouraged. Using Intel or Microsoft compilers
+requires version 7.0 and 8.0, respectively. NVIDIA GPUs with at
 least NVIDIA compute capability |REQUIRED_CUDA_COMPUTE_CAPABILITY| are
 required, e.g. Fermi, Kepler, Maxwell or Pascal cards. You are strongly recommended to
 get the latest CUDA version and driver supported by your hardware, but
@@ -209,7 +228,7 @@ CMake
 -----
 
 |Gromacs| builds with the CMake build system, requiring at least
-version |GMX_CMAKE_MINIMUM_REQUIRED_VERSION|. You can check whether
+version |CMAKE_MINIMUM_REQUIRED_VERSION|. You can check whether
 CMake is installed, and what version it is, with ``cmake
 --version``. If you need to install CMake, then first check whether
 your platform's package management system provides a suitable version,
@@ -251,23 +270,20 @@ recommends either
 * that you build FFTW from the source code.
 
 If you build FFTW from source yourself, get the most recent version
-and follow the `FFTW installation guide`_. Note that we have recently
-contributed new SIMD optimization for several extra platforms to
-FFTW, which will appear in FFTW-3.3.5 (for now it is available in the
-FFTW repository on github, or you can find a very unofficial prerelease
-version at ftp://ftp.gromacs.org/pub/contrib ).
-Choose the precision for FFTW (i.e. single/float vs. double) to
-match whether you will later use mixed or double precision for
-|Gromacs|. There is no need to compile FFTW with
-threading or MPI support, but it does no harm. On x86 hardware,
-compile with *both* ``--enable-sse2`` and ``--enable-avx`` for
-FFTW-3.3.4 and earlier. As of FFTW-3.3.5 you should also add
-``--enable-avx2``. FFTW will create a fat library with codelets
-for all different instruction sets, and pick the fastest supported
-one at runtime. On IBM Power8, you definitely want the upcoming
-FFTW-3.3.5 and to compile it with ``--enable-vsx`` for SIMD support. If you are
-using a Cray, there is a special modified (commercial) version of
-FFTs using the FFTW interface which can be slightly faster.
+and follow the `FFTW installation guide`_. Choose the precision for
+FFTW (i.e. single/float vs. double) to match whether you will later
+use mixed or double precision for |Gromacs|. There is no need to
+compile FFTW with threading or MPI support, but it does no harm. On
+x86 hardware, compile with *both* ``--enable-sse2`` and
+``--enable-avx`` for FFTW-3.3.4 and earlier. From FFTW-3.3.5, you
+should also add ``--enable-avx2`` also. On Intel chipsets supporting
+512-wide AVX, including KNL, add ``--enable-avx512`` also. FFTW will
+create a fat library with codelets for all different instruction sets,
+and pick the fastest supported one at runtime. On IBM Power8, you
+definitely want FFTW-3.3.5 and to compile it with ``--enable-vsx`` for
+SIMD support. If you are using a Cray, there is a special modified
+(commercial) version of FFTs using the FFTW interface which can be
+slightly faster.
 
 Using MKL
 ^^^^^^^^^
@@ -279,9 +295,10 @@ or similar before running CMake including setting
 If you need to customize this further, use
 
 ::
-    -DGMX_FFT_LIBRARY=mkl
-    -DMKL_LIBRARIES="/full/path/to/libone.so;/full/path/to/libtwo.so"
-    -DMKL_INCLUDE_DIR="/full/path/to/mkl/include"
+
+    cmake -DGMX_FFT_LIBRARY=mkl \
+          -DMKL_LIBRARIES="/full/path/to/libone.so;/full/path/to/libtwo.so" \
+          -DMKL_INCLUDE_DIR="/full/path/to/mkl/include"
 
 The full list and order(!) of libraries you require are found in Intel's MKL documentation for your system.
 
@@ -399,8 +416,8 @@ You cannot attempt to change compilers after the initial run of
 
 .. _non-standard location:
 
-Where to install GROMACS
-^^^^^^^^^^^^^^^^^^^^^^^^
+Where to install |Gromacs|
+^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 |Gromacs| is installed in the directory to which
 ``CMAKE_INSTALL_PREFIX`` points. It may not be the source directory or
@@ -582,7 +599,7 @@ By default, optimized code will be generated for CUDA architectures
 supported by the nvcc compiler (and the |Gromacs| build system). 
 However, it can be beneficial to manually pick the specific CUDA architecture(s)
 to generate code for either to reduce compilation time (and binary size) or to
-target a new architecture not yet supported by the |GROMACS| build system.
+target a new architecture not yet supported by the |Gromacs| build system.
 Setting the desired CUDA architecture(s) and virtual architecture(s)
 can be done using the ``GMX_CUDA_TARGET_SM`` and ``GMX_CUDA_TARGET_COMPUTE``
 variables, respectively. These take a semicolon delimited string with 
@@ -595,23 +612,56 @@ Linux, Mac OS X and Windows operating systems, but Linux is the
 best-tested and supported of these. Linux running on POWER 8, ARM v7 and v8
 CPUs also works well.
 
+Experimental support is available for compiling CUDA code, both for host and
+device, using clang (version 3.9 or later).
+A CUDA toolkit (>= v7.0) is still required but it is used only for GPU device code
+generation and to link against the CUDA runtime library.
+The clang CUDA support simplifies compilation and provides benefits for development
+(e.g. allows the use code sanitizers in CUDA host-code).
+Additionally, using clang for both CPU and GPU compilation can be beneficial
+to avoid compatibility issues between the GNU toolchain and the CUDA toolkit.
+clang for CUDA can be triggered using the ``GMX_CLANG_CUDA=ON`` CMake option.
+Target architectures can be selected with  ``GMX_CUDA_TARGET_SM``,
+virtual architecture code is always embedded for all requested architectures
+(hence GMX_CUDA_TARGET_COMPUTE is ignored).
+Note that this is mainly a developer-oriented feature and it is not recommended
+for production use as the performance can be significantly lower than that
+of code compiled with nvcc (and it has also received less testing).
+However, note that with clang 5.0 the performance gap is significantly narrowed
+(at the time of writing, about 20% slower GPU kernels), so this version
+could be considered in non performance-critical use-cases.
+
+
 OpenCL GPU acceleration
 ^^^^^^^^^^^^^^^^^^^^^^^
-To build Gromacs with OpenCL support enabled, an OpenCL_ SDK
-(e.g. `from AMD <http://developer.amd.com/appsdk>`_) must be installed
-in a path found in ``CMAKE_PREFIX_PATH`` (or via the environment
-variables ``AMDAPPSDKROOT`` or ``CUDA_PATH``), and the following CMake
-flags must be set
+
+The primary target of the |Gromacs| OpenCL support is accelerating simulations
+on AMD hardware, both discrete GPUs and APUs (integrated CPU+GPU chips).
+The |Gromacs| OpenCL on NVIDIA GPUs works, but performance
+and other limitations make it less practical (for details see the user guide).
+
+To build |Gromacs| with OpenCL_ support enabled, two components are
+required: the OpenCL_ headers and the wrapper library that acts
+as a client driver loader (so-called ICD loader).
+The additional, runtime-only dependency is the vendor-specific GPU driver
+for the device targeted. This also contains the OpenCL_ compiler.
+As the GPU compute kernels are compiled  on-demand at run time,
+this vendor-specific compiler and driver is not needed for building |Gromacs|.
+The former, compile-time dependencies are standard components,
+hence stock versions can be obtained from most Linux distribution
+repositories (e.g. ``opencl-headers`` and ``ocl-icd-libopencl1`` on Debian/Ubuntu).
+Only the compatibility with the required OpenCL_ version |REQUIRED_OPENCL_MIN_VERSION|
+needs to be ensured.
+Alternatively, the headers and library can also be obtained from vendor SDKs
+(e.g. `from AMD <http://developer.amd.com/appsdk>`_),
+which must be installed in a path found in ``CMAKE_PREFIX_PATH`` (or via the environment
+variables ``AMDAPPSDKROOT`` or ``CUDA_PATH``).
+
+To trigger an OpenCL_ build the following CMake flags must be set
 
 ::
 
     cmake .. -DGMX_GPU=ON -DGMX_USE_OPENCL=ON
-
-Building |Gromacs| OpenCL support for a CUDA_ GPU works, but see the
-known limitations in the user guide. If you want to
-do so anyway, because NVIDIA OpenCL support is part of the CUDA
-package, a C++ compiler supported by your CUDA installation is
-required.
 
 On Mac OS, an AMD GPU can be used only with OS version 10.10.4 and
 higher; earlier OS versions are known to run incorrectly.
@@ -789,24 +839,14 @@ supported by ``cmake`` (e.g. ``ninja``) also work well.
 
 Building only mdrun
 ^^^^^^^^^^^^^^^^^^^
-Past versions of the build system offered "mdrun" and "install-mdrun"
-targets (similarly for other programs too) to build and install only
-the mdrun program, respectively. Such a build is useful when the
-configuration is only relevant for mdrun (such as with
-parallelization options for MPI, SIMD, GPUs, or on BlueGene or Cray),
-or the length of time for the compile-link-install cycle is relevant
-when developing.
 
 This is now supported with the ``cmake`` option
-``-DGMX_BUILD_MDRUN_ONLY=ON``, which will build a cut-down version of
-``libgromacs`` and/or the mdrun program.
+``-DGMX_BUILD_MDRUN_ONLY=ON``, which will build a different version of
+``libgromacs`` and the ``mdrun`` program.
 Naturally, now ``make install`` installs only those
 products. By default, mdrun-only builds will default to static linking
 against |Gromacs| libraries, because this is generally a good idea for
-the targets for which an mdrun-only build is desirable. If you re-use
-a build tree and change to the mdrun-only build, then you will inherit
-the setting for ``BUILD_SHARED_LIBS`` from the old build, and will be
-warned that you may wish to manage ``BUILD_SHARED_LIBS`` yourself.
+the targets for which an mdrun-only build is desirable.
 
 Installing |Gromacs|
 --------------------
@@ -816,7 +856,7 @@ directory, then you will need permission to write there, and you
 should use super-user privileges only for ``make install`` and
 not the whole procedure.
 
-.. _getting access to GROMACS:
+.. _getting access to |Gromacs|:
 
 Getting access to |Gromacs| after installation
 ----------------------------------------------
@@ -859,7 +899,7 @@ trust your build.
 The simplest way to run the checks is to build |Gromacs| with
 ``-DREGRESSIONTEST_DOWNLOAD``, and run ``make check``.
 |Gromacs| will automatically download and run the tests for you.
-Alternatively, you can download and unpack the GROMACS
+Alternatively, you can download and unpack the |Gromacs|
 regression test suite |gmx-regressiontests-package| tarball yourself
 and use the advanced ``cmake`` option ``REGRESSIONTEST_PATH`` to
 specify the path to the unpacked tarball, which will then be used for
@@ -918,8 +958,9 @@ be run. You can use ``./gmxtest.pl -mpirun srun`` if your command to
 run an MPI program is called ``srun``.
 
 The ``make check`` target also runs integration-style tests that may run
-with MPI if ``GMX_MPI=ON`` was set. To make these work, you may need to
-set the CMake variables ``MPIEXEC``, ``MPIEXEC_NUMPROC_FLAG``, ``NUMPROC``,
+with MPI if ``GMX_MPI=ON`` was set. To make these work with various possible
+MPI libraries, you may need to
+set the CMake variables ``MPIEXEC``, ``MPIEXEC_NUMPROC_FLAG``,
 ``MPIEXEC_PREFLAGS`` and ``MPIEXEC_POSTFLAGS`` so that
 ``mdrun-mpi-test_mpi`` would run on multiple ranks via the shell command
 
@@ -928,8 +969,11 @@ set the CMake variables ``MPIEXEC``, ``MPIEXEC_NUMPROC_FLAG``, ``NUMPROC``,
     ${MPIEXEC} ${MPIEXEC_NUMPROC_FLAG} ${NUMPROC} ${MPIEXEC_PREFLAGS} \
           mdrun-mpi-test_mpi ${MPIEXEC_POSTFLAGS} -otherflags
 
-Typically, one might use variable values ``mpirun``, ``-np``, ``2``, ``''``,
-``''`` respectively, in order to run on two ranks.
+A typical example for SLURM is
+
+::
+
+     cmake .. -DGMX_MPI=on -DMPIEXEC=srun -DMPIEXEC_NUMPROC_FLAG=-n -DMPIEXEC_PREFLAGS= -DMPIEXEC_POSTFLAGS=
 
 
 Testing |Gromacs| for performance
@@ -1010,6 +1054,19 @@ Building on Cray
 you may need to specify the use of static binaries with
 ``-DGMX_BUILD_SHARED_EXE=off``, and you may need to set the F77
 environmental variable to ``ftn`` when compiling FFTW.
+
+Building on Solaris
+-------------------
+
+The built-in |Gromacs| processor detection does not work on Solaris,
+so it is strongly recommended that you build |Gromacs| with
+``-DGMX_HWLOC=on`` and ensure that the ``CMAKE_PREFIX_PATH`` includes
+the path where the hwloc headers and libraries can be found. At least
+version 1.11.8 of hwloc is recommended.
+
+Oracle Developer Studio is not a currently supported compiler (and
+does not currently compile |Gromacs| correctly, perhaps because the
+thread-MPI atomics are incorrectly implemented in |Gromacs|).
 
 Building on BlueGene
 --------------------
@@ -1126,9 +1183,9 @@ much everywhere, it is important that we tell you where we really know
 it works because we have tested it. We do test on Linux, Windows, and
 Mac with a range of compilers and libraries for a range of our
 configuration options. Every commit in our git source code repository
-is currently tested on x86 with gcc versions ranging from 4.6 through
-5.2, and versions 16 of the Intel compiler as well as Clang
-version 3.4 through 3.8. For this, we use a variety of GNU/Linux
+is currently tested on x86 with a number of gcc versions ranging from 4.8.1
+through 6.1, versions 16 of the Intel compiler, and Clang
+versions 3.4 through 3.8. For this, we use a variety of GNU/Linux
 flavors and versions as well as recent versions of Windows. Under
 Windows, we test both MSVC 2015 and version 16 of the Intel compiler.
 For details, you can

@@ -3,7 +3,7 @@
  *
  * Copyright (c) 1991-2000, University of Groningen, The Netherlands.
  * Copyright (c) 2001-2004, The GROMACS development team.
- * Copyright (c) 2013,2014,2015, by the GROMACS development team, led by
+ * Copyright (c) 2013,2014,2015,2016,2017, by the GROMACS development team, led by
  * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
  * and including many others, as listed in the AUTHORS file in the
  * top-level source directory and at http://www.gromacs.org.
@@ -57,6 +57,9 @@ static char *trim_string(const char *s, char *out, int maxlen)
  * Returns a pointer to a static area which contains a copy
  * of s without leading or trailing spaces. Strings are
  * truncated to BUFSIZE positions.
+ *
+ * TODO This partially duplicates code in trim(), but perhaps
+ * replacing symtab with a std::map is a better fix.
  */
 {
     int len, i;
@@ -67,7 +70,7 @@ static char *trim_string(const char *s, char *out, int maxlen)
                   s, strlen(s), maxlen-1);
     }
 
-    for (; (*s) && ((*s) == ' '); s++)
+    for (; (*s) == ' '; s++)
     {
         ;
     }
@@ -97,7 +100,7 @@ int lookup_symtab(t_symtab *symtab, char **name)
 
     base   = 0;
     symbuf = symtab->symbuf;
-    while (symbuf != NULL)
+    while (symbuf != nullptr)
     {
         const int index = name-symbuf->buf;
         if ( ( index >= 0 ) && ( index < symbuf->bufsize ) )
@@ -119,7 +122,7 @@ char **get_symtab_handle(t_symtab *symtab, int name)
     t_symbuf *symbuf;
 
     symbuf = symtab->symbuf;
-    while (symbuf != NULL)
+    while (symbuf != nullptr)
     {
         if (name < symbuf->bufsize)
         {
@@ -132,7 +135,7 @@ char **get_symtab_handle(t_symtab *symtab, int name)
         }
     }
     gmx_fatal(FARGS, "symtab get_symtab_handle %d not found", name);
-    return NULL;
+    return nullptr;
 }
 
 static t_symbuf *new_symbuf(void)
@@ -142,7 +145,7 @@ static t_symbuf *new_symbuf(void)
     snew(symbuf, 1);
     symbuf->bufsize = TABLESIZE;
     snew(symbuf->buf, symbuf->bufsize);
-    symbuf->next = NULL;
+    symbuf->next = nullptr;
 
     return symbuf;
 }
@@ -153,7 +156,7 @@ static char **enter_buf(t_symtab *symtab, char *name)
     t_symbuf    *symbuf;
     gmx_bool     bCont;
 
-    if (symtab->symbuf == NULL)
+    if (symtab->symbuf == nullptr)
     {
         symtab->symbuf = new_symbuf();
     }
@@ -163,7 +166,7 @@ static char **enter_buf(t_symtab *symtab, char *name)
     {
         for (i = 0; (i < symbuf->bufsize); i++)
         {
-            if (symbuf->buf[i] == NULL)
+            if (symbuf->buf[i] == nullptr)
             {
                 symtab->nr++;
                 symbuf->buf[i] = gmx_strdup(name);
@@ -174,7 +177,7 @@ static char **enter_buf(t_symtab *symtab, char *name)
                 return &(symbuf->buf[i]);
             }
         }
-        if (symbuf->next != NULL)
+        if (symbuf->next != nullptr)
         {
             symbuf = symbuf->next;
             bCont  = TRUE;
@@ -204,7 +207,7 @@ char **put_symtab(t_symtab *symtab, const char *name)
 void open_symtab(t_symtab *symtab)
 {
     symtab->nr     = 0;
-    symtab->symbuf = NULL;
+    symtab->symbuf = nullptr;
 }
 
 void close_symtab(t_symtab gmx_unused *symtab)
@@ -218,7 +221,7 @@ void done_symtab(t_symtab *symtab)
 
     close_symtab(symtab);
     symbuf = symtab->symbuf;
-    while (symbuf != NULL)
+    while (symbuf != nullptr)
     {
         for (i = 0; (i < symbuf->bufsize) && (i < symtab->nr); i++)
         {
@@ -230,7 +233,7 @@ void done_symtab(t_symtab *symtab)
         symbuf  = symbuf->next;
         sfree(freeptr);
     }
-    symtab->symbuf = NULL;
+    symtab->symbuf = nullptr;
     if (symtab->nr != 0)
     {
         gmx_incons("Freeing symbol table (symtab) structure");
@@ -243,14 +246,14 @@ void free_symtab(t_symtab *symtab)
 
     close_symtab(symtab);
     symbuf = symtab->symbuf;
-    while (symbuf != NULL)
+    while (symbuf != nullptr)
     {
         symtab->nr -= std::min(symbuf->bufsize, symtab->nr);
         freeptr     = symbuf;
         symbuf      = symbuf->next;
         sfree(freeptr);
     }
-    symtab->symbuf = NULL;
+    symtab->symbuf = nullptr;
     if (symtab->nr != 0)
     {
         gmx_incons("Freeing symbol table (symtab) structure");
@@ -268,7 +271,7 @@ void pr_symtab(FILE *fp, int indent, const char *title, t_symtab *symtab)
         i      = 0;
         nr     = symtab->nr;
         symbuf = symtab->symbuf;
-        while (symbuf != NULL)
+        while (symbuf != nullptr)
         {
             for (j = 0; (j < symbuf->bufsize) && (j < nr); j++)
             {

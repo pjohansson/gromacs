@@ -3,7 +3,7 @@
  *
  * Copyright (c) 1991-2000, University of Groningen, The Netherlands.
  * Copyright (c) 2001-2004, The GROMACS development team.
- * Copyright (c) 2013,2014,2015,2016, by the GROMACS development team, led by
+ * Copyright (c) 2013,2014,2015,2016,2017, by the GROMACS development team, led by
  * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
  * and including many others, as listed in the AUTHORS file in the
  * top-level source directory and at http://www.gromacs.org.
@@ -59,6 +59,7 @@
 #include "gromacs/mdtypes/inputrec.h"
 #include "gromacs/mdtypes/md_enums.h"
 #include "gromacs/topology/ifunc.h"
+#include "gromacs/topology/mtop_lookup.h"
 #include "gromacs/topology/mtop_util.h"
 #include "gromacs/topology/topology.h"
 #include "gromacs/utility/arraysize.h"
@@ -67,8 +68,8 @@
 #include "gromacs/utility/gmxassert.h"
 #include "gromacs/utility/pleasecite.h"
 #include "gromacs/utility/smalloc.h"
+#include "gromacs/utility/strconvert.h"
 
-static real       minthird = -1.0/3.0, minsixth = -1.0/6.0;
 static const int  NOTSET   = -23451;
 
 typedef struct {
@@ -97,71 +98,17 @@ typedef struct {
     gmx_bool         bHaveSums;
 } enerdata_t;
 
-static double mypow(double x, double y)
+static void done_enerdata_t(int nset, enerdata_t *edat)
 {
-    if (x > 0)
+    sfree(edat->step);
+    sfree(edat->steps);
+    sfree(edat->points);
+    for (int i = 0; i < nset; i++)
     {
-        return std::pow(x, y);
+        sfree(edat->s[i].ener);
+        sfree(edat->s[i].es);
     }
-    else
-    {
-        return 0.0;
-    }
-}
-
-static int *select_it(int nre, char *nm[], int *nset)
-{
-    gmx_bool *bE;
-    int       n, k, j, i;
-    int      *set;
-    gmx_bool  bVerbose = TRUE;
-
-    if ((getenv("GMX_ENER_VERBOSE")) != NULL)
-    {
-        bVerbose = FALSE;
-    }
-
-    fprintf(stderr, "Select the terms you want from the following list\n");
-    fprintf(stderr, "End your selection with 0\n");
-
-    if (bVerbose)
-    {
-        for (k = 0; (k < nre); )
-        {
-            for (j = 0; (j < 4) && (k < nre); j++, k++)
-            {
-                fprintf(stderr, " %3d=%14s", k+1, nm[k]);
-            }
-            fprintf(stderr, "\n");
-        }
-    }
-
-    snew(bE, nre);
-    do
-    {
-        if (1 != scanf("%d", &n))
-        {
-            gmx_fatal(FARGS, "Error reading user input");
-        }
-        if ((n > 0) && (n <= nre))
-        {
-            bE[n-1] = TRUE;
-        }
-    }
-    while (n != 0);
-
-    snew(set, nre);
-    for (i = (*nset) = 0; (i < nre); i++)
-    {
-        if (bE[i])
-        {
-            set[(*nset)++] = i;
-        }
-    }
-
-    sfree(bE);
-
-    return set;
+    sfree(edat->s);
 }
 
 static void chomp(char *buf)
@@ -184,9 +131,9 @@ static int *select_by_name(int nre, gmx_enxnm_t *nm, int *nset)
     char       *ptr, buf[STRLEN];
     const char *fm4   = "%3d  %-14s";
     const char *fm2   = "%3d  %-34s";
-    char      **newnm = NULL;
+    char      **newnm = nullptr;
 
-    if ((getenv("GMX_ENER_VERBOSE")) != NULL)
+    if ((getenv("GMX_ENER_VERBOSE")) != nullptr)
     {
         bVerbose = FALSE;
     }
@@ -203,7 +150,7 @@ static int *select_by_name(int nre, gmx_enxnm_t *nm, int *nset)
     {
         newnm[k] = gmx_strdup(nm[k].name);
         /* Insert dashes in all the names */
-        while ((ptr = std::strchr(newnm[k], ' ')) != NULL)
+        while ((ptr = std::strchr(newnm[k], ' ')) != nullptr)
         {
             *ptr = '-';
         }
@@ -323,7 +270,7 @@ static int *select_by_name(int nre, gmx_enxnm_t *nm, int *nset)
                     }
                 }
                 /* Look for the first space, and remove spaces from there */
-                if ((ptr = std::strchr(ptr, ' ')) != NULL)
+                if ((ptr = std::strchr(ptr, ' ')) != nullptr)
                 {
                     trim(ptr);
                 }
@@ -364,215 +311,8 @@ static void get_dhdl_parms(const char *topnm, t_inputrec *ir)
     matrix      box;
 
     /* all we need is the ir to be able to write the label */
-    read_tpx(topnm, ir, box, &natoms, NULL, NULL, &mtop);
-}
-
-static void get_orires_parms(const char *topnm,
-                             int *nor, int *nex, int **label, real **obs)
-{
-    gmx_mtop_t      mtop;
-    gmx_localtop_t *top;
-    t_inputrec      ir;
-    t_iparams      *ip;
-    int             natoms, i;
-    t_iatom        *iatom;
-    int             nb;
-    matrix          box;
-
-    read_tpx(topnm, &ir, box, &natoms, NULL, NULL, &mtop);
-    top = gmx_mtop_generate_local_top(&mtop, ir.efep != efepNO);
-
-    ip       = top->idef.iparams;
-    iatom    = top->idef.il[F_ORIRES].iatoms;
-
-    /* Count how many distance restraint there are... */
-    nb = top->idef.il[F_ORIRES].nr;
-    if (nb == 0)
-    {
-        gmx_fatal(FARGS, "No orientation restraints in topology!\n");
-    }
-
-    *nor = nb/3;
-    *nex = 0;
-    snew(*label, *nor);
-    snew(*obs, *nor);
-    for (i = 0; i < nb; i += 3)
-    {
-        (*label)[i/3] = ip[iatom[i]].orires.label;
-        (*obs)[i/3]   = ip[iatom[i]].orires.obs;
-        if (ip[iatom[i]].orires.ex >= *nex)
-        {
-            *nex = ip[iatom[i]].orires.ex+1;
-        }
-    }
-    fprintf(stderr, "Found %d orientation restraints with %d experiments",
-            *nor, *nex);
-}
-
-static int get_bounds(const char *topnm,
-                      real **bounds, int **index, int **dr_pair, int *npairs,
-                      gmx_mtop_t *mtop, gmx_localtop_t **ltop, t_inputrec *ir)
-{
-    gmx_localtop_t *top;
-    t_functype     *functype;
-    t_iparams      *ip;
-    int             natoms, i, j, k, type, ftype, natom;
-    t_ilist        *disres;
-    t_iatom        *iatom;
-    real           *b;
-    int            *ind, *pair;
-    int             nb, label1;
-    matrix          box;
-
-    read_tpx(topnm, ir, box, &natoms, NULL, NULL, mtop);
-    snew(*ltop, 1);
-    top   = gmx_mtop_generate_local_top(mtop, ir->efep != efepNO);
-    *ltop = top;
-
-    functype = top->idef.functype;
-    ip       = top->idef.iparams;
-
-    /* Count how many distance restraint there are... */
-    nb = top->idef.il[F_DISRES].nr;
-    if (nb == 0)
-    {
-        gmx_fatal(FARGS, "No distance restraints in topology!\n");
-    }
-
-    /* Allocate memory */
-    snew(b, nb);
-    snew(ind, nb);
-    snew(pair, nb+1);
-
-    /* Fill the bound array */
-    nb = 0;
-    for (i = 0; (i < top->idef.ntypes); i++)
-    {
-        ftype = functype[i];
-        if (ftype == F_DISRES)
-        {
-
-            label1  = ip[i].disres.label;
-            b[nb]   = ip[i].disres.up1;
-            ind[nb] = label1;
-            nb++;
-        }
-    }
-    *bounds = b;
-
-    /* Fill the index array */
-    label1  = -1;
-    disres  = &(top->idef.il[F_DISRES]);
-    iatom   = disres->iatoms;
-    for (i = j = k = 0; (i < disres->nr); )
-    {
-        type  = iatom[i];
-        ftype = top->idef.functype[type];
-        natom = interaction_function[ftype].nratoms+1;
-        if (label1 != top->idef.iparams[type].disres.label)
-        {
-            pair[j] = k;
-            label1  = top->idef.iparams[type].disres.label;
-            j++;
-        }
-        k++;
-        i += natom;
-    }
-    pair[j]  = k;
-    *npairs  = k;
-    if (j != nb)
-    {
-        gmx_incons("get_bounds for distance restraints");
-    }
-
-    *index   = ind;
-    *dr_pair = pair;
-
-    return nb;
-}
-
-static void calc_violations(real rt[], real rav3[], int nb, int index[],
-                            real bounds[], real *viol, double *st, double *sa)
-{
-    const   real sixth = 1.0/6.0;
-    int          i, j;
-    double       rsum, rav, sumaver, sumt;
-
-    sumaver = 0;
-    sumt    = 0;
-    for (i = 0; (i < nb); i++)
-    {
-        rsum = 0.0;
-        rav  = 0.0;
-        for (j = index[i]; (j < index[i+1]); j++)
-        {
-            if (viol)
-            {
-                viol[j] += mypow(rt[j], -3.0);
-            }
-            rav     += gmx::square(rav3[j]);
-            rsum    += mypow(rt[j], -6);
-        }
-        rsum    = std::max(0.0, mypow(rsum, -sixth)-bounds[i]);
-        rav     = std::max(0.0, mypow(rav, -sixth)-bounds[i]);
-
-        sumt    += rsum;
-        sumaver += rav;
-    }
-    *st = sumt;
-    *sa = sumaver;
-}
-
-static void analyse_disre(const char *voutfn,    int nframes,
-                          real violaver[], real bounds[], int index[],
-                          int pair[],      int nbounds,
-                          const gmx_output_env_t *oenv)
-{
-    FILE   *vout;
-    double  sum, sumt, sumaver;
-    int     i, j;
-
-    /* Subtract bounds from distances, to calculate violations */
-    calc_violations(violaver, violaver,
-                    nbounds, pair, bounds, NULL, &sumt, &sumaver);
-
-#ifdef DEBUG
-    fprintf(stdout, "\nSum of violations averaged over simulation: %g nm\n",
-            sumaver);
-    fprintf(stdout, "Largest violation averaged over simulation: %g nm\n\n",
-            sumt);
-#endif
-    vout = xvgropen(voutfn, "r\\S-3\\N average violations", "DR Index", "nm",
-                    oenv);
-    sum  = 0.0;
-    sumt = 0.0;
-    for (i = 0; (i < nbounds); i++)
-    {
-        /* Do ensemble averaging */
-        sumaver = 0;
-        for (j = pair[i]; (j < pair[i+1]); j++)
-        {
-            sumaver += gmx::square(violaver[j]/nframes);
-        }
-        sumaver = std::max(0.0, mypow(sumaver, minsixth)-bounds[i]);
-
-        sumt   += sumaver;
-        sum     = std::max(sum, sumaver);
-        fprintf(vout, "%10d  %10.5e\n", index[i], sumaver);
-    }
-#ifdef DEBUG
-    for (j = 0; (j < dr.ndr); j++)
-    {
-        fprintf(vout, "%10d  %10.5e\n", j, mypow(violaver[j]/nframes, minthird));
-    }
-#endif
-    xvgrclose(vout);
-
-    fprintf(stdout, "\nSum of violations averaged over simulation: %g nm\n",
-            sumt);
-    fprintf(stdout, "Largest violation averaged over simulation: %g nm\n\n", sum);
-
-    do_view(oenv, voutfn, "-graphtype bar");
+    read_tpx(topnm, ir, box, &natoms, nullptr, nullptr, &mtop);
+    done_mtop(&mtop);
 }
 
 static void einstein_visco(const char *fn, const char *fni, int nsets,
@@ -920,24 +660,17 @@ static enerdata_t *calc_sum(int nset, enerdata_t *edat, int nbmin, int nbmax)
     return esum;
 }
 
-static char *ee_pr(double ee, char *buf)
+static void ee_pr(double ee, int buflen, char *buf)
 {
-    char   tmp[100];
-    double rnd;
-
-    if (ee < 0)
-    {
-        sprintf(buf, "%s", "--");
-    }
-    else
+    snprintf(buf, buflen, "%s", "--");
+    if (ee >= 0)
     {
         /* Round to two decimals by printing. */
-        sprintf(tmp, "%.1e", ee);
-        sscanf(tmp, "%lf", &rnd);
-        sprintf(buf, "%g", rnd);
+        char   tmp[100];
+        snprintf(tmp, sizeof(tmp), "%.1e", ee);
+        double rnd = gmx::doubleFromString(tmp);
+        snprintf(buf, buflen, "%g", rnd);
     }
-
-    return buf;
 }
 
 static void remove_drift(int nset, int nbmin, int nbmax, real dt, enerdata_t *edat)
@@ -956,7 +689,7 @@ static void remove_drift(int nset, int nbmin, int nbmax, real dt, enerdata_t *ed
         {
             delta = edat->s[i].slope*dt;
 
-            if (NULL != debug)
+            if (nullptr != debug)
             {
                 fprintf(debug, "slope for set %d is %g\n", i, edat->s[i].slope);
             }
@@ -1076,7 +809,7 @@ static void calc_fluctuation_props(FILE *fp,
         fprintf(fp, "WARNING: Please verify that your simulations are converged and perform\n"
                 "a block-averaging error analysis (not implemented in g_energy yet)\n");
 
-        if (debug != NULL)
+        if (debug != nullptr)
         {
             if (varv != NOTSET)
             {
@@ -1129,6 +862,7 @@ static void calc_fluctuation_props(FILE *fp,
 }
 
 static void analyse_ener(gmx_bool bCorr, const char *corrfn,
+                         const char *eviscofn, const char *eviscoifn,
                          gmx_bool bFee, gmx_bool bSum, gmx_bool bFluct,
                          gmx_bool bVisco, const char *visfn, int nmol,
                          gmx_int64_t start_step, double start_t,
@@ -1144,10 +878,10 @@ static void analyse_ener(gmx_bool bCorr, const char *corrfn,
     FILE           *fp;
     /* Check out the printed manual for equations! */
     double          Dt, aver, stddev, errest, delta_t, totaldrift;
-    enerdata_t     *esum = NULL;
+    enerdata_t     *esum = nullptr;
     real            integral, intBulk, Temp = 0, Pres = 0;
     real            pr_aver, pr_stddev, pr_errest;
-    double          beta = 0, expE, expEtot, *fee = NULL;
+    double          beta = 0, expE, expEtot, *fee = nullptr;
     gmx_int64_t     nsteps;
     int             nexact, nnotexact;
     int             i, j, nout;
@@ -1262,15 +996,15 @@ static void analyse_ener(gmx_bool bCorr, const char *corrfn,
 
                 fee[i] = std::log(expE/edat->nframes)/beta + aver/nmol;
             }
-            if (std::strstr(leg[i], "empera") != NULL)
+            if (std::strstr(leg[i], "empera") != nullptr)
             {
                 Temp = aver;
             }
-            else if (std::strstr(leg[i], "olum") != NULL)
+            else if (std::strstr(leg[i], "olum") != nullptr)
             {
                 Vaver = aver;
             }
-            else if (std::strstr(leg[i], "essure") != NULL)
+            else if (std::strstr(leg[i], "essure") != nullptr)
             {
                 Pres = aver;
             }
@@ -1294,8 +1028,9 @@ static void analyse_ener(gmx_bool bCorr, const char *corrfn,
                 totaldrift /= nmol;
             }
 
+            ee_pr(pr_errest, sizeof(eebuf), eebuf);
             fprintf(stdout, "%-24s %10g %10s %10g %10g",
-                    leg[i], pr_aver, ee_pr(pr_errest, eebuf), pr_stddev, totaldrift);
+                    leg[i], pr_aver, eebuf, pr_stddev, totaldrift);
             if (bFee)
             {
                 fprintf(stdout, "  %10g", fee[i]);
@@ -1314,8 +1049,9 @@ static void analyse_ener(gmx_bool bCorr, const char *corrfn,
         if (bSum)
         {
             totaldrift = (edat->nsteps - 1)*esum->s[0].slope;
+            ee_pr(esum->s[0].ee/nmol, sizeof(eebuf), eebuf);
             fprintf(stdout, "%-24s %10g %10s %10s %10g  (%s)",
-                    "Total", esum->s[0].av/nmol, ee_pr(esum->s[0].ee/nmol, eebuf),
+                    "Total", esum->s[0].av/nmol, eebuf,
                     "--", totaldrift/nmol, enm[set[0]].unit);
             /* pr_aver,pr_stddev,a,totaldrift */
             if (bFee)
@@ -1383,7 +1119,7 @@ static void analyse_ener(gmx_bool bCorr, const char *corrfn,
                 eneint[2][i+1] = eneint[2][i] + 0.5*(edat->s[5].es[i].sum + edat->s[7].es[i].sum)*Dt/edat->points[i];
             }
 
-            einstein_visco("evisco.xvg", "eviscoi.xvg",
+            einstein_visco(eviscofn, eviscoifn,
                            3, edat->nframes+1, eneint, Vaver, Temp, Dt, oenv);
 
             for (i = 0; i < 3; i++)
@@ -1485,13 +1221,13 @@ static void fec(const char *ene2fn, const char *runavgfn,
     real         aver, beta;
     real       **eneset2;
     double       dE, sum;
-    gmx_enxnm_t *enm = NULL;
+    gmx_enxnm_t *enm = nullptr;
     t_enxframe  *fr;
     char         buf[22];
 
     /* read second energy file */
     snew(fr, 1);
-    enm = NULL;
+    enm = nullptr;
     enx = open_enx(ene2fn, "r");
     do_enxnms(enx, &(fr->nre), &enm);
 
@@ -1529,7 +1265,7 @@ static void fec(const char *ene2fn, const char *runavgfn,
                         srenew(eneset2[i], maxenergy);
                     }
                 }
-                GMX_RELEASE_ASSERT(time != NULL, "trying to dereference NULL time pointer");
+                GMX_RELEASE_ASSERT(time != nullptr, "trying to dereference NULL time pointer");
 
                 if (fr->t != time[nenergy2])
                 {
@@ -1555,7 +1291,7 @@ static void fec(const char *ene2fn, const char *runavgfn,
     nenergy = std::min(edat->nframes, nenergy2);
 
     /* calculate fe difference dF = -kT ln < exp(-(E_B-E_A)/kT) >_A */
-    fp = NULL;
+    fp = nullptr;
     if (runavgfn)
     {
         fp = xvgropen(runavgfn, "Running average free energy difference",
@@ -1607,8 +1343,8 @@ static void do_dhdl(t_enxframe *fr, const t_inputrec *ir, FILE **fp_dhdl,
     /* coll data */
     double       temp              = 0, start_time = 0, delta_time = 0, start_lambda = 0;
     static int   setnr             = 0;
-    double      *native_lambda_vec = NULL;
-    const char **lambda_components = NULL;
+    double      *native_lambda_vec = nullptr;
+    const char **lambda_components = nullptr;
     int          n_lambda_vec      = 0;
     bool         firstPass         = true;
 
@@ -1664,7 +1400,9 @@ static void do_dhdl(t_enxframe *fr, const t_inputrec *ir, FILE **fp_dhdl,
             }
         }
     }
-
+    // Clean up!
+    sfree(native_lambda_vec);
+    sfree(lambda_components);
     if (nblock_hist == 0 && nblock_dh == 0)
     {
         /* don't do anything */
@@ -1843,8 +1581,8 @@ static void do_dhdl(t_enxframe *fr, const t_inputrec *ir, FILE **fp_dhdl,
 int gmx_energy(int argc, char *argv[])
 {
     const char        *desc[] = {
-        "[THISMODULE] extracts energy components or distance restraint",
-        "data from an energy file. The user is prompted to interactively",
+        "[THISMODULE] extracts energy components",
+        "from an energy file. The user is prompted to interactively",
         "select the desired energy terms.[PAR]",
 
         "Average, RMSD, and drift are calculated with full precision from the",
@@ -1882,29 +1620,6 @@ int gmx_energy(int argc, char *argv[])
         "You always need to set the number of molecules [TT]-nmol[tt].",
         "The C[SUB]p[sub]/C[SUB]v[sub] computations do [BB]not[bb] include any corrections",
         "for quantum effects. Use the [gmx-dos] program if you need that (and you do).[PAR]"
-        "When the [TT]-viol[tt] option is set, the time averaged",
-        "violations are plotted and the running time-averaged and",
-        "instantaneous sum of violations are recalculated. Additionally",
-        "running time-averaged and instantaneous distances between",
-        "selected pairs can be plotted with the [TT]-pairs[tt] option.[PAR]",
-
-        "Options [TT]-ora[tt], [TT]-ort[tt], [TT]-oda[tt], [TT]-odr[tt] and",
-        "[TT]-odt[tt] are used for analyzing orientation restraint data.",
-        "The first two options plot the orientation, the last three the",
-        "deviations of the orientations from the experimental values.",
-        "The options that end on an 'a' plot the average over time",
-        "as a function of restraint. The options that end on a 't'",
-        "prompt the user for restraint label numbers and plot the data",
-        "as a function of time. Option [TT]-odr[tt] plots the RMS",
-        "deviation as a function of restraint.",
-        "When the run used time or ensemble averaged orientation restraints,",
-        "option [TT]-orinst[tt] can be used to analyse the instantaneous,",
-        "not ensemble-averaged orientations and deviations instead of",
-        "the time and ensemble averages.[PAR]",
-
-        "Option [TT]-oten[tt] plots the eigenvalues of the molecular order",
-        "tensor for each orientation restraint experiment. With option",
-        "[TT]-ovec[tt] also the eigenvectors are plotted.[PAR]",
 
         "Option [TT]-odh[tt] extracts and plots the free energy data",
         "(Hamiltoian differences and/or the Hamiltonian derivative dhdl)",
@@ -1976,69 +1691,47 @@ int gmx_energy(int argc, char *argv[])
         { "-ovec", FALSE, etBOOL, {&bOvec},
           "Also plot the eigenvectors with [TT]-oten[tt]" }
     };
-    const char       * drleg[] = {
-        "Running average",
-        "Instantaneous"
-    };
     static const char *setnm[] = {
         "Pres-XX", "Pres-XY", "Pres-XZ", "Pres-YX", "Pres-YY",
         "Pres-YZ", "Pres-ZX", "Pres-ZY", "Pres-ZZ", "Temperature",
         "Volume",  "Pressure"
     };
 
-    FILE              *out     = NULL, *fp_pairs = NULL, *fort = NULL, *fodt = NULL, *foten = NULL;
-    FILE              *fp_dhdl = NULL;
+    FILE              *out     = nullptr;
+    FILE              *fp_dhdl = nullptr;
     ener_file_t        fp;
     int                timecheck = 0;
-    gmx_mtop_t         mtop;
-    gmx_localtop_t    *top = NULL;
-    t_inputrec         ir;
     enerdata_t         edat;
-    gmx_enxnm_t       *enm = NULL;
-    t_enxframe        *frame, *fr = NULL;
+    gmx_enxnm_t       *enm = nullptr;
+    t_enxframe        *frame, *fr = nullptr;
     int                cur = 0;
 #define NEXT (1-cur)
-    int                nre, teller, teller_disre, nfr;
+    int                nre, teller, nfr;
     gmx_int64_t        start_step;
-    int                nor = 0, nex = 0, norfr = 0, enx_i = 0;
     real               start_t;
-    real              *bounds  = NULL, *violaver = NULL, *oobs = NULL, *orient = NULL, *odrms = NULL;
-    int               *index   = NULL, *pair = NULL, norsel = 0, *orsel = NULL, *or_label = NULL;
-    int                nbounds = 0, npairs;
-    gmx_bool           bDisRe, bDRAll, bORA, bORT, bODA, bODR, bODT, bORIRE, bOTEN, bDHDL;
+    gmx_bool           bDHDL;
     gmx_bool           bFoundStart, bCont, bVisco;
-    double             sum, sumaver, sumt, dbl;
-    double            *time = NULL;
+    double             sum, dbl;
+    double            *time = nullptr;
     real               Vaver;
-    int               *set     = NULL, i, j, k, nset, sss;
-    gmx_bool          *bIsEner = NULL;
-    char             **pairleg, **odtleg, **otenleg;
-    char             **leg = NULL;
-    char              *anm_j, *anm_k, *resnm_j, *resnm_k;
-    int                resnr_j, resnr_k;
-    const char        *orinst_sub = "@ subtitle \"instantaneous\"\n";
+    int               *set     = nullptr, i, j, nset, sss;
+    gmx_bool          *bIsEner = nullptr;
+    char             **leg     = nullptr;
     char               buf[256];
     gmx_output_env_t  *oenv;
-    t_enxblock        *blk       = NULL;
-    t_enxblock        *blk_disre = NULL;
-    int                ndisre    = 0;
     int                dh_blocks = 0, dh_hists = 0, dh_samples = 0, dh_lambdas = 0;
 
     t_filenm           fnm[] = {
-        { efEDR, "-f",    NULL,      ffREAD  },
-        { efEDR, "-f2",   NULL,      ffOPTRD },
-        { efTPR, "-s",    NULL,      ffOPTRD },
+        { efEDR, "-f",    nullptr,      ffREAD  },
+        { efEDR, "-f2",   nullptr,      ffOPTRD },
+        { efTPR, "-s",    nullptr,      ffOPTRD },
         { efXVG, "-o",    "energy",  ffWRITE },
         { efXVG, "-viol", "violaver", ffOPTWR },
         { efXVG, "-pairs", "pairs",   ffOPTWR },
-        { efXVG, "-ora",  "orienta", ffOPTWR },
-        { efXVG, "-ort",  "orientt", ffOPTWR },
-        { efXVG, "-oda",  "orideva", ffOPTWR },
-        { efXVG, "-odr",  "oridevr", ffOPTWR },
-        { efXVG, "-odt",  "oridevt", ffOPTWR },
-        { efXVG, "-oten", "oriten",  ffOPTWR },
         { efXVG, "-corr", "enecorr", ffOPTWR },
         { efXVG, "-vis",  "visco",   ffOPTWR },
+        { efXVG, "-evisco",  "evisco",  ffOPTWR },
+        { efXVG, "-eviscoi", "eviscoi", ffOPTWR },
         { efXVG, "-ravg", "runavgdf", ffOPTWR },
         { efXVG, "-odh",  "dhdl", ffOPTWR }
     };
@@ -2050,20 +1743,12 @@ int gmx_energy(int argc, char *argv[])
     ppa    = add_acf_pargs(&npargs, pa);
     if (!parse_common_args(&argc, argv,
                            PCA_CAN_VIEW | PCA_CAN_BEGIN | PCA_CAN_END,
-                           NFILE, fnm, npargs, ppa, asize(desc), desc, 0, NULL, &oenv))
+                           NFILE, fnm, npargs, ppa, asize(desc), desc, 0, nullptr, &oenv))
     {
+        sfree(ppa);
         return 0;
     }
 
-    bDRAll = opt2bSet("-pairs", NFILE, fnm);
-    bDisRe = opt2bSet("-viol", NFILE, fnm) || bDRAll;
-    bORA   = opt2bSet("-ora", NFILE, fnm);
-    bORT   = opt2bSet("-ort", NFILE, fnm);
-    bODA   = opt2bSet("-oda", NFILE, fnm);
-    bODR   = opt2bSet("-odr", NFILE, fnm);
-    bODT   = opt2bSet("-odt", NFILE, fnm);
-    bORIRE = bORA || bORT || bODA || bODR || bODT;
-    bOTEN  = opt2bSet("-oten", NFILE, fnm);
     bDHDL  = opt2bSet("-odh", NFILE, fnm);
 
     nset = 0;
@@ -2076,7 +1761,10 @@ int gmx_energy(int argc, char *argv[])
 
     bVisco = opt2bSet("-vis", NFILE, fnm);
 
-    if ((!bDisRe) && (!bDHDL))
+    t_inputrec  irInstance;
+    t_inputrec *ir = &irInstance;
+
+    if (!bDHDL)
     {
         if (bVisco)
         {
@@ -2162,176 +1850,29 @@ int gmx_energy(int argc, char *argv[])
                     (gmx_strcasecmp(interaction_function[j].longname, leg[i]) == 0);
             }
         }
-
         if (bPrAll && nset > 1)
         {
             gmx_fatal(FARGS, "Printing averages can only be done when a single set is selected");
         }
 
-        time = NULL;
-
-        if (bORIRE || bOTEN)
-        {
-            get_orires_parms(ftp2fn(efTPR, NFILE, fnm), &nor, &nex, &or_label, &oobs);
-        }
-
-        if (bORIRE)
-        {
-            if (bOrinst)
-            {
-                enx_i = enxORI;
-            }
-            else
-            {
-                enx_i = enxOR;
-            }
-
-            if (bORA || bODA)
-            {
-                snew(orient, nor);
-            }
-            if (bODR)
-            {
-                snew(odrms, nor);
-            }
-            if (bORT || bODT)
-            {
-                fprintf(stderr, "Select the orientation restraint labels you want (-1 is all)\n");
-                fprintf(stderr, "End your selection with 0\n");
-                j     = -1;
-                orsel = NULL;
-                do
-                {
-                    j++;
-                    srenew(orsel, j+1);
-                    if (1 != scanf("%d", &(orsel[j])))
-                    {
-                        gmx_fatal(FARGS, "Error reading user input");
-                    }
-                }
-                while (orsel[j] > 0);
-                if (orsel[0] == -1)
-                {
-                    fprintf(stderr, "Selecting all %d orientation restraints\n", nor);
-                    norsel = nor;
-                    srenew(orsel, nor);
-                    for (i = 0; i < nor; i++)
-                    {
-                        orsel[i] = i;
-                    }
-                }
-                else
-                {
-                    /* Build the selection */
-                    norsel = 0;
-                    for (i = 0; i < j; i++)
-                    {
-                        for (k = 0; k < nor; k++)
-                        {
-                            if (or_label[k] == orsel[i])
-                            {
-                                orsel[norsel] = k;
-                                norsel++;
-                                break;
-                            }
-                        }
-                        if (k == nor)
-                        {
-                            fprintf(stderr, "Orientation restraint label %d not found\n",
-                                    orsel[i]);
-                        }
-                    }
-                }
-                snew(odtleg, norsel);
-                for (i = 0; i < norsel; i++)
-                {
-                    snew(odtleg[i], 256);
-                    sprintf(odtleg[i], "%d", or_label[orsel[i]]);
-                }
-                if (bORT)
-                {
-                    fort = xvgropen(opt2fn("-ort", NFILE, fnm), "Calculated orientations",
-                                    "Time (ps)", "", oenv);
-                    if (bOrinst && output_env_get_print_xvgr_codes(oenv))
-                    {
-                        fprintf(fort, "%s", orinst_sub);
-                    }
-                    xvgr_legend(fort, norsel, (const char**)odtleg, oenv);
-                }
-                if (bODT)
-                {
-                    fodt = xvgropen(opt2fn("-odt", NFILE, fnm),
-                                    "Orientation restraint deviation",
-                                    "Time (ps)", "", oenv);
-                    if (bOrinst && output_env_get_print_xvgr_codes(oenv))
-                    {
-                        fprintf(fodt, "%s", orinst_sub);
-                    }
-                    xvgr_legend(fodt, norsel, (const char**)odtleg, oenv);
-                }
-            }
-        }
-        if (bOTEN)
-        {
-            foten = xvgropen(opt2fn("-oten", NFILE, fnm),
-                             "Order tensor", "Time (ps)", "", oenv);
-            snew(otenleg, bOvec ? nex*12 : nex*3);
-            for (i = 0; i < nex; i++)
-            {
-                for (j = 0; j < 3; j++)
-                {
-                    sprintf(buf, "eig%d", j+1);
-                    otenleg[(bOvec ? 12 : 3)*i+j] = gmx_strdup(buf);
-                }
-                if (bOvec)
-                {
-                    for (j = 0; j < 9; j++)
-                    {
-                        sprintf(buf, "vec%d%s", j/3+1, j%3 == 0 ? "x" : (j%3 == 1 ? "y" : "z"));
-                        otenleg[12*i+3+j] = gmx_strdup(buf);
-                    }
-                }
-            }
-            xvgr_legend(foten, bOvec ? nex*12 : nex*3, (const char**)otenleg, oenv);
-        }
-    }
-    else if (bDisRe)
-    {
-        nbounds = get_bounds(ftp2fn(efTPR, NFILE, fnm), &bounds, &index, &pair, &npairs,
-                             &mtop, &top, &ir);
-        snew(violaver, npairs);
-        out = xvgropen(opt2fn("-o", NFILE, fnm), "Sum of Violations",
-                       "Time (ps)", "nm", oenv);
-        xvgr_legend(out, 2, drleg, oenv);
-        if (bDRAll)
-        {
-            fp_pairs = xvgropen(opt2fn("-pairs", NFILE, fnm), "Pair Distances",
-                                "Time (ps)", "Distance (nm)", oenv);
-            if (output_env_get_print_xvgr_codes(oenv))
-            {
-                fprintf(fp_pairs, "@ subtitle \"averaged (tau=%g) and instantaneous\"\n",
-                        ir.dr_tau);
-            }
-        }
     }
     else if (bDHDL)
     {
-        get_dhdl_parms(ftp2fn(efTPR, NFILE, fnm), &ir);
+        get_dhdl_parms(ftp2fn(efTPR, NFILE, fnm), ir);
     }
 
     /* Initiate energies and set them to zero */
     edat.nsteps    = 0;
     edat.npoints   = 0;
     edat.nframes   = 0;
-    edat.step      = NULL;
-    edat.steps     = NULL;
-    edat.points    = NULL;
+    edat.step      = nullptr;
+    edat.steps     = nullptr;
+    edat.points    = nullptr;
     edat.bHaveSums = TRUE;
     snew(edat.s, nset);
 
     /* Initiate counters */
     teller       = 0;
-    teller_disre = 0;
     bFoundStart  = FALSE;
     start_step   = 0;
     start_t      = 0;
@@ -2448,57 +1989,9 @@ int gmx_energy(int argc, char *argv[])
                 }
             }
             /*
-             * Define distance restraint legends. Can only be done after
-             * the first frame has been read... (Then we know how many there are)
-             */
-            blk_disre = find_block_id_enxframe(fr, enxDISRE, NULL);
-            if (bDisRe && bDRAll && !leg && blk_disre)
-            {
-                t_iatom   *fa;
-                t_iparams *ip;
-
-                fa = top->idef.il[F_DISRES].iatoms;
-                ip = top->idef.iparams;
-                if (blk_disre->nsub != 2 ||
-                    (blk_disre->sub[0].nr != blk_disre->sub[1].nr) )
-                {
-                    gmx_incons("Number of disre sub-blocks not equal to 2");
-                }
-
-                ndisre = blk_disre->sub[0].nr;
-                if (ndisre != top->idef.il[F_DISRES].nr/3)
-                {
-                    gmx_fatal(FARGS, "Number of disre pairs in the energy file (%d) does not match the number in the run input file (%d)\n",
-                              ndisre, top->idef.il[F_DISRES].nr/3);
-                }
-                snew(pairleg, ndisre);
-                for (i = 0; i < ndisre; i++)
-                {
-                    snew(pairleg[i], 30);
-                    j = fa[3*i+1];
-                    k = fa[3*i+2];
-                    gmx_mtop_atominfo_global(&mtop, j, &anm_j, &resnr_j, &resnm_j);
-                    gmx_mtop_atominfo_global(&mtop, k, &anm_k, &resnr_k, &resnm_k);
-                    sprintf(pairleg[i], "%d %s %d %s (%d)",
-                            resnr_j, anm_j, resnr_k, anm_k,
-                            ip[fa[3*i]].disres.label);
-                }
-                set = select_it(ndisre, pairleg, &nset);
-                snew(leg, 2*nset);
-                for (i = 0; (i < nset); i++)
-                {
-                    snew(leg[2*i], 32);
-                    sprintf(leg[2*i],  "a %s", pairleg[set[i]]);
-                    snew(leg[2*i+1], 32);
-                    sprintf(leg[2*i+1], "i %s", pairleg[set[i]]);
-                }
-                xvgr_legend(fp_pairs, 2*nset, (const char**)leg, oenv);
-            }
-
-            /*
              * Store energies for analysis afterwards...
              */
-            if (!bDisRe && !bDHDL && (fr->nre > 0))
+            if (!bDHDL && (fr->nre > 0))
             {
                 if (edat.nframes % 1000 == 0)
                 {
@@ -2512,50 +2005,9 @@ int gmx_energy(int argc, char *argv[])
              */
             if (!skip || teller % skip == 0)
             {
-                if (bDisRe)
+                if (bDHDL)
                 {
-                    /*******************************************
-                     * D I S T A N C E   R E S T R A I N T S
-                     *******************************************/
-                    if (ndisre > 0)
-                    {
-                        GMX_RELEASE_ASSERT(blk_disre != NULL, "Trying to dereference NULL blk_disre pointer");
- #if !GMX_DOUBLE
-                        float  *disre_rt     =     blk_disre->sub[0].fval;
-                        float  *disre_rm3tav = blk_disre->sub[1].fval;
- #else
-                        double *disre_rt     =     blk_disre->sub[0].dval;
-                        double *disre_rm3tav = blk_disre->sub[1].dval;
- #endif
-
-                        print_time(out, fr->t);
-                        if (violaver == NULL)
-                        {
-                            snew(violaver, ndisre);
-                        }
-
-                        /* Subtract bounds from distances, to calculate violations */
-                        calc_violations(disre_rt, disre_rm3tav,
-                                        nbounds, pair, bounds, violaver, &sumt, &sumaver);
-
-                        fprintf(out, "  %8.4f  %8.4f\n", sumaver, sumt);
-                        if (bDRAll)
-                        {
-                            print_time(fp_pairs, fr->t);
-                            for (i = 0; (i < nset); i++)
-                            {
-                                sss = set[i];
-                                fprintf(fp_pairs, "  %8.4f", mypow(disre_rm3tav[sss], minthird));
-                                fprintf(fp_pairs, "  %8.4f", disre_rt[sss]);
-                            }
-                            fprintf(fp_pairs, "\n");
-                        }
-                        teller_disre++;
-                    }
-                }
-                else if (bDHDL)
-                {
-                    do_dhdl(fr, &ir, &fp_dhdl, opt2fn("-odh", NFILE, fnm), bDp, &dh_blocks, &dh_hists, &dh_samples, &dh_lambdas, oenv);
+                    do_dhdl(fr, ir, &fp_dhdl, opt2fn("-odh", NFILE, fnm), bDp, &dh_blocks, &dh_hists, &dh_samples, &dh_lambdas, oenv);
                 }
 
                 /*******************************************
@@ -2608,99 +2060,6 @@ int gmx_energy(int argc, char *argv[])
                             fprintf(out, "\n");
                         }
                     }
-                    blk = find_block_id_enxframe(fr, enx_i, NULL);
-                    if (bORIRE && blk)
-                    {
-#if !GMX_DOUBLE
-                        xdr_datatype dt = xdr_datatype_float;
-#else
-                        xdr_datatype dt = xdr_datatype_double;
-#endif
-                        real        *vals;
-
-                        if ( (blk->nsub != 1) || (blk->sub[0].type != dt) )
-                        {
-                            gmx_fatal(FARGS, "Orientational restraints read in incorrectly");
-                        }
-#if !GMX_DOUBLE
-                        vals = blk->sub[0].fval;
-#else
-                        vals = blk->sub[0].dval;
-#endif
-
-                        if (blk->sub[0].nr != nor)
-                        {
-                            gmx_fatal(FARGS, "Number of orientation restraints in energy file (%d) does not match with the topology (%d)", blk->sub[0].nr);
-                        }
-                        if (bORA || bODA)
-                        {
-                            for (i = 0; i < nor; i++)
-                            {
-                                orient[i] += vals[i];
-                            }
-                        }
-                        if (bODR)
-                        {
-                            for (i = 0; i < nor; i++)
-                            {
-                                odrms[i] += gmx::square(vals[i]-oobs[i]);
-                            }
-                        }
-                        if (bORT)
-                        {
-                            fprintf(fort, "  %10f", fr->t);
-                            for (i = 0; i < norsel; i++)
-                            {
-                                fprintf(fort, " %g", vals[orsel[i]]);
-                            }
-                            fprintf(fort, "\n");
-                        }
-                        if (bODT)
-                        {
-                            fprintf(fodt, "  %10f", fr->t);
-                            for (i = 0; i < norsel; i++)
-                            {
-                                fprintf(fodt, " %g", vals[orsel[i]]-oobs[orsel[i]]);
-                            }
-                            fprintf(fodt, "\n");
-                        }
-                        norfr++;
-                    }
-                    blk = find_block_id_enxframe(fr, enxORT, NULL);
-                    if (bOTEN && blk)
-                    {
-#if !GMX_DOUBLE
-                        xdr_datatype dt = xdr_datatype_float;
-#else
-                        xdr_datatype dt = xdr_datatype_double;
-#endif
-                        real        *vals;
-
-                        if ( (blk->nsub != 1) || (blk->sub[0].type != dt) )
-                        {
-                            gmx_fatal(FARGS, "Orientational restraints read in incorrectly");
-                        }
-#if !GMX_DOUBLE
-                        vals = blk->sub[0].fval;
-#else
-                        vals = blk->sub[0].dval;
-#endif
-
-                        if (blk->sub[0].nr != nex*12)
-                        {
-                            gmx_fatal(FARGS, "Number of orientation experiments in energy file (%g) does not match with the topology (%d)",
-                                      blk->sub[0].nr/12, nex);
-                        }
-                        fprintf(foten, "  %10f", fr->t);
-                        for (i = 0; i < nex; i++)
-                        {
-                            for (j = 0; j < (bOvec ? 12 : 3); j++)
-                            {
-                                fprintf(foten, " %g", vals[i*12+j]);
-                            }
-                        }
-                        fprintf(foten, "\n");
-                    }
                 }
             }
             teller++;
@@ -2709,81 +2068,13 @@ int gmx_energy(int argc, char *argv[])
     while (bCont && (timecheck == 0));
 
     fprintf(stderr, "\n");
-    close_enx(fp);
+    done_ener_file(fp);
     if (out)
     {
         xvgrclose(out);
     }
 
-    if (bDRAll)
-    {
-        xvgrclose(fp_pairs);
-    }
-
-    if (bORT)
-    {
-        xvgrclose(fort);
-    }
-    if (bODT)
-    {
-        xvgrclose(fodt);
-    }
-    if (bORA)
-    {
-        out = xvgropen(opt2fn("-ora", NFILE, fnm),
-                       "Average calculated orientations",
-                       "Restraint label", "", oenv);
-        if (bOrinst && output_env_get_print_xvgr_codes(oenv))
-        {
-            fprintf(out, "%s", orinst_sub);
-        }
-        for (i = 0; i < nor; i++)
-        {
-            fprintf(out, "%5d  %g\n", or_label[i], orient[i]/norfr);
-        }
-        xvgrclose(out);
-    }
-    if (bODA)
-    {
-        out = xvgropen(opt2fn("-oda", NFILE, fnm),
-                       "Average restraint deviation",
-                       "Restraint label", "", oenv);
-        if (bOrinst && output_env_get_print_xvgr_codes(oenv))
-        {
-            fprintf(out, "%s", orinst_sub);
-        }
-        for (i = 0; i < nor; i++)
-        {
-            fprintf(out, "%5d  %g\n", or_label[i], orient[i]/norfr-oobs[i]);
-        }
-        xvgrclose(out);
-    }
-    if (bODR)
-    {
-        out = xvgropen(opt2fn("-odr", NFILE, fnm),
-                       "RMS orientation restraint deviations",
-                       "Restraint label", "", oenv);
-        if (bOrinst && output_env_get_print_xvgr_codes(oenv))
-        {
-            fprintf(out, "%s", orinst_sub);
-        }
-        for (i = 0; i < nor; i++)
-        {
-            fprintf(out, "%5d  %g\n", or_label[i], std::sqrt(odrms[i]/norfr));
-        }
-        xvgrclose(out);
-    }
-    if (bOTEN)
-    {
-        xvgrclose(foten);
-    }
-
-    if (bDisRe)
-    {
-        analyse_disre(opt2fn("-viol", NFILE, fnm),
-                      teller_disre, violaver, bounds, index, pair, nbounds, oenv);
-    }
-    else if (bDHDL)
+    if (bDHDL)
     {
         if (fp_dhdl)
         {
@@ -2811,6 +2102,7 @@ int gmx_energy(int argc, char *argv[])
     {
         double dt = (frame[cur].t-start_t)/(edat.nframes-1);
         analyse_ener(opt2bSet("-corr", NFILE, fnm), opt2fn("-corr", NFILE, fnm),
+                     opt2fn("-evisco", NFILE, fnm), opt2fn("-eviscoi", NFILE, fnm),
                      bFee, bSum, bFluct,
                      bVisco, opt2fn("-vis", NFILE, fnm),
                      nmol,
@@ -2829,20 +2121,26 @@ int gmx_energy(int argc, char *argv[])
         fec(opt2fn("-f2", NFILE, fnm), opt2fn("-ravg", NFILE, fnm),
             reftemp, nset, set, leg, &edat, time, oenv);
     }
-
+    // Clean up!
+    done_enerdata_t(nset, &edat);
+    sfree(time);
+    free_enxframe(&frame[0]);
+    free_enxframe(&frame[1]);
+    sfree(frame);
+    free_enxnms(nre, enm);
+    sfree(ppa);
+    sfree(set);
+    sfree(leg);
+    sfree(bIsEner);
     {
         const char *nxy = "-nxy";
 
         do_view(oenv, opt2fn("-o", NFILE, fnm), nxy);
         do_view(oenv, opt2fn_null("-ravg", NFILE, fnm), nxy);
-        do_view(oenv, opt2fn_null("-ora", NFILE, fnm), nxy);
-        do_view(oenv, opt2fn_null("-ort", NFILE, fnm), nxy);
-        do_view(oenv, opt2fn_null("-oda", NFILE, fnm), nxy);
-        do_view(oenv, opt2fn_null("-odr", NFILE, fnm), nxy);
-        do_view(oenv, opt2fn_null("-odt", NFILE, fnm), nxy);
-        do_view(oenv, opt2fn_null("-oten", NFILE, fnm), nxy);
         do_view(oenv, opt2fn_null("-odh", NFILE, fnm), nxy);
     }
+    output_env_done(oenv);
+    done_filenms(NFILE, fnm);
 
     return 0;
 }

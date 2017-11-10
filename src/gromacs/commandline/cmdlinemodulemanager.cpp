@@ -1,7 +1,7 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2012,2013,2014,2015, by the GROMACS development team, led by
+ * Copyright (c) 2012,2013,2014,2015,2016,2017, by the GROMACS development team, led by
  * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
  * and including many others, as listed in the AUTHORS file in the
  * top-level source directory and at http://www.gromacs.org.
@@ -90,6 +90,8 @@ class CMainCommandLineModule : public ICommandLineModule
     public:
         //! \copydoc gmx::CommandLineModuleManager::CMainFunction
         typedef CommandLineModuleManager::CMainFunction CMainFunction;
+        //! \copydoc gmx::CommandLineModuleManager::InitSettingsFunction
+        typedef CommandLineModuleManager::InitSettingsFunction InitSettingsFunction;
 
         /*! \brief
          * Creates a wrapper module for the given main function.
@@ -97,14 +99,16 @@ class CMainCommandLineModule : public ICommandLineModule
          * \param[in] name             Name for the module.
          * \param[in] shortDescription One-line description for the module.
          * \param[in] mainFunction     Main function to wrap.
+         * \param[in] settingsFunction Initializer for settings (can be null).
          *
          * Does not throw.  This is essential for correct implementation of
          * CommandLineModuleManager::runAsMainCMain().
          */
         CMainCommandLineModule(const char *name, const char *shortDescription,
-                               CMainFunction mainFunction)
+                               CMainFunction mainFunction,
+                               InitSettingsFunction settingsFunction)
             : name_(name), shortDescription_(shortDescription),
-              mainFunction_(mainFunction)
+              mainFunction_(mainFunction), settingsFunction_(settingsFunction)
         {
         }
 
@@ -117,8 +121,12 @@ class CMainCommandLineModule : public ICommandLineModule
             return shortDescription_;
         }
 
-        virtual void init(CommandLineModuleSettings * /*settings*/)
+        virtual void init(CommandLineModuleSettings *settings)
         {
+            if (settingsFunction_ != nullptr)
+            {
+                settingsFunction_(settings);
+            }
         }
         virtual int run(int argc, char *argv[])
         {
@@ -133,6 +141,7 @@ class CMainCommandLineModule : public ICommandLineModule
         const char             *name_;
         const char             *shortDescription_;
         CMainFunction           mainFunction_;
+        InitSettingsFunction    settingsFunction_;
 };
 
 //! \}
@@ -144,7 +153,7 @@ class CMainCommandLineModule : public ICommandLineModule
  */
 
 CommandLineCommonOptionsHolder::CommandLineCommonOptionsHolder()
-    : options_(NULL, NULL), bHelp_(false), bHidden_(false),
+    : bHelp_(false), bHidden_(false),
       bQuiet_(false), bVersion_(false), bCopyright_(true),
       niceLevel_(19), bNiceSet_(false), bBackup_(true), bFpexcept_(false),
       debugLevel_(0)
@@ -307,8 +316,8 @@ class CommandLineModuleManager::Impl
 CommandLineModuleManager::Impl::Impl(const char                *binaryName,
                                      CommandLineProgramContext *programContext)
     : programContext_(*programContext),
-      binaryName_(binaryName != NULL ? binaryName : ""),
-      helpModule_(NULL), singleModule_(NULL),
+      binaryName_(binaryName != nullptr ? binaryName : ""),
+      helpModule_(nullptr), singleModule_(nullptr),
       bQuiet_(false)
 {
     GMX_RELEASE_ASSERT(binaryName_.find('-') == std::string::npos,
@@ -328,7 +337,7 @@ void CommandLineModuleManager::Impl::addModule(CommandLineModulePointer module)
 
 void CommandLineModuleManager::Impl::ensureHelpModuleExists()
 {
-    if (helpModule_ == NULL)
+    if (helpModule_ == nullptr)
     {
         helpModule_ = new CommandLineHelpModule(programContext_, binaryName_,
                                                 modules_, moduleGroups_);
@@ -353,7 +362,7 @@ CommandLineModuleManager::Impl::processCommonOptions(
     // TODO: It would be nice to propagate at least the -quiet option to
     // the modules so that they can also be quiet in response to this.
 
-    if (module == NULL)
+    if (module == nullptr)
     {
         // If not in single-module mode, process options to the wrapper binary.
         // TODO: Ideally, this could be done by CommandLineParser.
@@ -386,9 +395,9 @@ CommandLineModuleManager::Impl::processCommonOptions(
             // which path is taken: (*argv)[0] is the module name.
         }
     }
-    if (module != NULL)
+    if (module != nullptr)
     {
-        if (singleModule_ == NULL)
+        if (singleModule_ == nullptr)
         {
             programContext_.setDisplayName(binaryName_ + " " + module->name());
         }
@@ -400,14 +409,14 @@ CommandLineModuleManager::Impl::processCommonOptions(
     }
     if (!optionsHolder->finishOptions())
     {
-        return NULL;
+        return nullptr;
     }
     // If no module specified and no other action, show the help.
     // Also explicitly specifying -h for the wrapper binary goes here.
-    if (module == NULL || optionsHolder->shouldShowHelp())
+    if (module == nullptr || optionsHolder->shouldShowHelp())
     {
         ensureHelpModuleExists();
-        if (module != NULL)
+        if (module != nullptr)
         {
             helpModule_->setModuleOverride(*module);
         }
@@ -467,7 +476,18 @@ void CommandLineModuleManager::addModuleCMain(
         CMainFunction mainFunction)
 {
     CommandLineModulePointer module(
-            new CMainCommandLineModule(name, shortDescription, mainFunction));
+            new CMainCommandLineModule(name, shortDescription, mainFunction,
+                                       nullptr));
+    addModule(std::move(module));
+}
+
+void CommandLineModuleManager::addModuleCMainWithSettings(
+        const char *name, const char *shortDescription,
+        CMainFunction mainFunction, InitSettingsFunction settingsFunction)
+{
+    CommandLineModulePointer module(
+            new CMainCommandLineModule(name, shortDescription, mainFunction,
+                                       settingsFunction));
     addModule(std::move(module));
 }
 
@@ -516,7 +536,7 @@ int CommandLineModuleManager::run(int argc, char *argv[])
                                optionsHolder.binaryInfoSettings());
         fprintf(out, "\n");
     }
-    if (module == NULL)
+    if (module == nullptr)
     {
         return 0;
     }
@@ -576,7 +596,7 @@ int CommandLineModuleManager::runAsMainSingleModule(
     CommandLineProgramContext &programContext = gmx::initForCommandLine(&argc, &argv);
     try
     {
-        CommandLineModuleManager manager(NULL, &programContext);
+        CommandLineModuleManager manager(nullptr, &programContext);
         manager.setSingleModule(module);
         int rc = manager.run(argc, argv);
         gmx::finalizeForCommandLine();
@@ -593,7 +613,16 @@ int CommandLineModuleManager::runAsMainSingleModule(
 int CommandLineModuleManager::runAsMainCMain(
         int argc, char *argv[], CMainFunction mainFunction)
 {
-    CMainCommandLineModule module(argv[0], NULL, mainFunction);
+    CMainCommandLineModule module(argv[0], nullptr, mainFunction, nullptr);
+    return runAsMainSingleModule(argc, argv, &module);
+}
+
+// static
+int CommandLineModuleManager::runAsMainCMainWithSettings(
+        int argc, char *argv[], CMainFunction mainFunction,
+        InitSettingsFunction settingsFunction)
+{
+    CMainCommandLineModule module(argv[0], nullptr, mainFunction, settingsFunction);
     return runAsMainSingleModule(argc, argv, &module);
 }
 
@@ -607,10 +636,10 @@ void CommandLineModuleGroupData::addModule(const char *name,
     CommandLineModuleMap::const_iterator moduleIter = allModules_.find(name);
     GMX_RELEASE_ASSERT(moduleIter != allModules_.end(),
                        "Non-existent module added to a group");
-    if (description == NULL)
+    if (description == nullptr)
     {
         description = moduleIter->second->shortDescription();
-        GMX_RELEASE_ASSERT(description != NULL,
+        GMX_RELEASE_ASSERT(description != nullptr,
                            "Module without a description added to a group");
     }
     std::string       tag(formatString("%s-%s", binaryName_, name));
@@ -623,7 +652,7 @@ void CommandLineModuleGroupData::addModule(const char *name,
 
 void CommandLineModuleGroup::addModule(const char *name)
 {
-    impl_->addModule(name, NULL);
+    impl_->addModule(name, nullptr);
 }
 
 void CommandLineModuleGroup::addModuleWithDescription(const char *name,

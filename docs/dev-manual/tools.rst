@@ -191,10 +191,10 @@ The following make targets are the most useful:
 ``install-guide``
   Makes the INSTALL file for the tarball with Sphinx
 ``webpage-sphinx``
-  Makes all the components of the GROMACS webpage that require Sphinx,
+  Makes all the components of the |Gromacs| webpage that require Sphinx,
   including install guide and user guide.
 ``webpage``
-  Makes the complete GROMACS webpage, requires everything. When complete,
+  Makes the complete |Gromacs| webpage, requires everything. When complete,
   you can browse ``docs/html/index.html`` to find everything.
 
   If built from a release tarball, the ``SOURCE_MD5SUM``,
@@ -247,7 +247,7 @@ module dependency graphs
 __ doxygen-page-modulegraph_
 
 Sphinx
-  `Sphinx <http://sphinx-doc.org/>`_; at least version 1.2.3) is used
+  `Sphinx <http://sphinx-doc.org/>`_; at least version |EXPECTED_SPHINX_VERSION| is used
   for building some parts of the documentation from reStructuredText
   source files.
 

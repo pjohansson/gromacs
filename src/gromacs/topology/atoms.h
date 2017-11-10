@@ -42,10 +42,6 @@
 #include "gromacs/utility/basedefinitions.h"
 #include "gromacs/utility/real.h"
 
-#ifdef __cplusplus
-extern "C" {
-#endif
-
 struct t_symtab;
 
 /* The particle type */
@@ -107,19 +103,29 @@ typedef struct t_grps
 
 typedef struct t_atoms
 {
-    int            nr;          /* Nr of atoms                          */
-    t_atom        *atom;        /* Array of atoms (dim: nr)             */
+    int          nr;            /* Nr of atoms                          */
+    t_atom      *atom;          /* Array of atoms (dim: nr)             */
                                 /* The following entries will not       */
                                 /* always be used (nres==0)             */
-    char          ***atomname;  /* Array of pointers to atom name       */
+    char      ***atomname;      /* Array of pointers to atom name       */
                                 /* use: (*(atomname[i]))                */
-    char          ***atomtype;  /* Array of pointers to atom types      */
+    char      ***atomtype;      /* Array of pointers to atom types      */
                                 /* use: (*(atomtype[i]))                */
-    char          ***atomtypeB; /* Array of pointers to B atom types    */
+    char      ***atomtypeB;     /* Array of pointers to B atom types    */
                                 /* use: (*(atomtypeB[i]))               */
-    int              nres;      /* The number of resinfo entries        */
-    t_resinfo       *resinfo;   /* Array of residue names and numbers   */
-    t_pdbinfo       *pdbinfo;   /* PDB Information, such as aniso. Bfac */
+    int          nres;          /* The number of resinfo entries        */
+    t_resinfo   *resinfo;       /* Array of residue names and numbers   */
+    t_pdbinfo   *pdbinfo;       /* PDB Information, such as aniso. Bfac */
+
+    /* Flags that tell if properties are set for all nr atoms.
+     * For B-state parameters, both haveBState and the mass/charge/type
+     * flag should be TRUE.
+     */
+    gmx_bool     haveMass;      /* Mass available                       */
+    gmx_bool     haveCharge;    /* Charge available                     */
+    gmx_bool     haveType;      /* Atom type available                  */
+    gmx_bool     haveBState;    /* B-state parameters available         */
+    gmx_bool     havePdbInfo;   /* pdbinfo available                    */
 } t_atoms;
 
 typedef struct t_atomtypes
@@ -164,8 +170,14 @@ void pr_atoms(FILE *fp, int indent, const char *title, const t_atoms *atoms,
 void pr_atomtypes(FILE *fp, int indent, const char *title,
                   const t_atomtypes *atomtypes, gmx_bool bShowNumbers);
 
-#ifdef __cplusplus
-}
-#endif
+void cmp_atoms(FILE *fp, const t_atoms *a1, const t_atoms *a2, real ftol, real abstol);
+
+/*! \brief Set mass for each atom using the atom and residue names using a database
+ *
+ * If atoms->haveMass = TRUE does nothing.
+ * If printMissingMasss = TRUE, prints details for first 10 missing masses
+ * to stderr.
+ */
+void atomsSetMassesBasedOnNames(t_atoms *atoms, gmx_bool printMissingMasses);
 
 #endif

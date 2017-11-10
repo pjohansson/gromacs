@@ -1,7 +1,7 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2012,2013,2014, by the GROMACS development team, led by
+ * Copyright (c) 2012,2013,2014,2016, by the GROMACS development team, led by
  * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
  * and including many others, as listed in the AUTHORS file in the
  * top-level source directory and at http://www.gromacs.org.
@@ -71,11 +71,14 @@ class SelectionFileOptionStorage : public AbstractOptionStorage
         virtual OptionInfo &optionInfo() { return info_; }
         virtual std::string typeString() const { return "file"; }
         virtual int valueCount() const { return 0; }
-        virtual std::string formatValue(int /*i*/) const { return ""; }
+        virtual std::vector<Variant> defaultValues() const { return {}; }
+        virtual std::vector<std::string> defaultValuesAsStrings() const { return {}; }
+        virtual std::vector<Variant>
+        normalizeValues(const std::vector<Variant> &values) const { return values; }
 
     private:
         virtual void clearSet();
-        virtual void convertValue(const std::string &value);
+        virtual void convertValue(const Variant &value);
         virtual void processSet();
         virtual void processAll() {}
 

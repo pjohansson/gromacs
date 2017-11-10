@@ -1,7 +1,7 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2012,2013,2014,2015, by the GROMACS development team, led by
+ * Copyright (c) 2012,2013,2014,2015,2017, by the GROMACS development team, led by
  * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
  * and including many others, as listed in the AUTHORS file in the
  * top-level source directory and at http://www.gromacs.org.
@@ -79,7 +79,7 @@
 #error "No VdW type defined"
 #endif
 
-static void
+void
 #ifndef CALC_ENERGIES
 NBK_FUNC_NAME(_F)
 #else
@@ -95,11 +95,8 @@ NBK_FUNC_NAME(_VgrpF)
  const nbnxn_atomdata_t     *nbat,
  const interaction_const_t  *ic,
  rvec                       *shift_vec,
- real                       *f
-#ifdef CALC_SHIFTFORCES
- ,
- real                       *fshift
-#endif
+ real                       *f,
+ real gmx_unused            *fshift
 #ifdef CALC_ENERGIES
  ,
  real                       *Vvdw,
@@ -380,7 +377,7 @@ NBK_FUNC_NAME(_VgrpF)
             }
         }
 #ifdef CALC_SHIFTFORCES
-        if (fshift != NULL)
+        if (fshift != nullptr)
         {
             /* Add i forces to shifted force list */
             for (i = 0; i < UNROLLI; i++)

@@ -1,7 +1,7 @@
 #
 # This file is part of the GROMACS molecular simulation package.
 #
-# Copyright (c) 2015,2016, by the GROMACS development team, led by
+# Copyright (c) 2015,2016,2017, by the GROMACS development team, led by
 # Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
 # and including many others, as listed in the AUTHORS file in the
 # top-level source directory and at http://www.gromacs.org.
@@ -34,11 +34,14 @@
 
 import os.path
 
+# These are accessible later in the script, just like other
+# declared options, via e.g. context.opts.release.
 extra_options = {
     'mdrun-only': Option.simple,
     'static': Option.simple,
     'reference': Option.simple,
     'release': Option.simple,
+    'release-with-assert': Option.simple,
     'release-with-debug-info': Option.simple,
     'asan': Option.simple,
     'mkl': Option.simple,
@@ -47,8 +50,13 @@ extra_options = {
     'thread-mpi': Option.bool,
     'gpu': Option.bool,
     'opencl': Option.bool,
-    'openmp': Option.bool
+    'clang_cuda': Option.bool,
+    'openmp': Option.bool,
+    'nranks': Option.string,
+    'npme': Option.string,
+    'gpu_id': Option.string
 }
+
 extra_projects = [Project.REGRESSIONTESTS]
 
 def do_build(context):
@@ -56,10 +64,13 @@ def do_build(context):
     cmake_opts['GMX_COMPILER_WARNINGS'] = 'ON'
     cmake_opts['GMX_DEFAULT_SUFFIX'] = 'OFF'
     cmake_opts['CMAKE_BUILD_TYPE'] = 'Debug'
+    cmake_opts['GMX_USE_RDTSCP'] = 'DETECT'
 
     if context.opts.reference:
         cmake_opts['CMAKE_BUILD_TYPE'] = 'Reference'
-    elif context.opts.release:
+    elif context.opts['release']:
+        cmake_opts['CMAKE_BUILD_TYPE'] = 'Release'
+    elif context.opts['release-with-assert']:
         cmake_opts['CMAKE_BUILD_TYPE'] = 'RelWithAssert'
     elif context.opts['release-with-debug-info']:
         cmake_opts['CMAKE_BUILD_TYPE'] = 'RelWithDebInfo'
@@ -89,7 +100,10 @@ def do_build(context):
             cmake_opts['GMX_USE_OPENCL'] = 'ON'
         else:
             cmake_opts['CUDA_TOOLKIT_ROOT_DIR'] = context.env.cuda_root
-            cmake_opts['CUDA_HOST_COMPILER'] = context.env.cuda_host_compiler
+            if context.opts.clang_cuda:
+                cmake_opts['GMX_CLANG_CUDA'] = 'ON'
+            else:
+                cmake_opts['CUDA_HOST_COMPILER'] = context.env.cuda_host_compiler
     else:
         cmake_opts['GMX_GPU'] = 'OFF'
     if context.opts.thread_mpi is False:
@@ -110,14 +124,15 @@ def do_build(context):
     if context.opts.x11:
         cmake_opts['GMX_X11'] = 'ON'
 
+    # At least hwloc on Jenkins produces a massive amount of reports about
+    # memory leaks, which cannot be reasonably suppressed because ASAN cannot
+    # produce a reasonable stack trace for them.
+    if context.opts.asan:
+        cmake_opts['GMX_HWLOC'] = 'OFF'
+
     regressiontests_path = context.workspace.get_project_dir(Project.REGRESSIONTESTS)
 
     if context.job_type == JobType.RELEASE:
-        # TODO: Consider using REGRESSIONTEST_DOWNLOAD here, after refactoring
-        # it to make that possible.  Or use some other mechanism to check the
-        # MD5 of the regressiontests tarball (also taking into account the -dev
-        # builds where the hardcoded value in gmxVersionInfo.cmake is not
-        # accurate).
         cmake_opts['REGRESSIONTEST_PATH'] = regressiontests_path
     else:
         if context.opts.mdrun_only:
@@ -158,7 +173,7 @@ def do_build(context):
     else:
         context.build_target(target='tests', keep_going=True)
 
-        context.run_ctest(args=['--output-on-failure'])
+        context.run_ctest(args=['--output-on-failure'], memcheck=context.opts.asan)
 
         context.build_target(target='install')
         # TODO: Consider what could be tested about the installed binaries.
@@ -170,8 +185,6 @@ def do_build(context):
             use_tmpi = not context.opts.mpi and context.opts.thread_mpi is not False
 
             cmd = 'perl gmxtest.pl -mpirun mpirun -xml -nosuffix all'
-            if context.opts.asan:
-                cmd+=' -parse asan_symbolize.py'
 
             # setting this stuff below is just a temporary solution,
             # it should all be passed as a proper the runconf from outside
@@ -183,19 +196,23 @@ def do_build(context):
                 # not explicitly set
                 cmd += ' -ntomp 2'
 
-            if context.opts.gpu:
-                if context.opts.mpi or use_tmpi:
-                    gpu_id = '01' # for (T)MPI use the two GT 640-s
-                else:
-                    gpu_id = '0' # use GPU #0 by default
-                cmd += ' -gpu_id ' + gpu_id
+            if context.opts.gpu_id:
+                cmd += ' -gpu_id ' + context.opts.gpu_id
 
-            # TODO: Add options to influence this (should be now local to the build
-            # script).
+            if context.opts.nranks:
+                nranks = context.opts.nranks
+            else:
+                nranks = '2'
+
+            if context.opts.npme:
+                cmd += ' -npme ' + context.opts.npme
+
             if context.opts.mpi:
-                cmd += ' -np 2'
+                cmd += ' -np ' + nranks
             elif use_tmpi:
-                cmd += ' -nt 2'
+                cmd += ' -nt ' + nranks
             if context.opts.double:
                 cmd += ' -double'
+            if context.opts.asan:
+                context.env.set_env_var('ASAN_OPTIONS', 'detect_leaks=0')
             context.run_cmd(cmd, shell=True, failure_message='Regression tests failed to execute')

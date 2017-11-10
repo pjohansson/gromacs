@@ -1,7 +1,7 @@
 #
 # This file is part of the GROMACS molecular simulation package.
 #
-# Copyright (c) 2011,2012,2013,2014,2015,2016, by the GROMACS development team, led by
+# Copyright (c) 2011,2012,2013,2014,2015,2016,2017, by the GROMACS development team, led by
 # Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
 # and including many others, as listed in the AUTHORS file in the
 # top-level source directory and at http://www.gromacs.org.
@@ -45,7 +45,7 @@ endfunction ()
 
 function (gmx_add_gtest_executable EXENAME)
     if (GMX_BUILD_UNITTESTS AND BUILD_TESTING)
-        set(_options MPI)
+        set(_options MPI HARDWARE_DETECTION)
         cmake_parse_arguments(ARG "${_options}" "" "" ${ARGN})
         set(_source_files ${ARG_UNPARSED_ARGUMENTS})
 
@@ -66,12 +66,17 @@ function (gmx_add_gtest_executable EXENAME)
             list(APPEND EXTRA_COMPILE_DEFINITIONS
                  TEST_USES_MPI=true)
         endif()
+        if (ARG_HARDWARE_DETECTION)
+            list(APPEND EXTRA_COMPILE_DEFINITIONS
+                 TEST_USES_HARDWARE_DETECTION=true)
+        endif()
 
         include_directories(BEFORE SYSTEM ${GMOCK_INCLUDE_DIRS})
         add_executable(${EXENAME} ${UNITTEST_TARGET_OPTIONS}
             ${_source_files} ${TESTUTILS_DIR}/unittest_main.cpp)
         target_link_libraries(${EXENAME}
-            ${TESTUTILS_LIBS} libgromacs ${GMOCK_LIBRARIES} ${GMX_EXE_LINKER_FLAGS} ${GMX_STDLIB_LIBRARIES})
+            ${TESTUTILS_LIBS} libgromacs ${GMOCK_LIBRARIES}
+            ${GMX_COMMON_LIBRARIES} ${GMX_EXE_LINKER_FLAGS} ${GMX_STDLIB_LIBRARIES})
         set_property(TARGET ${EXENAME}
             APPEND PROPERTY COMPILE_FLAGS "${GMOCK_COMPILE_FLAGS}")
         set_property(TARGET ${EXENAME}
@@ -81,87 +86,59 @@ function (gmx_add_gtest_executable EXENAME)
     endif()
 endfunction()
 
-function (gmx_register_unit_test NAME EXENAME)
-    if (GMX_BUILD_UNITTESTS AND BUILD_TESTING)
-        add_test(NAME ${NAME}
-                 COMMAND ${EXENAME} --gtest_output=xml:${CMAKE_BINARY_DIR}/Testing/Temporary/${NAME}.xml)
-        set_tests_properties(${NAME} PROPERTIES LABELS "GTest;UnitTest")
-        add_dependencies(tests ${EXENAME})
-    endif()
-endfunction ()
-
-# Use this function to register a test binary as an integration test
-function (gmx_register_integration_test NAME EXENAME)
-    if (GMX_BUILD_UNITTESTS AND BUILD_TESTING)
-        add_test(NAME ${NAME}
-                 COMMAND ${EXENAME} --gtest_output=xml:${CMAKE_BINARY_DIR}/Testing/Temporary/${NAME}.xml)
-        set_tests_properties(${testname} PROPERTIES LABELS "IntegrationTest")
-        add_dependencies(tests ${EXENAME})
-
-        # GMX_EXTRA_LIBRARIES might be needed for mdrun integration tests at
-        # some point.
-        # target_link_libraries(${EXENAME} ${GMX_EXTRA_LIBRARIES} ${GMX_STDLIB_LIBRARIES})
-    endif()
-endfunction ()
-
-# Use this function to register a test binary as an integration test
-# that requires MPI. The intended number of MPI ranks is also passed
+# Use this function with MPI_RANKS <N> INTEGRATION_TEST to register a test
+# binary as an integration test that requires MPI. The intended number of MPI
+# ranks is also passed
 #
-# TODO When a test case needs it, generalize the NUMPROC mechanism so
+# TODO When a test case needs it, generalize the MPI_RANKS mechanism so
 # that ctest can run the test binary over a range of numbers of MPI
 # ranks.
-function (gmx_register_mpi_integration_test NAME EXENAME NUMPROC)
+function (gmx_register_gtest_test NAME EXENAME)
     if (GMX_BUILD_UNITTESTS AND BUILD_TESTING)
-        if (GMX_MPI)
-            foreach(VARNAME MPIEXEC MPIEXEC_NUMPROC_FLAG MPIEXEC_PREFLAGS MPIEXEC_POSTFLAGS)
-                # These variables need a valid value for the test to run
-                # and pass, but conceivably any of them might be valid
-                # with arbitrary (including empty) content. They can't be
-                # valid if they've been populated with the CMake
-                # find_package magic suffix/value "NOTFOUND", though.
-                if (${VARNAME} MATCHES ".*NOTFOUND")
-                    message(STATUS "CMake variable ${VARNAME} was not detected to be a valid value. To test GROMACS correctly, check the advice in the install guide.")
-                    set(_cannot_run_mpi_tests 1)
-                endif()
-                if (NOT VARNAME STREQUAL MPIEXEC AND ${VARNAME})
-                    set(_an_mpi_variable_had_content 1)
-                endif()
-            endforeach()
-            if(_an_mpi_variable_had_content AND NOT MPIEXEC)
-                message(STATUS "CMake variable MPIEXEC must have a valid value if one of the other related MPIEXEC variables does. To test GROMACS correctly, check the advice in the install guide.")
-                set(_cannot_run_mpi_tests 1)
-            endif()
-            if(NOT _cannot_run_mpi_tests)
-                add_test(NAME ${NAME}
-                    COMMAND
-                    ${MPIEXEC} ${MPIEXEC_NUMPROC_FLAG} ${NUMPROC}
-                    ${MPIEXEC_PREFLAGS} $<TARGET_FILE:${EXENAME}> ${MPIEXEC_POSTFLAGS}
-                    --gtest_output=xml:${CMAKE_BINARY_DIR}/Testing/Temporary/${NAME}.xml
-                    )
-                set_tests_properties(${testname} PROPERTIES LABELS "MpiIntegrationTest")
-                add_dependencies(tests ${EXENAME})
-            endif()
-
-            # GMX_EXTRA_LIBRARIES might be needed for mdrun integration tests at
-            # some point.
-            # target_link_libraries(${EXENAME} ${GMX_EXTRA_LIBRARIES} ${GMX_STDLIB_LIBRARIES})
-        elseif(GMX_THREAD_MPI)
-            add_test(NAME ${NAME}
-                COMMAND
-                $<TARGET_FILE:${EXENAME}> -nt ${NUMPROC}
-                --gtest_output=xml:${CMAKE_BINARY_DIR}/Testing/Temporary/${NAME}.xml
-                )
-            set_tests_properties(${testname} PROPERTIES LABELS "MpiIntegrationTest")
-            add_dependencies(tests ${EXENAME})
-
-            # GMX_EXTRA_LIBRARIES might be needed for mdrun integration tests at
-            # some point.
-            # target_link_libraries(${EXENAME} ${GMX_EXTRA_LIBRARIES} ${GMX_STDLIB_LIBRARIES})
+        set(_options INTEGRATION_TEST)
+        set(_one_value_args MPI_RANKS)
+        cmake_parse_arguments(ARG "${_options}" "${_one_value_args}" "" ${ARGN})
+        set(_xml_path ${CMAKE_BINARY_DIR}/Testing/Temporary/${NAME}.xml)
+        set(_labels GTest)
+        set(_timeout 30)
+        if (ARG_INTEGRATION_TEST)
+            list(APPEND _labels IntegrationTest)
+            set(_timeout 120)
+            gmx_get_test_prefix_cmd(_prefix_cmd IGNORE_LEAKS)
+        else()
+            list(APPEND _labels UnitTest)
+            gmx_get_test_prefix_cmd(_prefix_cmd)
         endif()
+        set(_cmd ${_prefix_cmd} $<TARGET_FILE:${EXENAME}>)
+        if (ARG_MPI_RANKS)
+            if (NOT GMX_CAN_RUN_MPI_TESTS)
+                return()
+            endif()
+            list(APPEND _labels MpiTest)
+            if (GMX_MPI)
+                set(_cmd
+                    ${MPIEXEC} ${MPIEXEC_NUMPROC_FLAG} ${ARG_MPI_RANKS}
+                    ${MPIEXEC_PREFLAGS} ${_cmd} ${MPIEXEC_POSTFLAGS})
+            elseif (GMX_THREAD_MPI)
+                list(APPEND _cmd -ntmpi ${ARG_MPI_RANKS})
+            endif()
+        endif()
+        add_test(NAME ${NAME}
+                 COMMAND ${_cmd} --gtest_output=xml:${_xml_path})
+        set_tests_properties(${NAME} PROPERTIES LABELS "${_labels}")
+        set_tests_properties(${NAME} PROPERTIES TIMEOUT ${_timeout})
+        add_dependencies(tests ${EXENAME})
     endif()
 endfunction ()
 
 function (gmx_add_unit_test NAME EXENAME)
     gmx_add_gtest_executable(${EXENAME} ${ARGN})
-    gmx_register_unit_test(${NAME} ${EXENAME})
+    gmx_register_gtest_test(${NAME} ${EXENAME})
+endfunction()
+
+function (gmx_add_mpi_unit_test NAME EXENAME RANKS)
+    if (GMX_MPI OR (GMX_THREAD_MPI AND GTEST_IS_THREADSAFE))
+        gmx_add_gtest_executable(${EXENAME} MPI ${ARGN})
+        gmx_register_gtest_test(${NAME} ${EXENAME} MPI_RANKS ${RANKS})
+    endif()
 endfunction()

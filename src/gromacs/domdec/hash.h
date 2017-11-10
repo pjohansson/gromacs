@@ -1,7 +1,7 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2012,2014,2015, by the GROMACS development team, led by
+ * Copyright (c) 2012,2014,2015,2017, by the GROMACS development team, led by
  * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
  * and including many others, as listed in the AUTHORS file in the
  * top-level source directory and at http://www.gromacs.org.
@@ -124,7 +124,7 @@ static void gmx_hash_realloc(gmx_hash_t *hash, int nkey_used_estimate)
     hash->nalloc = over_alloc_dd(hash->mod);
     srenew(hash->hash, hash->nalloc);
 
-    if (debug != NULL)
+    if (debug != nullptr)
     {
         fprintf(debug, "Hash table mod %d nalloc %d\n", hash->mod, hash->nalloc);
     }
@@ -135,13 +135,13 @@ static void gmx_hash_realloc(gmx_hash_t *hash, int nkey_used_estimate)
  * With the current number of keys check if the table size is still
  * good, if not optimize it with the current number of keys.
  */
-static void gmx_hash_clear_and_optimize(gmx_hash_t *hash)
+static inline void gmx_hash_clear_and_optimize(gmx_hash_t *hash)
 {
     /* Resize the hash table when the occupation is < 1/4 or > 2/3 */
     if (hash->nkey > 0 &&
         (4*hash->nkey < hash->mod || 3*hash->nkey > 2*hash->mod))
     {
-        if (debug != NULL)
+        if (debug != nullptr)
         {
             fprintf(debug, "Hash table size %d #key %d: resizing\n",
                     hash->mod, hash->nkey);
@@ -153,12 +153,12 @@ static void gmx_hash_clear_and_optimize(gmx_hash_t *hash)
 }
 
 //! Initialize hash table.
-static gmx_hash_t *gmx_hash_init(int nkey_used_estimate)
+static inline gmx_hash_t *gmx_hash_init(int nkey_used_estimate)
 {
     gmx_hash_t *hash;
 
     snew(hash, 1);
-    hash->hash = NULL;
+    hash->hash = nullptr;
 
     gmx_hash_realloc(hash, nkey_used_estimate);
 
@@ -210,7 +210,7 @@ static void gmx_hash_set(gmx_hash_t *hash, int key, int value)
 }
 
 //! Delete the hash entry for key.
-static void gmx_hash_del(gmx_hash_t *hash, int key)
+static inline void gmx_hash_del(gmx_hash_t *hash, int key)
 {
     int ind, ind_prev;
 
@@ -249,7 +249,7 @@ static void gmx_hash_del(gmx_hash_t *hash, int key)
 }
 
 //! Change the value for present hash entry for key.
-static void gmx_hash_change_value(gmx_hash_t *hash, int key, int value)
+static inline void gmx_hash_change_value(gmx_hash_t *hash, int key, int value)
 {
     int ind;
 
@@ -270,7 +270,7 @@ static void gmx_hash_change_value(gmx_hash_t *hash, int key, int value)
 }
 
 //! Change the hash value if already set, otherwise set the hash value.
-static void gmx_hash_change_or_set(gmx_hash_t *hash, int key, int value)
+static inline void gmx_hash_change_or_set(gmx_hash_t *hash, int key, int value)
 {
     int ind;
 
@@ -293,7 +293,7 @@ static void gmx_hash_change_or_set(gmx_hash_t *hash, int key, int value)
 }
 
 //! Returns if the key is present, if the key is present *value is set.
-static gmx_bool gmx_hash_get(const gmx_hash_t *hash, int key, int *value)
+static inline gmx_bool gmx_hash_get(const gmx_hash_t *hash, int key, int *value)
 {
     int ind;
 

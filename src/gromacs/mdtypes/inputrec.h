@@ -3,7 +3,7 @@
  *
  * Copyright (c) 1991-2000, University of Groningen, The Netherlands.
  * Copyright (c) 2001-2004, The GROMACS development team.
- * Copyright (c) 2013,2014,2015, by the GROMACS development team, led by
+ * Copyright (c) 2013,2014,2015,2016,2017, by the GROMACS development team, led by
  * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
  * and including many others, as listed in the AUTHORS file in the
  * top-level source directory and at http://www.gromacs.org.
@@ -34,12 +34,6 @@
  * To help us fund GROMACS development, we humbly ask that you cite
  * the research papers on the package. Check out http://www.gromacs.org.
  */
-/*! \brief
- * Declares inputrec data structure and utilities.
- *
- * \inpublicapi
- * \ingroup module_mdtypes
- */
 #ifndef GMX_MDTYPES_INPUTREC_H
 #define GMX_MDTYPES_INPUTREC_H
 
@@ -50,24 +44,15 @@
 #include "gromacs/utility/basedefinitions.h"
 #include "gromacs/utility/real.h"
 
-typedef struct {
-    //! Number of terms
-    int   n;
-    //! Coeffients (V / nm)
-    real *a;
-    //! Phase angles
-    real *phi;
-} t_cosines;
-
-typedef struct {
-    real E0;            /* Field strength (V/nm)                        */
-    real omega;         /* Frequency (1/ps)                             */
-    real t0;            /* Centre of the Gaussian pulse (ps)            */
-    real sigma;         /* Width of the Gaussian pulse (FWHM) (ps)      */
-} t_efield;
-
 #define EGP_EXCL  (1<<0)
 #define EGP_TABLE (1<<1)
+
+struct pull_params_t;
+
+namespace gmx
+{
+class KeyValueTreeObject;
+}
 
 typedef struct t_grpopts {
     int       ngtc;           /* # T-Coupl groups                        */
@@ -99,8 +84,6 @@ typedef struct t_grpopts {
     real        *SAon;         /* at which gap (A.U.) the SA is switched on    */
     real        *SAoff;
     int         *SAsteps;      /* in how many steps SA goes from 1-1 to 0.5-0.5*/
-    gmx_bool    *bOPT;
-    gmx_bool    *bTS;
 } t_grpopts;
 
 typedef struct t_simtemp {
@@ -247,7 +230,13 @@ typedef struct t_swapcoords {
                                             * swapcoords.cpp                               */
 } t_swapcoords;
 
-typedef struct t_inputrec {
+struct t_inputrec
+{
+    t_inputrec();
+    explicit t_inputrec(const t_inputrec &) = delete;
+    t_inputrec &operator=(const t_inputrec &) = delete;
+    ~t_inputrec();
+
     int             eI;                      /* Integration method                 */
     gmx_int64_t     nsteps;                  /* number of steps to be taken			*/
     int             simulation_part;         /* Used in checkpointing to separate chunks */
@@ -368,37 +357,37 @@ typedef struct t_inputrec {
     struct pull_t        *pull_work;         /* The COM pull force calculation data structure; TODO this pointer should live somewhere else */
 
     /* Enforced rotation data */
-    gmx_bool        bRot;                    /* Calculate enforced rotation potential(s)?    */
-    t_rot          *rot;                     /* The data for enforced rotation potentials    */
+    gmx_bool                 bRot;           /* Calculate enforced rotation potential(s)?    */
+    t_rot                   *rot;            /* The data for enforced rotation potentials    */
 
-    int             eSwapCoords;             /* Do ion/water position exchanges (CompEL)?    */
-    t_swapcoords   *swap;
+    int                      eSwapCoords;    /* Do ion/water position exchanges (CompEL)?    */
+    t_swapcoords            *swap;
 
-    gmx_bool        bIMD;                    /* Allow interactive MD sessions for this .tpr? */
-    t_IMD          *imd;                     /* Interactive molecular dynamics               */
+    gmx_bool                 bIMD;           /* Allow interactive MD sessions for this .tpr? */
+    t_IMD                   *imd;            /* Interactive molecular dynamics               */
 
-    real            cos_accel;               /* Acceleration for viscosity calculation       */
-    tensor          deform;                  /* Triclinic deformation velocities (nm/ps)     */
-    int             userint1;                /* User determined parameters                   */
-    int             userint2;
-    int             userint3;
-    int             userint4;
-    real            userreal1;
-    real            userreal2;
-    real            userreal3;
-    real            userreal4;
-    t_grpopts       opts;          /* Group options				*/
-    t_cosines       ex[DIM];       /* Electric field stuff	(spatial part)		*/
-    t_cosines       et[DIM];       /* Electric field stuff	(time part)		*/
-    gmx_bool        bQMMM;         /* QM/MM calculation                            */
-    int             QMconstraints; /* constraints on QM bonds                      */
-    int             QMMMscheme;    /* Scheme: ONIOM or normal                      */
-    real            scalefactor;   /* factor for scaling the MM charges in QM calc.*/
+    real                     cos_accel;      /* Acceleration for viscosity calculation       */
+    tensor                   deform;         /* Triclinic deformation velocities (nm/ps)     */
+    int                      userint1;       /* User determined parameters                   */
+    int                      userint2;
+    int                      userint3;
+    int                      userint4;
+    real                     userreal1;
+    real                     userreal2;
+    real                     userreal3;
+    real                     userreal4;
+    t_grpopts                opts;          /* Group options				*/
+    gmx_bool                 bQMMM;         /* QM/MM calculation                            */
+    int                      QMconstraints; /* constraints on QM bonds                      */
+    int                      QMMMscheme;    /* Scheme: ONIOM or normal                      */
+    real                     scalefactor;   /* factor for scaling the MM charges in QM calc.*/
 
     /* Fields for removed features go here (better caching) */
-    gmx_bool        bAdress;       // Whether AdResS is enabled - always false if a valid .tpr was read
-    gmx_bool        useTwinRange;  // Whether twin-range scheme is active - always false if a valid .tpr was read
-} t_inputrec;
+    gmx_bool                 bAdress;      // Whether AdResS is enabled - always false if a valid .tpr was read
+    gmx_bool                 useTwinRange; // Whether twin-range scheme is active - always false if a valid .tpr was read
+
+    gmx::KeyValueTreeObject *params;
+};
 
 int ir_optimal_nstcalcenergy(const t_inputrec *ir);
 
@@ -436,14 +425,6 @@ gmx_bool ir_vdw_is_zero_at_cutoff(const t_inputrec *ir);
  */
 gmx_bool ir_vdw_might_be_zero_at_cutoff(const t_inputrec *ir);
 
-/*! \brief Initiate input record structure
- *
- * Initialiazes all the arrays and pointers to NULL.
- *
- * \param[in] ir Inputrec must be pre-allocated
- */
-void init_inputrec(t_inputrec *ir);
-
 /*! \brief Free memory from input record.
  *
  * All arrays and pointers will be freed.
@@ -455,6 +436,11 @@ void done_inputrec(t_inputrec *ir);
 void pr_inputrec(FILE *fp, int indent, const char *title, const t_inputrec *ir,
                  gmx_bool bMDPformat);
 
+void cmp_inputrec(FILE *fp, const t_inputrec *ir1, const t_inputrec *ir2, real ftol, real abstol);
+
+void comp_pull_AB(FILE *fp, pull_params_t *pull, real ftol, real abstol);
+
+
 gmx_bool inputrecDeform(const t_inputrec *ir);
 
 gmx_bool inputrecDynamicBox(const t_inputrec *ir);
@@ -465,8 +451,6 @@ gmx_bool inputrecNeedMutot(const t_inputrec *ir);
 
 gmx_bool inputrecTwinRange(const t_inputrec *ir);
 
-gmx_bool inputrecElecField(const t_inputrec *ir);
-
 gmx_bool inputrecExclForces(const t_inputrec *ir);
 
 gmx_bool inputrecNptTrotter(const t_inputrec *ir);
@@ -474,5 +458,28 @@ gmx_bool inputrecNptTrotter(const t_inputrec *ir);
 gmx_bool inputrecNvtTrotter(const t_inputrec *ir);
 
 gmx_bool inputrecNphTrotter(const t_inputrec *ir);
+
+/*! \brief Return true if the simulation is 2D periodic with two walls. */
+bool     inputrecPbcXY2Walls(const t_inputrec *ir);
+
+/* Returns true for MD integator with T and/or P-coupling that supports
+ * calculating the conserved energy quantity.
+ */
+bool integratorHasConservedEnergyQuantity(const t_inputrec *ir);
+
+/*! \brief Return the number of bounded dimensions
+ *
+ * \param[in] ir The input record with MD parameters
+ * \return the number of dimensions in which
+ * the coordinates of the particles are bounded, starting at X.
+ */
+int inputrec2nboundeddim(const t_inputrec *ir);
+
+/*! \brief Returns the number of degrees of freedom in center of mass motion
+ *
+ * \param[in] ir the inputrec structure
+ * \return the number of degrees of freedom of the center of mass
+ */
+int ndof_com(const t_inputrec *ir);
 
 #endif /* GMX_MDTYPES_INPUTREC_H */

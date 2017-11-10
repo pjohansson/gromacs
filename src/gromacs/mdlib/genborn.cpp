@@ -3,7 +3,7 @@
  *
  * Copyright (c) 1991-2000, University of Groningen, The Netherlands.
  * Copyright (c) 2001-2008, The GROMACS development team.
- * Copyright (c) 2013,2014,2015, by the GROMACS development team, led by
+ * Copyright (c) 2013,2014,2015,2017, by the GROMACS development team, led by
  * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
  * and including many others, as listed in the AUTHORS file in the
  * top-level source directory and at http://www.gromacs.org.
@@ -103,11 +103,11 @@ static int init_gb_nblist(int natoms, t_nblist *nl)
     nl->maxnrj      = 0;
     nl->nri         = 0;
     nl->nrj         = 0;
-    nl->iinr        = NULL;
-    nl->gid         = NULL;
-    nl->shift       = NULL;
-    nl->jindex      = NULL;
-    nl->jjnr        = NULL;
+    nl->iinr        = nullptr;
+    nl->gid         = nullptr;
+    nl->shift       = nullptr;
+    nl->jindex      = nullptr;
+    nl->jjnr        = nullptr;
     /*nl->nltype      = nltype;*/
 
     srenew(nl->iinr,   nl->maxnri);
@@ -265,11 +265,11 @@ int init_gb(gmx_genborn_t **p_born,
     snew(fr->invsqrta, natoms);
     snew(fr->dvda,     natoms);
 
-    fr->dadx              = NULL;
-    fr->dadx_rawptr       = NULL;
+    fr->dadx              = nullptr;
+    fr->dadx_rawptr       = nullptr;
     fr->nalloc_dadx       = 0;
-    born->gpol_still_work = NULL;
-    born->gpol_hct_work   = NULL;
+    born->gpol_still_work = nullptr;
+    born->gpol_hct_work   = nullptr;
 
     /* snew(born->asurf,natoms); */
     /* snew(born->dasurf,natoms); */
@@ -927,7 +927,7 @@ int calc_gb_rad(t_commrec *cr, t_forcerec *fr, t_inputrec *ir, gmx_localtop_t *t
     int   cnt;
     int   ndadx;
 
-    if (fr->bAllvsAll && fr->dadx == NULL)
+    if (fr->bAllvsAll && fr->dadx == nullptr)
     {
         /* We might need up to 8 atoms of padding before and after,
          * and another 4 units to guarantee SSE alignment.
@@ -1131,8 +1131,8 @@ real gb_bonds_tab(rvec x[], rvec f[], rvec fshift[], real *charge, real *p_gbtab
     return vctot;
 }
 
-real calc_gb_selfcorrections(t_commrec *cr, int natoms,
-                             real *charge, gmx_genborn_t *born, real *dvda, double facel)
+static real calc_gb_selfcorrections(t_commrec *cr, int natoms,
+                                    real *charge, gmx_genborn_t *born, real *dvda, double facel)
 {
     int  i, ai, at0, at1;
     real rai, e, derb, q, q2, fi, rai_inv, vtot;
@@ -1177,8 +1177,8 @@ real calc_gb_selfcorrections(t_commrec *cr, int natoms,
 
 }
 
-real calc_gb_nonpolar(t_commrec *cr, t_forcerec *fr, int natoms, gmx_genborn_t *born, gmx_localtop_t *top,
-                      real *dvda, t_mdatoms *md)
+static real calc_gb_nonpolar(t_commrec *cr, t_forcerec *fr, int natoms, gmx_genborn_t *born, gmx_localtop_t *top,
+                             real *dvda, t_mdatoms *md)
 {
     int  ai, i, at0, at1;
     real e, es, rai, term, probe, tmp, factor;
@@ -1224,8 +1224,8 @@ real calc_gb_nonpolar(t_commrec *cr, t_forcerec *fr, int natoms, gmx_genborn_t *
 
 
 
-real calc_gb_chainrule(int natoms, t_nblist *nl, real *dadx, real *dvda, rvec x[], rvec t[], rvec fshift[],
-                       rvec shift_vec[], int gb_algorithm, gmx_genborn_t *born)
+static real calc_gb_chainrule(int natoms, t_nblist *nl, real *dadx, real *dvda, rvec x[], rvec t[], rvec fshift[],
+                              rvec shift_vec[], int gb_algorithm, gmx_genborn_t *born)
 {
     int          i, k, n, ai, aj, nj0, nj1, n0, n1;
     int          shift;
@@ -1355,7 +1355,7 @@ calc_gb_forces(t_commrec *cr, t_mdatoms *md, gmx_genborn_t *born, gmx_localtop_t
     }
     else
     {
-        pbc_null = NULL;
+        pbc_null = nullptr;
     }
 
     if (sa_algorithm == esaAPPROX)
@@ -1366,10 +1366,10 @@ calc_gb_forces(t_commrec *cr, t_mdatoms *md, gmx_genborn_t *born, gmx_localtop_t
 
     /* Calculate the bonded GB-interactions using either table or analytical formula */
     enerd->term[F_GBPOL]       += gb_bonds_tab(x, f, fr->fshift, md->chargeA, &(fr->gbtabscale),
-                                               fr->invsqrta, fr->dvda, fr->gbtab->data, idef, born->epsilon_r, born->gb_epsilon_solvent, fr->epsfac, pbc_null, graph);
+                                               fr->invsqrta, fr->dvda, fr->gbtab->data, idef, born->epsilon_r, born->gb_epsilon_solvent, fr->ic->epsfac, pbc_null, graph);
 
     /* Calculate self corrections to the GB energies - currently only A state used! (FIXME) */
-    enerd->term[F_GBPOL]       += calc_gb_selfcorrections(cr, born->nr, md->chargeA, born, fr->dvda, fr->epsfac);
+    enerd->term[F_GBPOL]       += calc_gb_selfcorrections(cr, born->nr, md->chargeA, born, fr->dvda, fr->ic->epsfac);
 
     /* If parallel, sum the derivative of the potential w.r.t the born radii */
     if (DOMAINDECOMP(cr))
@@ -1426,7 +1426,7 @@ static gbtmpnbl_t *find_gbtmplist(struct gbtmpnbls *lists, int shift)
             srenew(lists->list, lists->list_nalloc);
             for (i = lists->nlist; i < lists->list_nalloc; i++)
             {
-                lists->list[i].aj        = NULL;
+                lists->list[i].aj        = nullptr;
                 lists->list[i].aj_nalloc = 0;
             }
 
@@ -1455,7 +1455,7 @@ static void add_bondeds_to_gblist(t_ilist *il,
         aj = il->iatoms[ind+2];
 
         int shift = CENTRAL;
-        if (g != NULL)
+        if (g != nullptr)
         {
             rvec_sub(x[ai], x[aj], dx);
             ivec_sub(SHIFT_IVEC(g, ai), SHIFT_IVEC(g, aj), dt);
@@ -1504,7 +1504,7 @@ int make_gb_nblist(t_commrec *cr, int gb_algorithm,
     t_pbc             pbc;
 
     struct gbtmpnbls *nls;
-    gbtmpnbl_t       *list = NULL;
+    gbtmpnbl_t       *list = nullptr;
 
     set_pbc(&pbc, fr->ePBC, box);
     nls   = born->nblist_work;
@@ -1620,7 +1620,7 @@ int make_gb_nblist(t_commrec *cr, int gb_algorithm,
 void make_local_gb(const t_commrec *cr, gmx_genborn_t *born, int gb_algorithm)
 {
     int           i, at0, at1;
-    gmx_domdec_t *dd = NULL;
+    gmx_domdec_t *dd = nullptr;
 
     if (DOMAINDECOMP(cr))
     {

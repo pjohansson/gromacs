@@ -46,9 +46,9 @@
 #include "gromacs/pbcutil/pbc.h"
 #include "gromacs/topology/idef.h"
 #include "gromacs/topology/topology.h"
-#include "gromacs/utility/scoped_cptr.h"
 #include "gromacs/utility/smalloc.h"
 #include "gromacs/utility/stringutil.h"
+#include "gromacs/utility/unique_cptr.h"
 
 #include "testutils/testasserts.h"
 
@@ -196,18 +196,18 @@ TEST_P(SettleTest, SatisfiesConstraints)
 
     // Set up the topology. We still have to make some raw pointers,
     // but they are put into scope guards for automatic cleanup.
-    gmx_mtop_t             *mtop;
+    gmx_mtop_t                   *mtop;
     snew(mtop, 1);
-    scoped_cptr<gmx_mtop_t> mtopGuard(mtop);
+    const unique_cptr<gmx_mtop_t> mtopGuard(mtop);
     mtop->mols.nr  = 1;
     mtop->nmoltype = 1;
     snew(mtop->moltype, mtop->nmoltype);
-    scoped_cptr<gmx_moltype_t> moltypeGuard(mtop->moltype);
+    const unique_cptr<gmx_moltype_t> moltypeGuard(mtop->moltype);
     mtop->nmolblock = 1;
     snew(mtop->molblock, mtop->nmolblock);
-    scoped_cptr<gmx_molblock_t> molblockGuard(mtop->molblock);
+    const unique_cptr<gmx_molblock_t> molblockGuard(mtop->molblock);
     mtop->molblock[0].type = 0;
-    std::vector<int>            iatoms;
+    std::vector<int>                  iatoms;
     for (int i = 0; i < numSettles; ++i)
     {
         iatoms.push_back(settleType);
@@ -221,9 +221,9 @@ TEST_P(SettleTest, SatisfiesConstraints)
     // Set up the SETTLE parameters.
     mtop->ffparams.ntypes = 1;
     snew(mtop->ffparams.iparams, mtop->ffparams.ntypes);
-    scoped_cptr<t_iparams> iparamsGuard(mtop->ffparams.iparams);
-    const real             dOH = 0.09572;
-    const real             dHH = 0.15139;
+    const unique_cptr<t_iparams> iparamsGuard(mtop->ffparams.iparams);
+    const real                   dOH = 0.09572;
+    const real                   dHH = 0.15139;
     mtop->ffparams.iparams[settleType].settle.doh = dOH;
     mtop->ffparams.iparams[settleType].settle.dhh = dHH;
 
@@ -261,6 +261,7 @@ TEST_P(SettleTest, SatisfiesConstraints)
             startingPositions.data(), updatedPositions_.data(), reciprocalTimeStep,
             useVelocities ? velocities_.data() : nullptr,
             calcVirial, virial, &errorOccured);
+    settle_free(settled);
     EXPECT_FALSE(errorOccured) << testDescription;
 
     // The necessary tolerances for the test to pass were determined
@@ -309,39 +310,15 @@ TEST_P(SettleTest, SatisfiesConstraints)
     }
 }
 
-using ::testing::Bool;
 // Scan the full Cartesian product of numbers of SETTLE interactions
 // (4 and 17 are chosen to test cases that do and do not match
 // hardware SIMD widths), and whether or not we use PBC, velocities or
-// calculate the virial contribution. It would be nicer to generate
-// these combinations with ::testing::Combine, but gcc 4.6 can't cope
-// with the template meta-programming required to generate the tuples.
+// calculate the virial contribution.
 INSTANTIATE_TEST_CASE_P(WithParameters, SettleTest,
-                            ::testing::Values(SettleTestParameters(1,  true,  true,  true),
-                                              SettleTestParameters(4,  true,  true,  true),
-                                              SettleTestParameters(17, true,  true,  true),
-                                              SettleTestParameters(1,  false, true,  true),
-                                              SettleTestParameters(4,  false, true,  true),
-                                              SettleTestParameters(17, false, true,  true),
-                                              SettleTestParameters(1,  true,  false, true),
-                                              SettleTestParameters(4,  true,  false, true),
-                                              SettleTestParameters(17, true,  false, true),
-                                              SettleTestParameters(1,  false, false, true),
-                                              SettleTestParameters(4,  false, false, true),
-                                              SettleTestParameters(17, false, false, true),
-                                              SettleTestParameters(1,  true,  true,  false),
-                                              SettleTestParameters(4,  true,  true,  false),
-                                              SettleTestParameters(17, true,  true,  false),
-                                              SettleTestParameters(1,  false, true,  false),
-                                              SettleTestParameters(4,  false, true,  false),
-                                              SettleTestParameters(17, false, true,  false),
-                                              SettleTestParameters(1,  true,  false, false),
-                                              SettleTestParameters(4,  true,  false, false),
-                                              SettleTestParameters(17, true,  false, false),
-                                              SettleTestParameters(1,  false, false, false),
-                                              SettleTestParameters(4,  false, false, false),
-                                              SettleTestParameters(17, false, false, false)));
-
+                            ::testing::Combine(::testing::Values(1, 4, 7),
+                                                   ::testing::Bool(),
+                                                   ::testing::Bool(),
+                                                   ::testing::Bool()));
 
 } // namespace
 } // namespace

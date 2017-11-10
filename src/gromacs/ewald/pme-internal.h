@@ -3,7 +3,7 @@
  *
  * Copyright (c) 1991-2000, University of Groningen, The Netherlands.
  * Copyright (c) 2001-2004, The GROMACS development team.
- * Copyright (c) 2013,2014,2015,2016, by the GROMACS development team, led by
+ * Copyright (c) 2013,2014,2015,2016,2017, by the GROMACS development team, led by
  * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
  * and including many others, as listed in the AUTHORS file in the
  * top-level source directory and at http://www.gromacs.org.
@@ -55,16 +55,18 @@
 
 #include "config.h"
 
-#include <stdio.h>
-
-#include "gromacs/fft/parallel_3dfft.h"
 #include "gromacs/math/gmxcomplex.h"
-#include "gromacs/timing/wallcycle.h"
-#include "gromacs/timing/walltime_accounting.h"
+#include "gromacs/utility/basedefinitions.h"
 #include "gromacs/utility/gmxmpi.h"
+
+#include "pme-gpu-types.h"
+
+//! A repeat of typedef from parallel_3dfft.h
+typedef struct gmx_parallel_3dfft *gmx_parallel_3dfft_t;
 
 struct t_commrec;
 struct t_inputrec;
+struct PmeGpu;
 
 //@{
 //! Grid indices for A state for charge and Lennard-Jones C6
@@ -94,17 +96,17 @@ static const real lb_scale_factor_symm[] = { 2.0/64, 12.0/64, 30.0/64, 20.0/64 }
  */
 #define PME_ORDER_MAX 12
 
-/*! \brief As gmx_pme_init, but takes most settings, except the grid, from pme_src */
-int gmx_pme_reinit(struct gmx_pme_t **pmedata,
-                   t_commrec *        cr,
-                   struct gmx_pme_t * pme_src,
-                   const t_inputrec * ir,
-                   ivec               grid_size);
+/*! \brief As gmx_pme_init, but takes most settings, except the grid/Ewald coefficients, from pme_src.
+ * This is only called when the PME cut-off/grid size changes.
+ */
+void gmx_pme_reinit(struct gmx_pme_t **pmedata,
+                    t_commrec *        cr,
+                    struct gmx_pme_t * pme_src,
+                    const t_inputrec * ir,
+                    const ivec         grid_size,
+                    real               ewaldcoeff_q,
+                    real               ewaldcoeff_lj);
 
-/* The following three routines are for PME/PP node splitting in pme_pp.c */
-
-/*! \brief Abstract type for PME <-> PP communication */
-typedef struct gmx_pme_pp *gmx_pme_pp_t;
 
 /* Temporary suppression until these structs become opaque and don't live in
  * a header that is included by other headers. Also, until then I have no
@@ -149,7 +151,6 @@ typedef real *splinevec[DIM];
 
 /*! \brief Data structure for beta-spline interpolation */
 typedef struct {
-    int      *thread_one;
     int       n;
     int      *ind;
     splinevec theta;
@@ -159,7 +160,7 @@ typedef struct {
 } splinedata_t;
 
 /*! \brief Data structure for coordinating transfer between PP and PME ranks*/
-typedef struct {
+struct pme_atomcomm_t{
     int      dimind;        /* The index of the dimension, 0=x, 1=y */
     int      nslab;
     int      nodeid;
@@ -195,28 +196,28 @@ typedef struct {
     int            *thread_idx; /* Which thread should spread which coefficient */
     thread_plist_t *thread_plist;
     splinedata_t   *spline;
-} pme_atomcomm_t;
+};
 
 /*! \brief Data structure for a single PME grid */
-typedef struct {
+struct pmegrid_t{
     ivec  ci;     /* The spatial location of this grid         */
     ivec  n;      /* The used size of *grid, including order-1 */
     ivec  offset; /* The grid offset from the full node grid   */
     int   order;  /* PME spreading order                       */
     ivec  s;      /* The allocated size of *grid, s >= n       */
     real *grid;   /* The grid local thread, size n             */
-} pmegrid_t;
+};
 
 /*! \brief Data structures for PME grids */
-typedef struct {
+struct pmegrids_t{
     pmegrid_t  grid;         /* The full node grid (non thread-local)            */
     int        nthread;      /* The number of threads operating on this grid     */
     ivec       nc;           /* The local spatial decomposition over the threads */
     pmegrid_t *grid_th;      /* Array of grids for each thread                   */
     real      *grid_all;     /* Allocated array for the grids in *grid_th        */
-    int      **g2t;          /* The grid to thread index                         */
+    int       *g2t[DIM];     /* The grid to thread index                         */
     ivec       nthread_comm; /* The number of threads to communicate with        */
-} pmegrids_t;
+};
 
 /*! \brief Data structure for spline-interpolation working buffers */
 struct pme_spline_work;
@@ -225,7 +226,7 @@ struct pme_spline_work;
 struct pme_solve_work_t;
 
 /*! \brief Master PME data structure */
-typedef struct gmx_pme_t {
+struct gmx_pme_t {
     int           ndecompdim; /* The number of decomposition dimensions */
     int           nodeid;     /* Our nodeid in mpi->mpi_comm */
     int           nodeid_major;
@@ -244,13 +245,38 @@ typedef struct gmx_pme_t {
     int        nthread;       /* The number of threads doing PME on our rank */
 
     gmx_bool   bPPnode;       /* Node also does particle-particle forces */
+    bool       doCoulomb;     /* Apply PME to electrostatics */
+    bool       doLJ;          /* Apply PME to Lennard-Jones r^-6 interactions */
     gmx_bool   bFEP;          /* Compute Free energy contribution */
     gmx_bool   bFEP_q;
     gmx_bool   bFEP_lj;
     int        nkx, nky, nkz; /* Grid dimensions */
     gmx_bool   bP3M;          /* Do P3M: optimize the influence function */
     int        pme_order;
+    real       ewaldcoeff_q;  /* Ewald splitting coefficient for Coulomb */
+    real       ewaldcoeff_lj; /* Ewald splitting coefficient for r^-6 */
     real       epsilon_r;
+
+
+    enum PmeRunMode runMode; /* Which codepath is the PME runner taking - CPU, GPU, mixed;
+                              * TODO: this is the information that should be owned by the task scheduler,
+                              * and ideally not be duplicated here.
+                              */
+
+    PmeGpu      *gpu;        /* A pointer to the GPU data.
+                              * TODO: this should be unique or a shared pointer.
+                              * Currently in practice there is a single gmx_pme_t instance while a code
+                              * is partially set up for many of them. The PME tuning calls gmx_pme_reinit()
+                              * which fully reinitializes the one and only PME structure anew while maybe
+                              * keeping the old grid buffers if they were already large enough.
+                              * This small choice should be made clear in the later refactoring -
+                              * do we store many PME objects for different grid sizes,
+                              * or a single PME object that handles different grid sizes gracefully.
+                              */
+
+
+    class EwaldBoxZScaler *boxScaler;   /**< The scaling data Ewald uses with walls (set at pme_init constant for the entire run) */
+
 
     int        ljpme_combination_rule;  /* Type of combination rule in LJ-PME */
 
@@ -265,6 +291,7 @@ typedef struct gmx_pme_t {
                                          * This can probably be done in a better way
                                          * but this simple hack works for now
                                          */
+
     /* The PME coefficient spreading grid sizes/strides, includes pme_order-1 */
     int        pmegrid_nx, pmegrid_ny, pmegrid_nz;
     /* pmegrid_nz might be larger than strictly necessary to ensure
@@ -292,6 +319,7 @@ typedef struct gmx_pme_t {
 
     pme_atomcomm_t            atc[2]; /* Indexed on decomposition index */
     matrix                    recipbox;
+    real                      boxVolume;
     splinevec                 bsp_mod;
     /* Buffers to store data for local atoms for L-B combination rule
      * calculations in LJ-PME. lb_buf1 stores either the coefficients
@@ -315,67 +343,26 @@ typedef struct gmx_pme_t {
     /* Work data for sum_qgrid */
     real *   sum_qgrid_tmp;
     real *   sum_qgrid_dd_tmp;
-} t_gmx_pme_t;
+};
 
 //! @endcond
 
-/*! \brief Check restrictions on pme_order and the PME grid nkx,nky,nkz.
+/*! \brief
+ * Finds out if PME is currently running on GPU.
+ * TODO: should this be removed eventually?
  *
- * With bFatal=TRUE, a fatal error is generated on violation,
- * bValidSettings=NULL can be passed.
- * With bFatal=FALSE, *bValidSettings reports the validity of the settings.
- * bUseThreads tells if any MPI rank doing PME uses more than 1 threads.
- * If at calling you bUseThreads is unknown, pass TRUE for conservative
- * checking.
+ * \param[in] pme  The PME structure.
+ * \returns        True if PME runs on GPU currently, false otherwise.
  */
-void gmx_pme_check_restrictions(int pme_order,
-                                int nkx, int nky, int nkz,
-                                int nnodes_major,
-                                int nnodes_minor,
-                                gmx_bool bUseThreads,
-                                gmx_bool bFatal,
-                                gmx_bool *bValidSettings);
-
-/*! \brief Initialize the PME-only side of the PME <-> PP communication */
-gmx_pme_pp_t gmx_pme_pp_init(t_commrec *cr);
+inline bool pme_gpu_active(const gmx_pme_t *pme)
+{
+    return (pme != nullptr) && (pme->runMode != PmeRunMode::CPU);
+}
 
 /*! \brief Tell our PME-only node to switch to a new grid size */
-void gmx_pme_send_switchgrid(t_commrec *cr, ivec grid_size, real ewaldcoeff_q, real ewaldcoeff_lj);
-
-/*! \brief Return values for gmx_pme_recv_q_x */
-enum {
-    pmerecvqxX,            /* calculate PME mesh interactions for new x    */
-    pmerecvqxFINISH,       /* the simulation should finish, we should quit */
-    pmerecvqxSWITCHGRID,   /* change the PME grid size                     */
-    pmerecvqxRESETCOUNTERS /* reset the cycle and flop counters            */
-};
-
-/*! \brief Called by PME-only ranks to receive coefficients and coordinates
- *
- * The return value is used to control further processing, with meanings:
- * pmerecvqxX:             all parameters set, chargeA and chargeB can be NULL
- * pmerecvqxFINISH:        no parameters set
- * pmerecvqxSWITCHGRID:    only grid_size and *ewaldcoeff are set
- * pmerecvqxRESETCOUNTERS: *step is set
- */
-int gmx_pme_recv_coeffs_coords(struct gmx_pme_pp *pme_pp,
-                               int *natoms,
-                               real **chargeA, real **chargeB,
-                               real **sqrt_c6A, real **sqrt_c6B,
-                               real **sigmaA, real **sigmaB,
-                               matrix box, rvec **x, rvec **f,
-                               int *maxshift_x, int *maxshift_y,
-                               gmx_bool *bFreeEnergy_q, gmx_bool *bFreeEnergy_lj,
-                               real *lambda_q, real *lambda_lj,
-                               gmx_bool *bEnerVir, int *pme_flags,
-                               gmx_int64_t *step,
-                               ivec grid_size, real *ewaldcoeff_q, real *ewaldcoeff_lj);
-
-/*! \brief Send the PME mesh force, virial and energy to the PP-only nodes */
-void gmx_pme_send_force_vir_ener(struct gmx_pme_pp *pme_pp,
-                                 rvec *f, matrix vir_q, real energy_q,
-                                 matrix vir_lj, real energy_lj,
-                                 real dvdlambda_q, real dvdlambda_lj,
-                                 float cycles);
+void gmx_pme_send_switchgrid(t_commrec *cr,
+                             ivec       grid_size,
+                             real       ewaldcoeff_q,
+                             real       ewaldcoeff_lj);
 
 #endif

@@ -3,7 +3,7 @@
  *
  * Copyright (c) 1991-2000, University of Groningen, The Netherlands.
  * Copyright (c) 2001-2004, The GROMACS development team.
- * Copyright (c) 2013,2014,2015,2016, by the GROMACS development team, led by
+ * Copyright (c) 2013,2014,2015,2016,2017, by the GROMACS development team, led by
  * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
  * and including many others, as listed in the AUTHORS file in the
  * top-level source directory and at http://www.gromacs.org.
@@ -41,10 +41,11 @@
 #include "config.h"
 
 #include <assert.h>
-#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+
+#include <cmath>
 
 #include <algorithm>
 
@@ -61,18 +62,20 @@
 #include "gromacs/mdlib/gmx_omp_nthreads.h"
 #include "gromacs/mdlib/mdrun.h"
 #include "gromacs/mdtypes/commrec.h"
+#include "gromacs/mdtypes/forceoutput.h"
 #include "gromacs/mdtypes/inputrec.h"
 #include "gromacs/mdtypes/md_enums.h"
 #include "gromacs/mdtypes/mdatom.h"
 #include "gromacs/pbcutil/pbc.h"
 #include "gromacs/pulling/pull_internal.h"
-#include "gromacs/topology/mtop_util.h"
+#include "gromacs/topology/mtop_lookup.h"
 #include "gromacs/topology/topology.h"
 #include "gromacs/utility/cstringutil.h"
 #include "gromacs/utility/exceptions.h"
 #include "gromacs/utility/fatalerror.h"
 #include "gromacs/utility/futil.h"
 #include "gromacs/utility/gmxassert.h"
+#include "gromacs/utility/mutex.h"
 #include "gromacs/utility/pleasecite.h"
 #include "gromacs/utility/real.h"
 #include "gromacs/utility/smalloc.h"
@@ -286,13 +289,14 @@ static void set_legend_for_coord_components(const pull_coord_work_t *pcrd, int c
 
 static FILE *open_pull_out(const char *fn, struct pull_t *pull,
                            const gmx_output_env_t *oenv,
-                           gmx_bool bCoord, unsigned long Flags)
+                           gmx_bool bCoord,
+                           const ContinuationOptions &continuationOptions)
 {
     FILE  *fp;
     int    nsets, c, m;
     char **setname, buf[50];
 
-    if (Flags & MD_APPENDFILES)
+    if (continuationOptions.appendFiles)
     {
         fp = gmx_fio_fopen(fn, "a+");
     }
@@ -1325,9 +1329,10 @@ static void do_constraint(struct pull_t *pull, t_pbc *pbc,
             continue;
         }
 
-        pcrd->f_scal = dr_tot[c]/((pull->group[pcrd->params.group[0]].invtm + pull->group[pcrd->params.group[1]].invtm)*dt*dt);
+        /* Accumulate the forces, in case we have multiple constraint steps */
+        pcrd->f_scal += dr_tot[c]/((pull->group[pcrd->params.group[0]].invtm + pull->group[pcrd->params.group[1]].invtm)*dt*dt);
 
-        if (vir != NULL && pcrd->params.eGeom != epullgDIRPBC && bMaster)
+        if (vir != nullptr && pcrd->params.eGeom != epullgDIRPBC && bMaster)
         {
             double f_invr;
 
@@ -1365,7 +1370,7 @@ static void add_virial_coord_dr(tensor vir, const dvec dr, const dvec f)
 /* Adds the pull contribution to the virial */
 static void add_virial_coord(tensor vir, const pull_coord_work_t *pcrd)
 {
-    if (vir != NULL && pcrd->params.eGeom != epullgDIRPBC)
+    if (vir != nullptr && pcrd->params.eGeom != epullgDIRPBC)
     {
         /* Add the pull contribution for each distance vector to the virial. */
         add_virial_coord_dr(vir, pcrd->dr01, pcrd->f01);
@@ -1560,12 +1565,21 @@ static void calc_pull_coord_vector_force(pull_coord_work_t *pcrd)
 }
 
 
+/* We use a global mutex for locking access to the pull data structure
+ * during registration of external pull potential providers.
+ * We could use a different, local mutex for each pull object, but the overhead
+ * is extremely small here and registration is only done during initialization.
+ */
+static gmx::Mutex registrationMutex;
+
+using Lock = gmx::lock_guard<gmx::Mutex>;
+
 void register_external_pull_potential(struct pull_t *pull,
                                       int            coord_index,
                                       const char    *provider)
 {
-    GMX_RELEASE_ASSERT(pull != NULL, "register_external_pull_potential called before init_pull");
-    GMX_RELEASE_ASSERT(provider != NULL, "register_external_pull_potential called with NULL as provider name");
+    GMX_RELEASE_ASSERT(pull != nullptr, "register_external_pull_potential called before init_pull");
+    GMX_RELEASE_ASSERT(provider != nullptr, "register_external_pull_potential called with NULL as provider name");
 
     if (coord_index < 0 || coord_index > pull->ncoord - 1)
     {
@@ -1581,7 +1595,7 @@ void register_external_pull_potential(struct pull_t *pull,
                   provider, coord_index + 1, epull_names[pcrd->params.eType], epull_names[epullEXTERNAL]);
     }
 
-    GMX_RELEASE_ASSERT(pcrd->params.externalPotentialProvider != NULL, "The external potential provider string for a pull coordinate is NULL");
+    GMX_RELEASE_ASSERT(pcrd->params.externalPotentialProvider != nullptr, "The external potential provider string for a pull coordinate is NULL");
 
     if (gmx_strcasecmp(provider, pcrd->params.externalPotentialProvider) != 0)
     {
@@ -1589,16 +1603,22 @@ void register_external_pull_potential(struct pull_t *pull,
                   provider, coord_index + 1, pcrd->params.externalPotentialProvider);
     }
 
+    /* Lock to avoid (extremely unlikely) simultaneous reading and writing of
+     * pcrd->bExternalPotentialProviderHasBeenRegistered and
+     * pull->numUnregisteredExternalPotentials.
+     */
+    Lock registrationLock(registrationMutex);
+
     if (pcrd->bExternalPotentialProviderHasBeenRegistered)
     {
-        gmx_fatal(FARGS, "Module '%s' attempted to register an external potential for pull coordinate %d multiple times",
+        gmx_fatal(FARGS, "Module '%s' attempted to register an external potential for pull coordinate %d more than once",
                   provider, coord_index + 1);
     }
 
     pcrd->bExternalPotentialProviderHasBeenRegistered = true;
     pull->numUnregisteredExternalPotentials--;
 
-    GMX_RELEASE_ASSERT(pull->numUnregisteredExternalPotentials >= 0, "Negative unregisterd potentials, the pull code in inconsistent");
+    GMX_RELEASE_ASSERT(pull->numUnregisteredExternalPotentials >= 0, "Negative unregistered potentials, the pull code is inconsistent");
 }
 
 
@@ -1686,7 +1706,7 @@ static void do_pull_pot_coord(struct pull_t *pull, int coord_ind, t_pbc *pbc,
 
 real pull_potential(struct pull_t *pull, t_mdatoms *md, t_pbc *pbc,
                     t_commrec *cr, double t, real lambda,
-                    rvec *x, rvec *f, tensor vir, real *dvdlambda)
+                    rvec *x, gmx::ForceWithVirial *force, real *dvdlambda)
 {
     real V = 0;
 
@@ -1702,8 +1722,11 @@ real pull_potential(struct pull_t *pull, t_mdatoms *md, t_pbc *pbc,
     {
         real dVdl = 0;
 
-        pull_calc_coms(cr, pull, md, pbc, t, x, NULL);
+        pull_calc_coms(cr, pull, md, pbc, t, x, nullptr);
 
+        rvec       *f             = as_rvec_array(force->force_.data());
+        matrix      virial        = { { 0 } };
+        const bool  computeVirial = (force->computeVirial_ && MASTER(cr));
         for (int c = 0; c < pull->ncoord; c++)
         {
             /* For external potential the force is assumed to be given by an external module by a call to
@@ -1714,7 +1737,9 @@ real pull_potential(struct pull_t *pull, t_mdatoms *md, t_pbc *pbc,
             }
 
             do_pull_pot_coord(pull, c, pbc, t, lambda,
-                              &V, MASTER(cr) ? vir : NULL, &dVdl);
+                              &V,
+                              computeVirial ? virial : nullptr,
+                              &dVdl);
 
             /* Distribute the force over the atoms in the pulled groups */
             apply_forces_coord(pull, c, md, f);
@@ -1722,6 +1747,7 @@ real pull_potential(struct pull_t *pull, t_mdatoms *md, t_pbc *pbc,
 
         if (MASTER(cr))
         {
+            force->addVirialContribution(virial);
             *dvdlambda += dVdl;
         }
     }
@@ -1771,13 +1797,13 @@ static void make_local_pull_group(gmx_ga2la_t *ga2la,
             {
                 pg->nalloc_loc = over_alloc_dd(pg->nat_loc+1);
                 srenew(pg->ind_loc, pg->nalloc_loc);
-                if (pg->epgrppbc == epgrppbcCOS || pg->params.weight != NULL)
+                if (pg->epgrppbc == epgrppbcCOS || pg->params.weight != nullptr)
                 {
                     srenew(pg->weight_loc, pg->nalloc_loc);
                 }
             }
             pg->ind_loc[pg->nat_loc] = ii;
-            if (pg->params.weight != NULL)
+            if (pg->params.weight != nullptr)
             {
                 pg->weight_loc[pg->nat_loc] = pg->params.weight[i];
             }
@@ -1804,13 +1830,13 @@ void dd_make_local_pull_groups(t_commrec *cr, struct pull_t *pull, t_mdatoms *md
     }
     else
     {
-        ga2la = NULL;
+        ga2la = nullptr;
     }
 
     /* We always make the master node participate, such that it can do i/o
      * and to simplify MC type extensions people might have.
      */
-    bMustParticipate = (comm->bParticipateAll || dd == NULL || DDMASTER(dd));
+    bMustParticipate = (comm->bParticipateAll || dd == nullptr || DDMASTER(dd));
 
     for (g = 0; g < pull->ngroup; g++)
     {
@@ -1852,7 +1878,7 @@ void dd_make_local_pull_groups(t_commrec *cr, struct pull_t *pull, t_mdatoms *md
             (comm->bParticipate &&
              comm->must_count >= comm->setup_count - history_count);
 
-        if (debug && dd != NULL)
+        if (debug && dd != nullptr)
         {
             fprintf(debug, "Our DD rank (%3d) pull #atoms>0 or master: %d, will be part %d\n",
                     dd->rank, bMustParticipate, bWillParticipate);
@@ -1916,13 +1942,6 @@ static void init_pull_group_index(FILE *fplog, t_commrec *cr,
                                   const gmx_mtop_t *mtop,
                                   const t_inputrec *ir, real lambda)
 {
-    int                   i, ii, d, nfrozen, ndim;
-    real                  m, w, mbd;
-    double                tmass, wmass, wwmass;
-    const gmx_groups_t   *groups;
-    gmx_mtop_atomlookup_t alook;
-    t_atom               *atom;
-
     if (EI_ENERGY_MINIMIZATION(ir->eI) || ir->eI == eiBD)
     {
         /* There are no masses in the integrator.
@@ -1940,8 +1959,8 @@ static void init_pull_group_index(FILE *fplog, t_commrec *cr,
     {
         pg->nat_loc    = 0;
         pg->nalloc_loc = 0;
-        pg->ind_loc    = NULL;
-        pg->weight_loc = NULL;
+        pg->ind_loc    = nullptr;
+        pg->weight_loc = nullptr;
     }
     else
     {
@@ -1957,21 +1976,20 @@ static void init_pull_group_index(FILE *fplog, t_commrec *cr,
         }
     }
 
-    groups = &mtop->groups;
+    const gmx_groups_t *groups = &mtop->groups;
 
-    alook = gmx_mtop_atomlookup_init(mtop);
-
-    nfrozen = 0;
-    tmass   = 0;
-    wmass   = 0;
-    wwmass  = 0;
-    for (i = 0; i < pg->params.nat; i++)
+    /* Count frozen dimensions and (weighted) mass */
+    int    nfrozen = 0;
+    double tmass   = 0;
+    double wmass   = 0;
+    double wwmass  = 0;
+    int    molb    = 0;
+    for (int i = 0; i < pg->params.nat; i++)
     {
-        ii = pg->params.ind[i];
-        gmx_mtop_atomnr_to_atom(alook, ii, &atom);
+        int ii = pg->params.ind[i];
         if (bConstraint && ir->opts.nFreeze)
         {
-            for (d = 0; d < DIM; d++)
+            for (int d = 0; d < DIM; d++)
             {
                 if (pulldim_con[d] == 1 &&
                     ir->opts.nFreeze[ggrpnr(groups, egcFREEZE, ii)][d])
@@ -1980,14 +1998,17 @@ static void init_pull_group_index(FILE *fplog, t_commrec *cr,
                 }
             }
         }
+        const t_atom &atom = mtopGetAtomParameters(mtop, ii, &molb);
+        real          m;
         if (ir->efep == efepNO)
         {
-            m = atom->m;
+            m = atom.m;
         }
         else
         {
-            m = (1 - lambda)*atom->m + lambda*atom->mB;
+            m = (1 - lambda)*atom.m + lambda*atom.mB;
         }
+        real w;
         if (pg->params.nweight > 0)
         {
             w = pg->params.weight[i];
@@ -2005,13 +2026,14 @@ static void init_pull_group_index(FILE *fplog, t_commrec *cr,
         }
         else if (ir->eI == eiBD)
         {
+            real mbd;
             if (ir->bd_fric)
             {
                 mbd = ir->bd_fric*ir->delta_t;
             }
             else
             {
-                if (groups->grpnr[egcTC] == NULL)
+                if (groups->grpnr[egcTC] == nullptr)
                 {
                     mbd = ir->delta_t/ir->opts.tau_t[0];
                 }
@@ -2028,8 +2050,6 @@ static void init_pull_group_index(FILE *fplog, t_commrec *cr,
         wmass  += m*w;
         wwmass += m*w*w;
     }
-
-    gmx_mtop_atomlookup_destroy(alook);
 
     if (wmass == 0)
     {
@@ -2071,8 +2091,8 @@ static void init_pull_group_index(FILE *fplog, t_commrec *cr,
     }
     else
     {
-        ndim = 0;
-        for (d = 0; d < DIM; d++)
+        int ndim = 0;
+        for (int d = 0; d < DIM; d++)
         {
             ndim += pulldim_con[d]*pg->params.nat;
         }
@@ -2094,7 +2114,8 @@ init_pull(FILE *fplog, const pull_params_t *pull_params, const t_inputrec *ir,
           int nfile, const t_filenm fnm[],
           const gmx_mtop_t *mtop, t_commrec *cr,
           const gmx_output_env_t *oenv, real lambda,
-          gmx_bool bOutFile, unsigned long Flags)
+          gmx_bool bOutFile,
+          const ContinuationOptions &continuationOptions)
 {
     struct pull_t *pull;
     pull_comm_t   *comm;
@@ -2105,8 +2126,8 @@ init_pull(FILE *fplog, const pull_params_t *pull_params, const t_inputrec *ir,
     /* Copy the pull parameters */
     pull->params       = *pull_params;
     /* Avoid pointer copies */
-    pull->params.group = NULL;
-    pull->params.coord = NULL;
+    pull->params.group = nullptr;
+    pull->params.coord = nullptr;
 
     pull->ncoord       = pull_params->ncoord;
     pull->ngroup       = pull_params->ngroup;
@@ -2395,7 +2416,7 @@ init_pull(FILE *fplog, const pull_params_t *pull_params, const t_inputrec *ir,
                     }
                     else
                     {
-                        if (pgrp->params.weight != NULL)
+                        if (pgrp->params.weight != nullptr)
                         {
                             gmx_fatal(FARGS, "Pull groups can not have relative weights and cosine weighting at same time");
                         }
@@ -2452,9 +2473,9 @@ init_pull(FILE *fplog, const pull_params_t *pull_params, const t_inputrec *ir,
 
 #if GMX_MPI
     /* Use a sub-communicator when we have more than 32 ranks */
-    comm->bParticipateAll = (cr == NULL || !DOMAINDECOMP(cr) ||
+    comm->bParticipateAll = (cr == nullptr || !DOMAINDECOMP(cr) ||
                              cr->dd->nnodes <= 32 ||
-                             getenv("GMX_PULL_PARTICIPATE_ALL") != NULL);
+                             getenv("GMX_PULL_PARTICIPATE_ALL") != nullptr);
     /* This sub-commicator is not used with comm->bParticipateAll,
      * so we can always initialize it to NULL.
      */
@@ -2468,21 +2489,21 @@ init_pull(FILE *fplog, const pull_params_t *pull_params, const t_inputrec *ir,
     comm->setup_count     = 0;
     comm->must_count      = 0;
 
-    if (!comm->bParticipateAll && fplog != NULL)
+    if (!comm->bParticipateAll && fplog != nullptr)
     {
         fprintf(fplog, "Will use a sub-communicator for pull communication\n");
     }
 
-    comm->rbuf     = NULL;
-    comm->dbuf     = NULL;
-    comm->dbuf_cyl = NULL;
+    comm->rbuf     = nullptr;
+    comm->dbuf     = nullptr;
+    comm->dbuf_cyl = nullptr;
 
     /* We still need to initialize the PBC reference coordinates */
     pull->bSetPBCatoms = TRUE;
 
     /* Only do I/O when we are doing dynamics and if we are the MASTER */
-    pull->out_x = NULL;
-    pull->out_f = NULL;
+    pull->out_x = nullptr;
+    pull->out_f = nullptr;
     if (bOutFile)
     {
         /* Check for px and pf filename collision, if we are writing
@@ -2511,9 +2532,9 @@ init_pull(FILE *fplog, const pull_params_t *pull_params, const t_inputrec *ir,
                 }
                 GMX_CATCH_ALL_AND_EXIT_WITH_FATAL_ERROR;
                 pull->out_x   = open_pull_out(px_appended.c_str(), pull, oenv,
-                                              TRUE, Flags);
+                                              TRUE, continuationOptions);
                 pull->out_f = open_pull_out(pf_appended.c_str(), pull, oenv,
-                                            FALSE, Flags);
+                                            FALSE, continuationOptions);
                 return pull;
             }
             else
@@ -2526,12 +2547,12 @@ init_pull(FILE *fplog, const pull_params_t *pull_params, const t_inputrec *ir,
         if (pull->params.nstxout != 0)
         {
             pull->out_x = open_pull_out(opt2fn("-px", nfile, fnm), pull, oenv,
-                                        TRUE, Flags);
+                                        TRUE, continuationOptions);
         }
         if (pull->params.nstfout != 0)
         {
             pull->out_f = open_pull_out(opt2fn("-pf", nfile, fnm), pull, oenv,
-                                        FALSE, Flags);
+                                        FALSE, continuationOptions);
         }
     }
 

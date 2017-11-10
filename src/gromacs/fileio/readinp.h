@@ -3,7 +3,7 @@
  *
  * Copyright (c) 1991-2000, University of Groningen, The Netherlands.
  * Copyright (c) 2001-2004, The GROMACS development team.
- * Copyright (c) 2013,2014,2015, by the GROMACS development team, led by
+ * Copyright (c) 2013,2014,2015,2016,2017, by the GROMACS development team, led by
  * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
  * and including many others, as listed in the AUTHORS file in the
  * top-level source directory and at http://www.gromacs.org.
@@ -39,32 +39,69 @@
 
 #include <cstring>
 
-#include "gromacs/fileio/warninp.h"
 #include "gromacs/utility/basedefinitions.h"
 
-typedef struct {
-    int      count;     /* sort order for output  */
-    gmx_bool bObsolete; /* whether it is an obsolete param value */
-    gmx_bool bSet;      /* whether it it has been read out */
-    char    *name;      /* name of the parameter */
-    char    *value;     /* parameter value string */
-    int      inp_count; /* number of einps read. Only valid for the first item
-                                                 in the inpfile list. */
+struct warninp;
+typedef warninp *warninp_t;
+
+namespace gmx
+{
+class KeyValueTreeObject;
+class TextInputStream;
+class TextOutputStream;
+}
+
+typedef struct t_inpfile {
+    int      count;                  /* sort order for output  */
+    gmx_bool bObsolete;              /* whether it is an obsolete param value */
+    gmx_bool bSet;                   /* whether it it has been read out */
+    gmx_bool bHandledAsKeyValueTree; /* whether it it has been handled with key-value machinery */
+    char    *name;                   /* name of the parameter */
+    char    *value;                  /* parameter value string */
+    int      inp_count;              /* number of einps read. Only valid for the first item
+                                                              in the inpfile list. */
 } t_inpfile;
 /* entry in input files (like .mdp files).
    Initally read in with read_inpfile, then filled in with missing values
    through get_eint, get_ereal, etc. */
 
-t_inpfile *read_inpfile(const char *fn, int *ninp,
+/*! \brief Create and return an array of \c ninp t_inpfile structs
+ * from "key = value" lines in \c stream corresponding to file \c fn.
+ *
+ * \param[in]  stream          Text stream to read.
+ * \param[in]  fn              Filename corresponding to \c reader.
+ * \param[out] ninp            Length of returned array.
+ * \param[out] wi              Handler for context-sensitive warnings.
+ * \throws     std::bad_alloc  If out of memory.
+ * \throws     Anything the stream underlying \c reader can throw. */
+t_inpfile *read_inpfile(gmx::TextInputStream *stream, const char *fn, int *ninp,
                         warninp_t wi);
-/* Create & populate a t_inpfile struct from values in file fn.
-   fn = the file name
-   ninp = the number of read parameters
-   cppopts = the cpp-style options for #include paths and #defines */
 
-void write_inpfile(const char *fn, int ninp, t_inpfile inp[],
+gmx::KeyValueTreeObject flatKeyValueTreeFromInpFile(int ninp, t_inpfile inp[]);
+
+enum class WriteMdpHeader
+{
+    no, yes
+};
+
+/*! \brief Write "key = value" lines from \c inp to \c stream.
+ *
+ * \param[in]  stream          Text stream to write.
+ * \param[in]  fn              Filename corresponding to \c stream.
+ * \param[in]  ninp            Length of \c inp.
+ * \param[in]  inp             Array of key-value pairs.
+ * \param[in]  bHaltOnUnknown  Whether to issue a fatal error if an unknown key is found.
+ * \param[in]  writeHeader     Whether to write a header recording some context a user might like.
+ * \param[out] wi              Handler for context-sensitive warnings.
+ * \throws     std::bad_alloc  If out of memory.
+ * \throws     Anything the stream underlying \c writer can throw. */
+void write_inpfile(gmx::TextOutputStream *stream, const char *fn, int ninp, t_inpfile inp[],
                    gmx_bool bHaltOnUnknown,
+                   WriteMdpHeader writeHeader,
                    warninp_t wi);
+/* Write inp to fn, warning (and perhaps halting) if any fields are
+ * unknown. The helpful header contains irreproducible content, so
+ * its writing can be suppressed to make testing more useful. */
 
 void replace_inp_entry(int ninp, t_inpfile *inp,
                        const char *old_entry, const char *new_entry);
@@ -72,6 +109,8 @@ void replace_inp_entry(int ninp, t_inpfile *inp,
 int search_einp(int ninp, const t_inpfile *inp, const char *name);
 /* Return the index of an .mdp field with the given name within the
  * inp array, if it exists. Return -1 if it does not exist. */
+
+void mark_einp_set(int ninp, t_inpfile *inp, const char *name);
 
 int get_eint(int *ninp, t_inpfile **inp, const char *name, int def,
              warninp_t wi);

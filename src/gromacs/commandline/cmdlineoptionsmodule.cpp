@@ -1,7 +1,7 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2014,2015, by the GROMACS development team, led by
+ * Copyright (c) 2014,2015,2016,2017, by the GROMACS development team, led by
  * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
  * and including many others, as listed in the AUTHORS file in the
  * top-level source directory and at http://www.gromacs.org.
@@ -77,7 +77,7 @@ class CommandLineOptionsModuleSettings : public ICommandLineOptionsModuleSetting
 
         const std::string &helpText() const { return helpText_; }
 
-        virtual void setHelpText(const ConstArrayRef<const char *> &help)
+        virtual void setHelpText(const ArrayRef<const char *const> &help)
         {
             helpText_ = joinStrings(help, "\n");
         }
@@ -131,7 +131,7 @@ void CommandLineOptionsModule::init(CommandLineModuleSettings *settings)
 {
     if (!module_)
     {
-        GMX_RELEASE_ASSERT(factory_ != NULL, "Neither factory nor module provided");
+        GMX_RELEASE_ASSERT(factory_ != nullptr, "Neither factory nor module provided");
         module_ = factory_();
     }
     module_->init(settings);
@@ -150,11 +150,11 @@ void CommandLineOptionsModule::writeHelp(const CommandLineHelpContext &context) 
     ICommandLineOptionsModule        *module = module_.get();
     if (!module)
     {
-        GMX_RELEASE_ASSERT(factory_ != NULL, "Neither factory nor module provided");
+        GMX_RELEASE_ASSERT(factory_ != nullptr, "Neither factory nor module provided");
         moduleGuard = factory_();
         module      = moduleGuard.get();
     }
-    Options                          options(name(), shortDescription());
+    Options                          options;
     OptionsBehaviorCollection        behaviors(&options);
     CommandLineOptionsModuleSettings settings(&behaviors);
     module->initOptions(&options, &settings);
@@ -166,7 +166,7 @@ void CommandLineOptionsModule::writeHelp(const CommandLineHelpContext &context) 
 void CommandLineOptionsModule::parseOptions(int argc, char *argv[])
 {
     FileNameOptionManager fileoptManager;
-    Options               options(name_, description_);
+    Options               options;
 
     options.addManager(&fileoptManager);
 

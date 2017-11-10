@@ -3,7 +3,7 @@
  *
  * Copyright (c) 1991-2000, University of Groningen, The Netherlands.
  * Copyright (c) 2001-2004, The GROMACS development team.
- * Copyright (c) 2013,2014,2015, by the GROMACS development team, led by
+ * Copyright (c) 2013,2014,2015,2017, by the GROMACS development team, led by
  * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
  * and including many others, as listed in the AUTHORS file in the
  * top-level source directory and at http://www.gromacs.org.
@@ -49,13 +49,14 @@
 
 #include "ewald.h"
 
-#include <math.h>
 #include <stdio.h>
 
+#include <cmath>
 #include <cstdlib>
 
 #include <algorithm>
 
+#include "gromacs/ewald/ewald-utils.h"
 #include "gromacs/math/functions.h"
 #include "gromacs/math/gmxcomplex.h"
 #include "gromacs/math/units.h"
@@ -87,9 +88,9 @@ void init_ewald_tab(struct gmx_ewald_tab_t **et, const t_inputrec *ir, FILE *fp)
     (*et)->ny       = ir->nky+1;
     (*et)->nz       = ir->nkz+1;
     (*et)->kmax     = std::max((*et)->nx, std::max((*et)->ny, (*et)->nz));
-    (*et)->eir      = NULL;
-    (*et)->tab_xy   = NULL;
-    (*et)->tab_qxyz = NULL;
+    (*et)->eir      = nullptr;
+    (*et)->tab_xy   = nullptr;
+    (*et)->tab_qxyz = nullptr;
 }
 
 //! Calculates wave vectors.
@@ -137,21 +138,20 @@ static void tabulateStructureFactors(int natom, rvec x[], int kmax, cvec **eir, 
 real do_ewald(t_inputrec *ir,
               rvec x[],        rvec f[],
               real chargeA[],  real chargeB[],
-              rvec box,
+              matrix box,
               t_commrec *cr,   int natoms,
               matrix lrvir,    real ewaldcoeff,
               real lambda,     real *dvdlambda,
               struct gmx_ewald_tab_t *et)
 {
     real     factor     = -1.0/(4*ewaldcoeff*ewaldcoeff);
-    real     scaleRecip = 4.0*M_PI/(box[XX]*box[YY]*box[ZZ])*ONE_4PI_EPS0/ir->epsilon_r; /* 1/(Vol*e0) */
     real    *charge, energy_AB[2], energy;
     rvec     lll;
     int      lowiy, lowiz, ix, iy, iz, n, q;
     real     tmp, cs, ss, ak, akv, mx, my, mz, m2, scale;
     gmx_bool bFreeEnergy;
 
-    if (cr != NULL)
+    if (cr != nullptr)
     {
         if (PAR(cr))
         {
@@ -159,6 +159,19 @@ real do_ewald(t_inputrec *ir,
         }
     }
 
+    /* Scale box with Ewald wall factor */
+    matrix          scaledBox;
+    EwaldBoxZScaler boxScaler(*ir);
+    boxScaler.scaleBox(box, scaledBox);
+
+    rvec boxDiag;
+    for (int i = 0; (i < DIM); i++)
+    {
+        boxDiag[i] = scaledBox[i][i];
+    }
+
+    /* 1/(Vol*e0) */
+    real scaleRecip = 4.0*M_PI/(boxDiag[XX]*boxDiag[YY]*boxDiag[ZZ])*ONE_4PI_EPS0/ir->epsilon_r;
 
     if (!et->eir) /* allocate if we need to */
     {
@@ -175,7 +188,7 @@ real do_ewald(t_inputrec *ir,
 
     clear_mat(lrvir);
 
-    calc_lll(box, lll);
+    calc_lll(boxDiag, lll);
     tabulateStructureFactors(natoms, x, et->kmax, et->eir, lll);
 
     for (q = 0; q < (bFreeEnergy ? 2 : 1); q++)
@@ -314,7 +327,7 @@ real ewald_charge_correction(t_commrec *cr, t_forcerec *fr, real lambda,
         /* Apply charge correction */
         vol = box[XX][XX]*box[YY][YY]*box[ZZ][ZZ];
 
-        fac = M_PI*ONE_4PI_EPS0/(fr->epsilon_r*2.0*vol*vol*gmx::square(fr->ewaldcoeff_q));
+        fac = M_PI*ONE_4PI_EPS0/(fr->ic->epsilon_r*2.0*vol*vol*gmx::square(fr->ic->ewaldcoeff_q));
 
         qs2A = fr->qsum[0]*fr->qsum[0];
         qs2B = fr->qsum[1]*fr->qsum[1];

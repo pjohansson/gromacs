@@ -3,7 +3,7 @@
  *
  * Copyright (c) 1991-2000, University of Groningen, The Netherlands.
  * Copyright (c) 2001-2013, The GROMACS development team.
- * Copyright (c) 2013,2014,2015,2016, by the GROMACS development team, led by
+ * Copyright (c) 2013,2014,2015,2016,2017, by the GROMACS development team, led by
  * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
  * and including many others, as listed in the AUTHORS file in the
  * top-level source directory and at http://www.gromacs.org.
@@ -36,6 +36,8 @@
  */
 #include "gmxpre.h"
 
+#include "check.h"
+
 #include <cmath>
 #include <cstdio>
 #include <cstring>
@@ -50,10 +52,11 @@
 #include "gromacs/math/functions.h"
 #include "gromacs/math/units.h"
 #include "gromacs/math/vec.h"
+#include "gromacs/mdrunutility/mdmodules.h"
 #include "gromacs/mdtypes/inputrec.h"
 #include "gromacs/mdtypes/md_enums.h"
+#include "gromacs/mdtypes/state.h"
 #include "gromacs/pbcutil/pbc.h"
-#include "gromacs/tools/compare.h"
 #include "gromacs/topology/atomprop.h"
 #include "gromacs/topology/block.h"
 #include "gromacs/topology/ifunc.h"
@@ -86,11 +89,110 @@ typedef struct {
     float bBox;
 } t_fr_time;
 
+static void comp_tpx(const char *fn1, const char *fn2,
+                     gmx_bool bRMSD, real ftol, real abstol)
+{
+    const char    *ff[2];
+    t_inputrec    *ir[2];
+    t_state        state[2];
+    gmx_mtop_t     mtop[2];
+    t_topology     top[2];
+    int            i;
+
+    ff[0] = fn1;
+    ff[1] = fn2;
+    for (i = 0; i < (fn2 ? 2 : 1); i++)
+    {
+        ir[i] = new t_inputrec();
+        read_tpx_state(ff[i], ir[i], &state[i], &(mtop[i]));
+        gmx::MDModules().adjustInputrecBasedOnModules(ir[i]);
+    }
+    if (fn2)
+    {
+        cmp_inputrec(stdout, ir[0], ir[1], ftol, abstol);
+        /* Convert gmx_mtop_t to t_topology.
+         * We should implement direct mtop comparison,
+         * but it might be useful to keep t_topology comparison as an option.
+         */
+        top[0] = gmx_mtop_t_to_t_topology(&mtop[0], false);
+        top[1] = gmx_mtop_t_to_t_topology(&mtop[1], false);
+        cmp_top(stdout, &top[0], &top[1], ftol, abstol);
+        cmp_groups(stdout, &mtop[0].groups, &mtop[1].groups,
+                   mtop[0].natoms, mtop[1].natoms);
+        comp_state(&state[0], &state[1], bRMSD, ftol, abstol);
+    }
+    else
+    {
+        if (ir[0]->efep == efepNO)
+        {
+            fprintf(stdout, "inputrec->efep = %s\n", efep_names[ir[0]->efep]);
+        }
+        else
+        {
+            if (ir[0]->bPull)
+            {
+                comp_pull_AB(stdout, ir[0]->pull, ftol, abstol);
+            }
+            /* Convert gmx_mtop_t to t_topology.
+             * We should implement direct mtop comparison,
+             * but it might be useful to keep t_topology comparison as an option.
+             */
+            top[0] = gmx_mtop_t_to_t_topology(&mtop[0], true);
+            cmp_top(stdout, &top[0], nullptr, ftol, abstol);
+        }
+    }
+}
+
+static void comp_trx(const gmx_output_env_t *oenv, const char *fn1, const char *fn2,
+                     gmx_bool bRMSD, real ftol, real abstol)
+{
+    int          i;
+    const char  *fn[2];
+    t_trxframe   fr[2];
+    t_trxstatus *status[2];
+    gmx_bool     b[2];
+
+    fn[0] = fn1;
+    fn[1] = fn2;
+    fprintf(stderr, "Comparing trajectory files %s and %s\n", fn1, fn2);
+    for (i = 0; i < 2; i++)
+    {
+        b[i] = read_first_frame(oenv, &status[i], fn[i], &fr[i], TRX_READ_X|TRX_READ_V|TRX_READ_F);
+    }
+
+    if (b[0] && b[1])
+    {
+        do
+        {
+            comp_frame(stdout, &(fr[0]), &(fr[1]), bRMSD, ftol, abstol);
+
+            for (i = 0; i < 2; i++)
+            {
+                b[i] = read_next_frame(oenv, status[i], &fr[i]);
+            }
+        }
+        while (b[0] && b[1]);
+
+        for (i = 0; i < 2; i++)
+        {
+            if (b[i] && !b[1-i])
+            {
+                fprintf(stdout, "\nEnd of file on %s but not on %s\n", fn[1-i], fn[i]);
+            }
+            close_trx(status[i]);
+        }
+    }
+    if (!b[0] && !b[1])
+    {
+        fprintf(stdout, "\nBoth files read correctly\n");
+    }
+}
+
 static void tpx2system(FILE *fp, const gmx_mtop_t *mtop)
 {
     int                       nmol, nvsite = 0;
     gmx_mtop_atomloop_block_t aloop;
-    t_atom                   *atom;
+    const t_atom             *atom;
 
     fprintf(fp, "\\subsection{Simulation system}\n");
     aloop = gmx_mtop_atomloop_block_init(mtop);
@@ -146,11 +248,11 @@ static void tpx2params(FILE *fp, const t_inputrec *ir)
 
 static void tpx2methods(const char *tpx, const char *tex)
 {
-    FILE         *fp;
-    t_inputrec    ir;
-    t_state       state;
-    gmx_mtop_t    mtop;
+    FILE          *fp;
+    t_state        state;
+    gmx_mtop_t     mtop;
 
+    t_inputrec     ir;
     read_tpx_state(tpx, &ir, &state, &mtop);
     fp = gmx_fio_fopen(tex, "w");
     fprintf(fp, "\\section{Methods}\n");
@@ -276,7 +378,7 @@ static void chk_bonds(t_idef *idef, int ePBC, rvec *x, matrix box, real tol)
     }
 }
 
-void chk_trj(const gmx_output_env_t *oenv, const char *fn, const char *tpr, real tol)
+static void chk_trj(const gmx_output_env_t *oenv, const char *fn, const char *tpr, real tol)
 {
     t_trxframe       fr;
     t_count          count;
@@ -286,7 +388,7 @@ void chk_trj(const gmx_output_env_t *oenv, const char *fn, const char *tpr, real
     gmx_bool         bShowTimestep = TRUE, newline = FALSE;
     t_trxstatus     *status;
     gmx_mtop_t       mtop;
-    gmx_localtop_t  *top = NULL;
+    gmx_localtop_t  *top = nullptr;
     t_state          state;
     t_inputrec       ir;
 
@@ -394,7 +496,7 @@ void chk_trj(const gmx_output_env_t *oenv, const char *fn, const char *tpr, real
 
     fprintf(stderr, "\n");
 
-    close_trj(status);
+    close_trx(status);
 
     fprintf(stderr, "\nItem        #frames");
     if (bShowTimestep)
@@ -412,7 +514,7 @@ void chk_trj(const gmx_output_env_t *oenv, const char *fn, const char *tpr, real
     PRINTITEM ( "Box",        bBox );
 }
 
-void chk_tps(const char *fn, real vdw_fac, real bon_lo, real bon_hi)
+static void chk_tps(const char *fn, real vdw_fac, real bon_lo, real bon_hi)
 {
     int            natom, i, j, k;
     t_topology     top;
@@ -613,7 +715,7 @@ void chk_tps(const char *fn, real vdw_fac, real bon_lo, real bon_hi)
     }
 }
 
-void chk_ndx(const char *fn)
+static void chk_ndx(const char *fn)
 {
     t_blocka *grps;
     char    **grpname;
@@ -645,11 +747,11 @@ void chk_ndx(const char *fn)
     done_blocka(grps);
 }
 
-void chk_enx(const char *fn)
+static void chk_enx(const char *fn)
 {
     int            nre, fnr;
     ener_file_t    in;
-    gmx_enxnm_t   *enm = NULL;
+    gmx_enxnm_t   *enm = nullptr;
     t_enxframe    *fr;
     gmx_bool       bShowTStep;
     gmx_bool       timeSet;
@@ -738,18 +840,18 @@ int gmx_check(int argc, char *argv[])
         "consisting of a rough outline for a methods section for a paper."
     };
     t_filenm          fnm[] = {
-        { efTRX, "-f",  NULL, ffOPTRD },
-        { efTRX, "-f2",  NULL, ffOPTRD },
+        { efTRX, "-f",  nullptr, ffOPTRD },
+        { efTRX, "-f2",  nullptr, ffOPTRD },
         { efTPR, "-s1", "top1", ffOPTRD },
         { efTPR, "-s2", "top2", ffOPTRD },
-        { efTPS, "-c",  NULL, ffOPTRD },
-        { efEDR, "-e",  NULL, ffOPTRD },
+        { efTPS, "-c",  nullptr, ffOPTRD },
+        { efEDR, "-e",  nullptr, ffOPTRD },
         { efEDR, "-e2", "ener2", ffOPTRD },
-        { efNDX, "-n",  NULL, ffOPTRD },
-        { efTEX, "-m",  NULL, ffOPTWR }
+        { efNDX, "-n",  nullptr, ffOPTRD },
+        { efTEX, "-m",  nullptr, ffOPTWR }
     };
 #define NFILE asize(fnm)
-    const char       *fn1 = NULL, *fn2 = NULL, *tex = NULL;
+    const char       *fn1 = nullptr, *fn2 = nullptr, *tex = nullptr;
 
     gmx_output_env_t *oenv;
     static real       vdw_fac  = 0.8;
@@ -759,7 +861,7 @@ int gmx_check(int argc, char *argv[])
     static real       ftol     = 0.001;
     static real       abstol   = 0.001;
     static gmx_bool   bCompAB  = FALSE;
-    static char      *lastener = NULL;
+    static char      *lastener = nullptr;
     static t_pargs    pa[]     = {
         { "-vdwfac", FALSE, etREAL, {&vdw_fac},
           "Fraction of sum of VdW radii used as warning cutoff" },
@@ -780,7 +882,7 @@ int gmx_check(int argc, char *argv[])
     };
 
     if (!parse_common_args(&argc, argv, 0, NFILE, fnm, asize(pa), pa,
-                           asize(desc), desc, 0, NULL, &oenv))
+                           asize(desc), desc, 0, nullptr, &oenv))
     {
         return 0;
     }
@@ -807,11 +909,11 @@ int gmx_check(int argc, char *argv[])
     {
         if (bCompAB)
         {
-            if (fn1 == NULL)
+            if (fn1 == nullptr)
             {
                 gmx_fatal(FARGS, "With -ab you need to set the -s1 option");
             }
-            fn2 = NULL;
+            fn2 = nullptr;
         }
         comp_tpx(fn1, fn2, bRMSD, ftol, abstol);
     }

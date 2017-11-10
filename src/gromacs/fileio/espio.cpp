@@ -2,7 +2,7 @@
  * This file is part of the GROMACS molecular simulation package.
  *
  * Copyright (c) 2005, The GROMACS development team.
- * Copyright (c) 2013,2014,2015,2016, by the GROMACS development team, led by
+ * Copyright (c) 2013,2014,2015,2016,2017, by the GROMACS development team, led by
  * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
  * and including many others, as listed in the AUTHORS file in the
  * top-level source directory and at http://www.gromacs.org.
@@ -164,9 +164,9 @@ static const char *const esp_prop[espNR] = {
 };
 
 void gmx_espresso_read_conf(const char *infile,
-                            t_topology *top, rvec x[], rvec *v, matrix box)
+                            t_symtab *symtab, char **name, t_atoms *atoms,
+                            rvec x[], rvec *v, matrix box)
 {
-    t_atoms  *atoms = &top->atoms;
     FILE     *fp;
     char      word[STRLEN], buf[STRLEN];
     int       level, r, nprop, p, i, m, molnr;
@@ -174,10 +174,19 @@ void gmx_espresso_read_conf(const char *infile,
     double    d;
     gmx_bool  bFoundParticles, bFoundProp, bFoundVariable, bMol;
 
-    // TODO: The code does not understand titles it writes...
-    top->name = put_symtab(&top->symtab, "");
+    if (name != nullptr)
+    {
+        // No title reading implemented for espresso files
+        *name = gmx_strdup("");
+    }
 
     clear_mat(box);
+
+    atoms->haveMass    = FALSE;
+    atoms->haveCharge  = FALSE;
+    atoms->haveType    = FALSE;
+    atoms->haveBState  = FALSE;
+    atoms->havePdbInfo = FALSE;
 
     fp = gmx_fio_fopen(infile, "r");
 
@@ -201,7 +210,15 @@ void gmx_espresso_read_conf(const char *infile,
                     {
                         bFoundProp    = TRUE;
                         prop[nprop++] = p;
-                        /* printf("  prop[%d] = %s\n",nprop-1,esp_prop[prop[nprop-1]]); */
+                        if (p == espQ)
+                        {
+                            atoms->haveCharge = TRUE;
+                        }
+
+                        if (debug)
+                        {
+                            fprintf(debug, "  prop[%d] = %s\n", nprop-1, esp_prop[prop[nprop-1]]);
+                        }
                     }
                 }
                 if (!bFoundProp && word[0] != '}')
@@ -249,7 +266,7 @@ void gmx_espresso_read_conf(const char *infile,
                                 break;
                             case espTYPE:
                                 r                   = get_espresso_word(fp, word);
-                                atoms->atom[i].type = std::strtol(word, NULL, 10);
+                                atoms->atom[i].type = std::strtol(word, nullptr, 10);
                                 break;
                             case espQ:
                                 r = get_espresso_word(fp, word);
@@ -273,7 +290,7 @@ void gmx_espresso_read_conf(const char *infile,
                                 break;
                             case espMOLECULE:
                                 r     = get_espresso_word(fp, word);
-                                molnr = std::strtol(word, NULL, 10);
+                                molnr = std::strtol(word, nullptr, 10);
                                 if (i == 0 ||
                                     atoms->resinfo[atoms->atom[i-1].resind].nr != molnr)
                                 {
@@ -293,13 +310,13 @@ void gmx_espresso_read_conf(const char *infile,
                     }
                     /* Generate an atom name from the particle type */
                     sprintf(buf, "T%hu", atoms->atom[i].type);
-                    atoms->atomname[i] = put_symtab(&top->symtab, buf);
+                    atoms->atomname[i] = put_symtab(symtab, buf);
                     if (bMol)
                     {
                         if (i == 0 || atoms->atom[i].resind != atoms->atom[i-1].resind)
                         {
                             atoms->resinfo[atoms->atom[i].resind].name =
-                                put_symtab(&top->symtab, "MOL");
+                                put_symtab(symtab, "MOL");
                         }
                     }
                     else
@@ -316,7 +333,7 @@ void gmx_espresso_read_conf(const char *infile,
                             sprintf(buf, "T%c%c",
                                     'A'+atoms->atom[i].type/26, 'A'+atoms->atom[i].type%26);
                         }
-                        t_atoms_set_resinfo(atoms, i, &top->symtab, buf, i, ' ', 0, ' ');
+                        t_atoms_set_resinfo(atoms, i, symtab, buf, i, ' ', 0, ' ');
                     }
 
                     if (r == 3)

@@ -1,7 +1,7 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2011,2012,2013,2014,2015,2016, by the GROMACS development team, led by
+ * Copyright (c) 2011,2012,2013,2014,2015,2016,2017, by the GROMACS development team, led by
  * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
  * and including many others, as listed in the AUTHORS file in the
  * top-level source directory and at http://www.gromacs.org.
@@ -43,6 +43,7 @@
 #ifndef GMX_UTILITY_STRINGUTIL_H
 #define GMX_UTILITY_STRINGUTIL_H
 
+#include <cstdarg>
 #include <cstring>
 
 #include <string>
@@ -61,7 +62,7 @@ namespace gmx
  */
 static inline bool isNullOrEmpty(const char *str)
 {
-    return str == NULL || str[0] == '\0';
+    return str == nullptr || str[0] == '\0';
 }
 
 /*! \brief
@@ -167,7 +168,6 @@ std::string stripSuffixIfPresent(const std::string &str, const char *suffix);
  * \throws    std::bad_alloc if out of memory.
  */
 std::string stripString(const std::string &str);
-
 /*! \brief
  * Formats a string (snprintf() wrapper).
  *
@@ -178,6 +178,16 @@ std::string stripString(const std::string &str);
  * supported.
  */
 std::string formatString(const char *fmt, ...);
+/*! \brief
+ * Formats a string (vsnprintf() wrapper).
+ *
+ * \throws  std::bad_alloc if out of memory.
+ *
+ * This function works like vsprintf(), except that it returns an std::string
+ * instead of requiring a preallocated buffer.  Arbitrary length output is
+ * supported.
+ */
+std::string formatStringV(const char *fmt, va_list ap);
 
 /*! \brief Function object that wraps a call to formatString() that
  * expects a single conversion argument, for use with algorithms. */
@@ -311,16 +321,6 @@ std::string joinStrings(const char *const (&array)[count], const char *separator
 }
 
 /*! \brief
- * Converts a boolean to a "true"/"false" string.
- *
- * Does not throw.
- */
-static inline const char *boolToString(bool value)
-{
-    return value ? "true" : "false";
-}
-
-/*! \brief
  * Splits a string to whitespace separated tokens.
  *
  * \param[in] str  String to process.
@@ -332,6 +332,35 @@ static inline const char *boolToString(bool value)
  * separator.
  */
 std::vector<std::string> splitString(const std::string &str);
+/*! \brief
+ * Splits a string to tokens separated by a given delimiter.
+ *
+ * \param[in] str   String to process.
+ * \param[in] delim Delimiter to use for splitting.
+ * \returns   \p str split into tokens at delimiter.
+ * \throws    std::bad_alloc if out of memory.
+ *
+ * Unlike splitString(), consecutive delimiters will generate empty tokens, as
+ * will leading or trailing delimiters.
+ * Empty input will return an empty vector.
+ */
+std::vector<std::string> splitDelimitedString(const std::string &str, char delim);
+/*! \brief
+ * Splits \c str to tokens separated by delimiter \c delim. Removes
+ * leading and trailing whitespace from those strings with std::isspace.
+ *
+ * \param[in] str   String to process.
+ * \param[in] delim Delimiter to use for splitting.
+ * \returns   \p str split into tokens at delimiter, with whitespace stripped.
+ * \throws    std::bad_alloc if out of memory.
+ *
+ * Unlike splitString(), consecutive delimiters will generate empty tokens, as
+ * will leading or trailing delimiters.
+ * Empty input will return an empty vector.
+ * Input with only whitespace will return a vector of size 1,
+ * that contains an empty token.
+ */
+std::vector<std::string> splitAndTrimDelimitedString(const std::string &str, char delim);
 
 /*! \brief
  * Replace all occurrences of a string with another string.

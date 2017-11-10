@@ -1,7 +1,7 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2010,2011,2012,2013,2014,2015, by the GROMACS development team, led by
+ * Copyright (c) 2010,2011,2012,2013,2014,2015,2016,2017, by the GROMACS development team, led by
  * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
  * and including many others, as listed in the AUTHORS file in the
  * top-level source directory and at http://www.gromacs.org.
@@ -95,6 +95,12 @@
  * managing directories and files.
  * The fate of this header depends on what is decided in Redmine issue #950.
  *
+ * <H3>Logging</H3>
+ *
+ * The headers logger.h and loggerbuilder.h provide interfaces and classes for
+ * writing log files (or logging to other targets).  See \ref page_logging for
+ * an overview.
+ *
  * \endif
  *
  * <H3>Implementation helpers</H3>
@@ -119,13 +125,15 @@
  * The header init.h declares gmx::init() and gmx::finalize() for initializing
  * and deinitializing the \Gromacs library.
  *
- * The header arrayref.h implements a gmx::ConstArrayRef class for exposing a
+ * The header arrayref.h implements a gmx::ArrayRef class for exposing a
  * C array or part of a std::vector (basically, any continuous stretch of
  * memory) throuh a std::vector-like interface.
  *
  * The header stringutil.h declares various string utility routines.
  *
  * \if libapi
+ *
+ * The header strconvert.h declares string parsing routines.
  *
  * The header gmxmpi.h abstracts away the mechanism of including either MPI or
  * thread-MPI headers depending on compilation options.

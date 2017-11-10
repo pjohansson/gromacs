@@ -1,7 +1,7 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2015,2016, by the GROMACS development team, led by
+ * Copyright (c) 2015,2016,2017, by the GROMACS development team, led by
  * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
  * and including many others, as listed in the AUTHORS file in the
  * top-level source directory and at http://www.gromacs.org.
@@ -105,7 +105,7 @@ read_checkpoint_data(const char *filename, int *simulation_part,
                      int nfile, const t_filenm fnm[],
                      const char *part_suffix,
                      gmx_bool *bAddPart,
-                     gmx_bool *bDoAppendFiles)
+                     bool *bDoAppendFiles)
 {
     t_fileio            *fp;
     int                  nfiles;
@@ -181,7 +181,9 @@ read_checkpoint_data(const char *filename, int *simulation_part,
                               "Checkpointing is merely intended for plain continuation of runs. "
                               "For safety reasons you must specify all file names (e.g. with -deffnm), "
                               "and all these files must match the names used in the run prior to checkpointing "
-                              "since we will append to them by default. If the files are not available, you "
+                              "since we will append to them by default. If you used -deffnm and the files listed above as not "
+                              "present are in fact present, try explicitly specifying them in respective mdrun options. "
+                              "If the files are not available, you "
                               "can add the -noappend flag to mdrun and write separate new parts. "
                               "For mere concatenation of files, you should use the gmx trjcat tool instead.",
                               nfiles-nexist, nfiles);
@@ -205,8 +207,8 @@ read_checkpoint_data(const char *filename, int *simulation_part,
                  */
                 strcpy(suf_up, part_suffix);
                 upstring(suf_up);
-                *bAddPart = (strstr(fn, part_suffix) != NULL ||
-                             strstr(fn, suf_up) != NULL);
+                *bAddPart = (strstr(fn, part_suffix) != nullptr ||
+                             strstr(fn, suf_up) != nullptr);
             }
 
             sfree(outputfiles);
@@ -231,8 +233,8 @@ handleRestart(t_commrec *cr,
               gmx_bool   bTryToAppendFiles,
               const int  NFILE,
               t_filenm   fnm[],
-              gmx_bool  *bDoAppendFiles,
-              gmx_bool  *bStartFromCpt)
+              bool      *bDoAppendFiles,
+              bool      *bStartFromCpt)
 {
     gmx_bool        bAddPart;
     int             sim_part, sim_part_fn;
@@ -270,7 +272,7 @@ handleRestart(t_commrec *cr,
             }
             else
             {
-                fpmulti = NULL;
+                fpmulti = nullptr;
             }
             check_multi_int(fpmulti, cr->ms, sim_part, "simulation part", TRUE);
         }

@@ -1,7 +1,7 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2012,2013,2014,2015,2016, by the GROMACS development team, led by
+ * Copyright (c) 2012,2013,2014,2015,2016,2017, by the GROMACS development team, led by
  * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
  * and including many others, as listed in the AUTHORS file in the
  * top-level source directory and at http://www.gromacs.org.
@@ -169,7 +169,7 @@
 #endif
 
     /* Load j-i for the first i */
-    diagonal_jmi_S    = load(nbat->simd_2xnn_diagonal_j_minus_i);
+    diagonal_jmi_S    = load<SimdReal>(nbat->simd_2xnn_diagonal_j_minus_i);
     /* Generate all the diagonal masks as comparison results */
 #if UNROLLI == UNROLLJ
     diagonal_mask_S0  = (zero_S < diagonal_jmi_S);
@@ -204,11 +204,11 @@
      * matter, as long as both filter and mask data are treated the same way.
      */
 #if GMX_SIMD_HAVE_INT32_LOGICAL
-    filter_S0 = load(reinterpret_cast<const int *>(exclusion_filter + 0*UNROLLJ));
-    filter_S2 = load(reinterpret_cast<const int *>(exclusion_filter + 2*UNROLLJ));
+    filter_S0 = load<SimdBitMask>(reinterpret_cast<const int *>(exclusion_filter + 0*UNROLLJ));
+    filter_S2 = load<SimdBitMask>(reinterpret_cast<const int *>(exclusion_filter + 2*UNROLLJ));
 #else
-    filter_S0 = load(reinterpret_cast<const real *>(exclusion_filter + 0*UNROLLJ));
-    filter_S2 = load(reinterpret_cast<const real *>(exclusion_filter + 2*UNROLLJ));
+    filter_S0 = load<SimdBitMask>(reinterpret_cast<const real *>(exclusion_filter + 0*UNROLLJ));
+    filter_S2 = load<SimdBitMask>(reinterpret_cast<const real *>(exclusion_filter + 2*UNROLLJ));
 #endif
 
 #ifdef CALC_COUL_RF
@@ -326,15 +326,15 @@
         pvdw_c12[2*UNROLLJ+jp] = nbat->nbfp[0*2+1];
         pvdw_c12[3*UNROLLJ+jp] = nbat->nbfp[0*2+1];
     }
-    SimdReal c6_S0  = load(pvdw_c6 +0*UNROLLJ);
-    SimdReal c6_S1  = load(pvdw_c6 +1*UNROLLJ);
-    SimdReal c6_S2  = load(pvdw_c6 +2*UNROLLJ);
-    SimdReal c6_S3  = load(pvdw_c6 +3*UNROLLJ);
+    SimdReal c6_S0  = load<SimdReal>(pvdw_c6 +0*UNROLLJ);
+    SimdReal c6_S1  = load<SimdReal>(pvdw_c6 +1*UNROLLJ);
+    SimdReal c6_S2  = load<SimdReal>(pvdw_c6 +2*UNROLLJ);
+    SimdReal c6_S3  = load<SimdReal>(pvdw_c6 +3*UNROLLJ);
 
-    SimdReal c12_S0 = load(pvdw_c12+0*UNROLLJ);
-    SimdReal c12_S1 = load(pvdw_c12+1*UNROLLJ);
-    SimdReal c12_S2 = load(pvdw_c12+2*UNROLLJ);
-    SimdReal c12_S3 = load(pvdw_c12+3*UNROLLJ);
+    SimdReal c12_S0 = load<SimdReal>(pvdw_c12+0*UNROLLJ);
+    SimdReal c12_S1 = load<SimdReal>(pvdw_c12+1*UNROLLJ);
+    SimdReal c12_S2 = load<SimdReal>(pvdw_c12+2*UNROLLJ);
+    SimdReal c12_S3 = load<SimdReal>(pvdw_c12+3*UNROLLJ);
 #endif /* FIX_LJ_C */
 
 #ifdef ENERGY_GROUPS
@@ -475,12 +475,12 @@
         /* Load i atom data */
         int sciy             = scix + STRIDE;
         int sciz             = sciy + STRIDE;
-        ix_S0          = load1DualHsimd(x+scix);
-        ix_S2          = load1DualHsimd(x+scix+2);
-        iy_S0          = load1DualHsimd(x+sciy);
-        iy_S2          = load1DualHsimd(x+sciy+2);
-        iz_S0          = load1DualHsimd(x+sciz);
-        iz_S2          = load1DualHsimd(x+sciz+2);
+        ix_S0          = loadU1DualHsimd(x+scix);
+        ix_S2          = loadU1DualHsimd(x+scix+2);
+        iy_S0          = loadU1DualHsimd(x+sciy);
+        iy_S2          = loadU1DualHsimd(x+sciy+2);
+        iz_S0          = loadU1DualHsimd(x+sciz);
+        iz_S2          = loadU1DualHsimd(x+sciz+2);
         ix_S0          = ix_S0 + shX_S;
         ix_S2          = ix_S2 + shX_S;
         iy_S0          = iy_S0 + shY_S;
@@ -494,32 +494,32 @@
 
             facel_S    = SimdReal(facel);
 
-            iq_S0      = load1DualHsimd(q+sci);
-            iq_S2      = load1DualHsimd(q+sci+2);
+            iq_S0      = loadU1DualHsimd(q+sci);
+            iq_S2      = loadU1DualHsimd(q+sci+2);
             iq_S0      = facel_S * iq_S0;
             iq_S2      = facel_S * iq_S2;
         }
 
 #ifdef LJ_COMB_LB
-        hsig_i_S0 = load1DualHsimd(ljc+sci2);
-        hsig_i_S2 = load1DualHsimd(ljc+sci2+2);
-        seps_i_S0 = load1DualHsimd(ljc+sci2+STRIDE);
-        seps_i_S2 = load1DualHsimd(ljc+sci2+STRIDE+2);
+        hsig_i_S0 = loadU1DualHsimd(ljc+sci2);
+        hsig_i_S2 = loadU1DualHsimd(ljc+sci2+2);
+        seps_i_S0 = loadU1DualHsimd(ljc+sci2+STRIDE);
+        seps_i_S2 = loadU1DualHsimd(ljc+sci2+STRIDE+2);
 #else
 #ifdef LJ_COMB_GEOM
         SimdReal   c6s_S0, c12s_S0;
         SimdReal   c6s_S2, c12s_S2;
 
-        c6s_S0 = load1DualHsimd(ljc+sci2);
+        c6s_S0 = loadU1DualHsimd(ljc+sci2);
 
         if (!half_LJ)
         {
-            c6s_S2 = load1DualHsimd(ljc+sci2+2);
+            c6s_S2 = loadU1DualHsimd(ljc+sci2+2);
         }
-        c12s_S0 = load1DualHsimd(ljc+sci2+STRIDE);
+        c12s_S0 = loadU1DualHsimd(ljc+sci2+STRIDE);
         if (!half_LJ)
         {
-            c12s_S2 = load1DualHsimd(ljc+sci2+STRIDE+2);
+            c12s_S2 = loadU1DualHsimd(ljc+sci2+STRIDE+2);
         }
 #elif !defined LJ_COMB_LB && !defined FIX_LJ_C
         const real *nbfp0     = nbfp_ptr + type[sci  ]*nbat->ntype*c_simdBestPairAlignment;
@@ -535,10 +535,10 @@
 #ifdef LJ_EWALD_GEOM
         /* We need the geometrically combined C6 for the PME grid correction */
         SimdReal c6s_S0, c6s_S2;
-        c6s_S0 = load1DualHsimd(ljc+sci2);
+        c6s_S0 = loadU1DualHsimd(ljc+sci2);
         if (!half_LJ)
         {
-            c6s_S2 = load1DualHsimd(ljc+sci2+2);
+            c6s_S2 = loadU1DualHsimd(ljc+sci2+2);
         }
 #endif
 

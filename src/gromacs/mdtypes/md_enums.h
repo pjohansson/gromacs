@@ -3,7 +3,7 @@
  *
  * Copyright (c) 1991-2000, University of Groningen, The Netherlands.
  * Copyright (c) 2001-2004, The GROMACS development team.
- * Copyright (c) 2013,2014,2015,2016, by the GROMACS development team, led by
+ * Copyright (c) 2013,2014,2015,2016,2017, by the GROMACS development team, led by
  * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
  * and including many others, as listed in the AUTHORS file in the
  * top-level source directory and at http://www.gromacs.org.
@@ -453,7 +453,7 @@ extern const char *edispc_names[edispcNR+1];
 
 //! Center of mass motion removal algorithm.
 enum {
-    ecmLINEAR, ecmANGULAR, ecmNO, ecmNR
+    ecmLINEAR, ecmANGULAR, ecmNO, ecmLINEAR_ACCELERATION_CORRECTION, ecmNR
 };
 //! String corresponding to COM removal
 extern const char *ecm_names[ecmNR+1];
@@ -605,13 +605,6 @@ enum {
 extern const char *eQMMMscheme_names[eQMMMschemeNR+1];
 //! Macro to pick QMMMM scheme name
 #define EQMMMSCHEME(e) enum_name(e, eQMMMschemeNR, eQMMMscheme_names)
-
-//! Internal stuff for multiple value options in mdp files
-enum {
-    eMultentOptName, eMultentOptNo, eMultentOptLast, eMultentOptNR
-};
-//! Multiple value option names
-extern const char *eMultentOpt_names[eMultentOptNR+1];
 
 /*! \brief Neighborlist geometry type.
  *

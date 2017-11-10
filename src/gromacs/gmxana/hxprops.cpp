@@ -3,7 +3,7 @@
  *
  * Copyright (c) 1991-2000, University of Groningen, The Netherlands.
  * Copyright (c) 2001-2004, The GROMACS development team.
- * Copyright (c) 2013,2014,2015,2016, by the GROMACS development team, led by
+ * Copyright (c) 2013,2014,2015,2016,2017, by the GROMACS development team, led by
  * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
  * and including many others, as listed in the AUTHORS file in the
  * top-level source directory and at http://www.gromacs.org.
@@ -185,7 +185,6 @@ real ca_phi(int gnx, int index[], rvec x[])
     real phi, phitot;
     int  i, ai, aj, ak, al, t1, t2, t3;
     rvec r_ij, r_kj, r_kl, m, n;
-    real sign;
 
     if (gnx <= 4)
     {
@@ -200,9 +199,9 @@ real ca_phi(int gnx, int index[], rvec x[])
         ak  = index[i+2];
         al  = index[i+3];
         phi = RAD2DEG*
-            dih_angle(x[ai], x[aj], x[ak], x[al], NULL,
+            dih_angle(x[ai], x[aj], x[ak], x[al], nullptr,
                       r_ij, r_kj, r_kl, m, n,
-                      &sign, &t1, &t2, &t3);
+                      &t1, &t2, &t3);
         phitot += phi;
     }
 
@@ -487,7 +486,6 @@ void calc_hxprops(int nres, t_bb bb[], const rvec x[])
 {
     int  i, ao, an, t1, t2, t3;
     rvec dx, r_ij, r_kj, r_kl, m, n;
-    real sign;
 
     for (i = 0; (i < nres); i++)
     {
@@ -513,13 +511,13 @@ void calc_hxprops(int nres, t_bb bb[], const rvec x[])
         }
 
         bb[i].phi = RAD2DEG*
-            dih_angle(x[bb[i].Cprev], x[bb[i].N], x[bb[i].CA], x[bb[i].C], NULL,
+            dih_angle(x[bb[i].Cprev], x[bb[i].N], x[bb[i].CA], x[bb[i].C], nullptr,
                       r_ij, r_kj, r_kl, m, n,
-                      &sign, &t1, &t2, &t3);
+                      &t1, &t2, &t3);
         bb[i].psi = RAD2DEG*
-            dih_angle(x[bb[i].N], x[bb[i].CA], x[bb[i].C], x[bb[i].Nnext], NULL,
+            dih_angle(x[bb[i].N], x[bb[i].CA], x[bb[i].C], x[bb[i].Nnext], nullptr,
                       r_ij, r_kj, r_kl, m, n,
-                      &sign, &t1, &t2, &t3);
+                      &t1, &t2, &t3);
         bb[i].pprms2 = gmx::square(bb[i].phi-PHI_AHX)+gmx::square(bb[i].psi-PSI_AHX);
 
         bb[i].jcaha +=

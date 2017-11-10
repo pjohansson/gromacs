@@ -1,7 +1,7 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2014,2015,2016, by the GROMACS development team, led by
+ * Copyright (c) 2014,2015,2016,2017, by the GROMACS development team, led by
  * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
  * and including many others, as listed in the AUTHORS file in the
  * top-level source directory and at http://www.gromacs.org.
@@ -41,17 +41,10 @@
 #ifndef GMX_GPU_UTILS_OCLUTILS_H
 #define GMX_GPU_UTILS_OCLUTILS_H
 
-/*! \brief Declare to OpenCL SDKs that we intend to use OpenCL API
-   features that were deprecated in 2.0, so that they don't warn about
-   it. */
-#define CL_USE_DEPRECATED_OPENCL_2_0_APIS
-#ifdef __APPLE__
-#    include <OpenCL/opencl.h>
-#else
-#    include <CL/opencl.h>
-#endif
-
 #include <string>
+
+#include "gromacs/gpu_utils/gmxopencl.h"
+#include "gromacs/utility/gmxassert.h"
 
 /*! \brief OpenCL vendor IDs */
 typedef enum {
@@ -108,12 +101,6 @@ struct gmx_device_runtime_data_t
     cl_program program; /**< OpenCL program */
 };
 
-#if !defined(NDEBUG)
-/* Debugger callable function that prints the name of a kernel function pointer */
-cl_int dbg_ocl_kernel_name(const cl_kernel kernel);
-cl_int dbg_ocl_kernel_name_address(void* kernel);
-#endif
-
 
 /*! \brief Launches asynchronous host to device memory copy. */
 int ocl_copy_H2D_async(cl_mem d_dest, void * h_src,
@@ -128,9 +115,9 @@ int ocl_copy_D2H_async(void * h_dest, cl_mem d_src,
                        cl_event *copy_event);
 
 /*! \brief Launches synchronous host to device memory copy. */
-int ocl_copy_H2D(cl_mem d_dest, void * h_src,
-                 size_t offset, size_t bytes,
-                 cl_command_queue command_queue);
+int ocl_copy_H2D_sync(cl_mem d_dest, void * h_src,
+                      size_t offset, size_t bytes,
+                      cl_command_queue command_queue);
 
 /*! \brief Allocate host memory in malloc style */
 void ocl_pmalloc(void **h_ptr, size_t nbytes);
@@ -140,5 +127,16 @@ void ocl_pfree(void *h_ptr);
 
 /*! \brief Convert error code to diagnostic string */
 std::string ocl_get_error_string(cl_int error);
+
+/*! \brief Calls clFinish() in the stream \p s.
+ *
+ * \param[in] s stream to synchronize with
+ */
+static inline void gpuStreamSynchronize(cl_command_queue s)
+{
+    cl_int cl_error = clFinish(s);
+    GMX_RELEASE_ASSERT(CL_SUCCESS == cl_error,
+                       ("Error caught during clFinish:" + ocl_get_error_string(cl_error)).c_str());
+}
 
 #endif

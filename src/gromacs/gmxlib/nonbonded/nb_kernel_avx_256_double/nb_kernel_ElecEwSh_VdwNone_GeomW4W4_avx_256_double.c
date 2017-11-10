@@ -1,7 +1,7 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2012,2013,2014,2015, by the GROMACS development team, led by
+ * Copyright (c) 2012,2013,2014,2015,2017, by the GROMACS development team, led by
  * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
  * and including many others, as listed in the AUTHORS file in the
  * top-level source directory and at http://www.gromacs.org.
@@ -58,7 +58,7 @@ nb_kernel_ElecEwSh_VdwNone_GeomW4W4_VF_avx_256_double
                     (t_nblist                    * gmx_restrict       nlist,
                      rvec                        * gmx_restrict          xx,
                      rvec                        * gmx_restrict          ff,
-                     t_forcerec                  * gmx_restrict          fr,
+                     struct t_forcerec           * gmx_restrict          fr,
                      t_mdatoms                   * gmx_restrict     mdatoms,
                      nb_kernel_data_t gmx_unused * gmx_restrict kernel_data,
                      t_nrnb                      * gmx_restrict        nrnb)
@@ -123,7 +123,7 @@ nb_kernel_ElecEwSh_VdwNone_GeomW4W4_VF_avx_256_double
     gid              = nlist->gid;
     shiftvec         = fr->shift_vec[0];
     fshift           = fr->fshift[0];
-    facel            = _mm256_set1_pd(fr->epsfac);
+    facel            = _mm256_set1_pd(fr->ic->epsfac);
     charge           = mdatoms->chargeA;
 
     sh_ewald         = _mm256_set1_pd(fr->ic->sh_ewald);
@@ -155,7 +155,7 @@ nb_kernel_ElecEwSh_VdwNone_GeomW4W4_VF_avx_256_double
     qq33             = _mm256_mul_pd(iq3,jq3);
 
     /* When we use explicit cutoffs the value must be identical for elec and VdW, so use elec as an arbitrary choice */
-    rcutoff_scalar   = fr->rcoulomb;
+    rcutoff_scalar   = fr->ic->rcoulomb;
     rcutoff          = _mm256_set1_pd(rcutoff_scalar);
     rcutoff2         = _mm256_mul_pd(rcutoff,rcutoff);
 
@@ -1424,7 +1424,7 @@ nb_kernel_ElecEwSh_VdwNone_GeomW4W4_F_avx_256_double
                     (t_nblist                    * gmx_restrict       nlist,
                      rvec                        * gmx_restrict          xx,
                      rvec                        * gmx_restrict          ff,
-                     t_forcerec                  * gmx_restrict          fr,
+                     struct t_forcerec           * gmx_restrict          fr,
                      t_mdatoms                   * gmx_restrict     mdatoms,
                      nb_kernel_data_t gmx_unused * gmx_restrict kernel_data,
                      t_nrnb                      * gmx_restrict        nrnb)
@@ -1489,7 +1489,7 @@ nb_kernel_ElecEwSh_VdwNone_GeomW4W4_F_avx_256_double
     gid              = nlist->gid;
     shiftvec         = fr->shift_vec[0];
     fshift           = fr->fshift[0];
-    facel            = _mm256_set1_pd(fr->epsfac);
+    facel            = _mm256_set1_pd(fr->ic->epsfac);
     charge           = mdatoms->chargeA;
 
     sh_ewald         = _mm256_set1_pd(fr->ic->sh_ewald);
@@ -1521,7 +1521,7 @@ nb_kernel_ElecEwSh_VdwNone_GeomW4W4_F_avx_256_double
     qq33             = _mm256_mul_pd(iq3,jq3);
 
     /* When we use explicit cutoffs the value must be identical for elec and VdW, so use elec as an arbitrary choice */
-    rcutoff_scalar   = fr->rcoulomb;
+    rcutoff_scalar   = fr->ic->rcoulomb;
     rcutoff          = _mm256_set1_pd(rcutoff_scalar);
     rcutoff2         = _mm256_mul_pd(rcutoff,rcutoff);
 

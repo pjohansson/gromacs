@@ -1,7 +1,7 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2013,2014,2015, by the GROMACS development team, led by
+ * Copyright (c) 2013,2014,2015,2016,2017, by the GROMACS development team, led by
  * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
  * and including many others, as listed in the AUTHORS file in the
  * top-level source directory and at http://www.gromacs.org.
@@ -76,22 +76,22 @@ class PositionCalculationTest : public ::testing::Test
         void generateCoordinates();
 
         gmx_ana_poscalc_t *createCalculation(e_poscalc_t type, int flags);
-        void setMaximumGroup(gmx_ana_poscalc_t *pc, const gmx::ConstArrayRef<int> &atoms);
+        void setMaximumGroup(gmx_ana_poscalc_t *pc, const gmx::ArrayRef<const int> &atoms);
         gmx_ana_pos_t *initPositions(gmx_ana_poscalc_t *pc, const char *name);
 
         void checkInitialized();
         void updateAndCheck(gmx_ana_poscalc_t *pc, gmx_ana_pos_t *p,
-                            const gmx::ConstArrayRef<int> &atoms,
+                            const gmx::ArrayRef<const int> &atoms,
                             gmx::test::TestReferenceChecker *checker,
                             const char *name);
 
         void testSingleStatic(e_poscalc_t type, int flags, bool bExpectTop,
-                              const gmx::ConstArrayRef<int> &atoms,
-                              const gmx::ConstArrayRef<int> &index = gmx::EmptyArrayRef());
+                              const gmx::ArrayRef<const int> &atoms,
+                              const gmx::ArrayRef<const int> &index = gmx::EmptyArrayRef());
         void testSingleDynamic(e_poscalc_t type, int flags, bool bExpectTop,
-                               const gmx::ConstArrayRef<int> &initAtoms,
-                               const gmx::ConstArrayRef<int> &evalAtoms,
-                               const gmx::ConstArrayRef<int> &index = gmx::EmptyArrayRef());
+                               const gmx::ArrayRef<const int> &initAtoms,
+                               const gmx::ArrayRef<const int> &evalAtoms,
+                               const gmx::ArrayRef<const int> &index = gmx::EmptyArrayRef());
 
         gmx::test::TestReferenceData        data_;
         gmx::test::TestReferenceChecker     checker_;
@@ -157,12 +157,12 @@ PositionCalculationTest::~PositionCalculationTest()
 
 void PositionCalculationTest::generateCoordinates()
 {
-    t_topology *top   = topManager_.topology();
+    t_atoms    &atoms = topManager_.atoms();
     t_trxframe *frame = topManager_.frame();
-    for (int i = 0; i < top->atoms.nr; ++i)
+    for (int i = 0; i < atoms.nr; ++i)
     {
         frame->x[i][XX] = i;
-        frame->x[i][YY] = top->atoms.atom[i].resind;
+        frame->x[i][YY] = atoms.atom[i].resind;
         frame->x[i][ZZ] = 0.0;
         if (frame->bV)
         {
@@ -185,8 +185,8 @@ PositionCalculationTest::createCalculation(e_poscalc_t type, int flags)
     return pcList_.back();
 }
 
-void PositionCalculationTest::setMaximumGroup(gmx_ana_poscalc_t             *pc,
-                                              const gmx::ConstArrayRef<int> &atoms)
+void PositionCalculationTest::setMaximumGroup(gmx_ana_poscalc_t              *pc,
+                                              const gmx::ArrayRef<const int> &atoms)
 {
     setTopologyIfRequired();
     gmx_ana_index_t g;
@@ -201,7 +201,7 @@ PositionCalculationTest::initPositions(gmx_ana_poscalc_t *pc, const char *name)
     posList_.reserve(posList_.size() + 1);
     PositionPointer p(new gmx_ana_pos_t());
     gmx_ana_pos_t  *result = p.get();
-    posList_.push_back(PositionTest(std::move(p), pc, name));
+    posList_.emplace_back(std::move(p), pc, name);
     gmx_ana_poscalc_init_pos(pc, result);
     return result;
 }
@@ -209,7 +209,7 @@ PositionCalculationTest::initPositions(gmx_ana_poscalc_t *pc, const char *name)
 void PositionCalculationTest::checkInitialized()
 {
     gmx::test::TestReferenceChecker  compound(
-            checker_.checkCompound("InitializedPositions", NULL));
+            checker_.checkCompound("InitializedPositions", nullptr));
     PositionTestList::const_iterator pi;
     for (pi = posList_.begin(); pi != posList_.end(); ++pi)
     {
@@ -218,20 +218,20 @@ void PositionCalculationTest::checkInitialized()
 }
 
 void PositionCalculationTest::updateAndCheck(
-        gmx_ana_poscalc_t *pc, gmx_ana_pos_t *p, const gmx::ConstArrayRef<int> &atoms,
+        gmx_ana_poscalc_t *pc, gmx_ana_pos_t *p, const gmx::ArrayRef<const int> &atoms,
         gmx::test::TestReferenceChecker *checker, const char *name)
 {
     gmx_ana_index_t g;
     g.isize = atoms.size();
     g.index = const_cast<int *>(atoms.data());
-    gmx_ana_poscalc_update(pc, p, &g, topManager_.frame(), NULL);
+    gmx_ana_poscalc_update(pc, p, &g, topManager_.frame(), nullptr);
     checkPositions(checker, name, p, true);
 }
 
 void PositionCalculationTest::testSingleStatic(
         e_poscalc_t type, int flags, bool bExpectTop,
-        const gmx::ConstArrayRef<int> &atoms,
-        const gmx::ConstArrayRef<int> &index)
+        const gmx::ArrayRef<const int> &atoms,
+        const gmx::ArrayRef<const int> &index)
 {
     t_trxframe *frame = topManager_.frame();
     if (frame->bV)
@@ -243,9 +243,12 @@ void PositionCalculationTest::testSingleStatic(
         flags |= POS_FORCES;
     }
     gmx_ana_poscalc_t *pc = createCalculation(type, flags);
-    EXPECT_EQ(bExpectTop, gmx_ana_poscalc_requires_top(pc));
+    const bool         requiresTopology
+        = gmx_ana_poscalc_required_topology_info(pc)
+            != gmx::PositionCalculationCollection::RequiredTopologyInfo::None;
+    EXPECT_EQ(bExpectTop, requiresTopology);
     setMaximumGroup(pc, atoms);
-    gmx_ana_pos_t *p = initPositions(pc, NULL);
+    gmx_ana_pos_t *p = initPositions(pc, nullptr);
     checkInitialized();
     {
         generateCoordinates();
@@ -257,20 +260,23 @@ void PositionCalculationTest::testSingleStatic(
         pcc_.initFrame(frame);
         gmx::test::TestReferenceChecker frameCompound(
                 checker_.checkCompound("EvaluatedPositions", "Frame0"));
-        updateAndCheck(pc, p, atoms, &frameCompound, NULL);
+        updateAndCheck(pc, p, atoms, &frameCompound, nullptr);
     }
 }
 
 void PositionCalculationTest::testSingleDynamic(
         e_poscalc_t type, int flags, bool bExpectTop,
-        const gmx::ConstArrayRef<int> &initAtoms,
-        const gmx::ConstArrayRef<int> &evalAtoms,
-        const gmx::ConstArrayRef<int> &index)
+        const gmx::ArrayRef<const int> &initAtoms,
+        const gmx::ArrayRef<const int> &evalAtoms,
+        const gmx::ArrayRef<const int> &index)
 {
     gmx_ana_poscalc_t *pc = createCalculation(type, flags | POS_DYNAMIC);
-    EXPECT_EQ(bExpectTop, gmx_ana_poscalc_requires_top(pc));
+    const bool         requiresTopology
+        = gmx_ana_poscalc_required_topology_info(pc)
+            != gmx::PositionCalculationCollection::RequiredTopologyInfo::None;
+    EXPECT_EQ(bExpectTop, requiresTopology);
     setMaximumGroup(pc, initAtoms);
-    gmx_ana_pos_t *p = initPositions(pc, NULL);
+    gmx_ana_pos_t *p = initPositions(pc, nullptr);
     checkInitialized();
     {
         generateCoordinates();
@@ -282,7 +288,7 @@ void PositionCalculationTest::testSingleDynamic(
         pcc_.initFrame(topManager_.frame());
         gmx::test::TestReferenceChecker frameCompound(
                 checker_.checkCompound("EvaluatedPositions", "Frame0"));
-        updateAndCheck(pc, p, evalAtoms, &frameCompound, NULL);
+        updateAndCheck(pc, p, evalAtoms, &frameCompound, nullptr);
     }
 }
 
@@ -295,7 +301,10 @@ void PositionCalculationTest::setTopologyIfRequired()
     std::vector<gmx_ana_poscalc_t *>::const_iterator pci;
     for (pci = pcList_.begin(); pci != pcList_.end(); ++pci)
     {
-        if (gmx_ana_poscalc_requires_top(*pci))
+        const bool         requiresTopology
+            = gmx_ana_poscalc_required_topology_info(*pci)
+                != gmx::PositionCalculationCollection::RequiredTopologyInfo::None;
+        if (requiresTopology)
         {
             bTopSet_ = true;
             pcc_.setTopology(topManager_.topology());
@@ -325,7 +334,7 @@ void PositionCalculationTest::checkPositions(
     for (int i = 0; i < p->count(); ++i)
     {
         gmx::test::TestReferenceChecker posCompound(
-                compound.checkCompound("Position", NULL));
+                compound.checkCompound("Position", nullptr));
         posCompound.checkSequence(&p->m.mapb.a[p->m.mapb.index[i]],
                                   &p->m.mapb.a[p->m.mapb.index[i+1]],
                                   "Atoms");
@@ -334,11 +343,11 @@ void PositionCalculationTest::checkPositions(
         {
             posCompound.checkVector(p->x[i], "Coordinates");
         }
-        if (bCoordinates && p->v != NULL)
+        if (bCoordinates && p->v != nullptr)
         {
             posCompound.checkVector(p->v[i], "Velocity");
         }
-        if (bCoordinates && p->f != NULL)
+        if (bCoordinates && p->f != nullptr)
         {
             posCompound.checkVector(p->f[i], "Force");
         }

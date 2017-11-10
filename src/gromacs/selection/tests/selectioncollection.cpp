@@ -1,7 +1,7 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2010,2011,2012,2013,2014,2015,2016, by the GROMACS development team, led by
+ * Copyright (c) 2010,2011,2012,2013,2014,2015,2016,2017, by the GROMACS development team, led by
  * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
  * and including many others, as listed in the AUTHORS file in the
  * top-level source directory and at http://www.gromacs.org.
@@ -82,7 +82,7 @@ class SelectionCollectionTest : public ::testing::Test
 
         void setAtomCount(int natoms)
         {
-            ASSERT_NO_THROW_GMX(sc_.setTopology(NULL, natoms));
+            ASSERT_NO_THROW_GMX(sc_.setTopology(nullptr, natoms));
         }
         void loadTopology(const char *filename);
         void setTopology();
@@ -91,7 +91,6 @@ class SelectionCollectionTest : public ::testing::Test
         gmx::test::TopologyManager  topManager_;
         gmx::SelectionCollection    sc_;
         gmx::SelectionList          sel_;
-        t_topology                 *top_;
         gmx_ana_indexgrps_t        *grps_;
 };
 
@@ -108,7 +107,7 @@ GMX_TEST_OPTIONS(SelectionCollectionTestOptions, options)
 #endif
 
 SelectionCollectionTest::SelectionCollectionTest()
-    : top_(NULL), grps_(NULL)
+    : grps_(nullptr)
 {
     topManager_.requestFrame();
     sc_.setDebugLevel(s_debugLevel);
@@ -118,7 +117,7 @@ SelectionCollectionTest::SelectionCollectionTest()
 
 SelectionCollectionTest::~SelectionCollectionTest()
 {
-    if (grps_ != NULL)
+    if (grps_ != nullptr)
     {
         gmx_ana_indexgrps_free(grps_);
     }
@@ -134,19 +133,17 @@ SelectionCollectionTest::loadTopology(const char *filename)
 void
 SelectionCollectionTest::setTopology()
 {
-    top_   = topManager_.topology();
-
-    ASSERT_NO_THROW_GMX(sc_.setTopology(top_, -1));
+    ASSERT_NO_THROW_GMX(sc_.setTopology(topManager_.topology(), -1));
 }
 
 void
 SelectionCollectionTest::loadIndexGroups(const char *filename)
 {
-    GMX_RELEASE_ASSERT(grps_ == NULL,
+    GMX_RELEASE_ASSERT(grps_ == nullptr,
                        "External groups can only be loaded once");
     std::string fullpath =
         gmx::test::TestFileManager::getInputFilePath(filename);
-    gmx_ana_indexgrps_init(&grps_, NULL, fullpath.c_str());
+    gmx_ana_indexgrps_init(&grps_, nullptr, fullpath.c_str());
     sc_.setIndexGroups(grps_);
 }
 
@@ -164,7 +161,7 @@ class SelectionCollectionInteractiveTest : public SelectionCollectionTest
         }
 
         void runTest(int count, bool bInteractive,
-                     const gmx::ConstArrayRef<const char *> &input);
+                     const gmx::ArrayRef<const char *const> &input);
 
         gmx::test::TestReferenceData      data_;
         gmx::test::InteractiveTestHelper  helper_;
@@ -172,13 +169,13 @@ class SelectionCollectionInteractiveTest : public SelectionCollectionTest
 
 void SelectionCollectionInteractiveTest::runTest(
         int count, bool bInteractive,
-        const gmx::ConstArrayRef<const char *> &inputLines)
+        const gmx::ArrayRef<const char *const> &inputLines)
 {
     helper_.setInputLines(inputLines);
     // TODO: Check something about the returned selections as well.
     ASSERT_NO_THROW_GMX(sc_.parseInteractive(
                                 count, &helper_.inputStream(),
-                                bInteractive ? &helper_.outputStream() : NULL,
+                                bInteractive ? &helper_.outputStream() : nullptr,
                                 "for test context"));
     helper_.checkSession();
 }
@@ -211,15 +208,15 @@ class SelectionCollectionDataTest : public SelectionCollectionTest
 
         void setFlags(TestFlags flags) { flags_ = flags; }
 
-        void runParser(const gmx::ConstArrayRef<const char *> &selections);
+        void runParser(const gmx::ArrayRef<const char *const> &selections);
         void runCompiler();
         void runEvaluate();
         void runEvaluateFinal();
 
         void runTest(int                                     natoms,
-                     const gmx::ConstArrayRef<const char *> &selections);
+                     const gmx::ArrayRef<const char *const> &selections);
         void runTest(const char                             *filename,
-                     const gmx::ConstArrayRef<const char *> &selections);
+                     const gmx::ArrayRef<const char *const> &selections);
 
     private:
         static void checkSelection(gmx::test::TestReferenceChecker *checker,
@@ -243,7 +240,7 @@ SelectionCollectionDataTest::checkSelection(
     using gmx::test::TestReferenceChecker;
 
     {
-        gmx::ConstArrayRef<int> atoms = sel.atomIndices();
+        gmx::ArrayRef<const int> atoms = sel.atomIndices();
         checker->checkSequence(atoms.begin(), atoms.end(), "Atoms");
     }
     if (flags.test(efTestPositionAtoms)
@@ -256,11 +253,11 @@ SelectionCollectionDataTest::checkSelection(
                 checker->checkSequenceCompound("Positions", sel.posCount()));
         for (int i = 0; i < sel.posCount(); ++i)
         {
-            TestReferenceChecker          poscompound(compound.checkCompound("Position", NULL));
+            TestReferenceChecker          poscompound(compound.checkCompound("Position", nullptr));
             const gmx::SelectionPosition &p = sel.position(i);
             if (flags.test(efTestPositionAtoms))
             {
-                gmx::ConstArrayRef<int> atoms = p.atomIndices();
+                gmx::ArrayRef<const int> atoms = p.atomIndices();
                 poscompound.checkSequence(atoms.begin(), atoms.end(), "Atoms");
             }
             if (flags.test(efTestPositionCoordinates))
@@ -287,7 +284,7 @@ SelectionCollectionDataTest::checkSelection(
 
 void
 SelectionCollectionDataTest::runParser(
-        const gmx::ConstArrayRef<const char *> &selections)
+        const gmx::ArrayRef<const char *const> &selections)
 {
     using gmx::test::TestReferenceChecker;
 
@@ -368,7 +365,7 @@ SelectionCollectionDataTest::runEvaluate()
     using gmx::test::TestReferenceChecker;
 
     ++framenr_;
-    ASSERT_NO_THROW_GMX(sc_.evaluate(topManager_.frame(), NULL));
+    ASSERT_NO_THROW_GMX(sc_.evaluate(topManager_.frame(), nullptr));
     std::string          frame = gmx::formatString("Frame%d", framenr_);
     TestReferenceChecker compound(
             checker_.checkCompound("EvaluatedSelections", frame.c_str()));
@@ -394,7 +391,7 @@ SelectionCollectionDataTest::runEvaluateFinal()
 
 void
 SelectionCollectionDataTest::runTest(
-        int natoms, const gmx::ConstArrayRef<const char *> &selections)
+        int natoms, const gmx::ArrayRef<const char *const> &selections)
 {
     ASSERT_NO_FATAL_FAILURE(runParser(selections));
     ASSERT_NO_FATAL_FAILURE(setAtomCount(natoms));
@@ -404,7 +401,7 @@ SelectionCollectionDataTest::runTest(
 
 void
 SelectionCollectionDataTest::runTest(
-        const char *filename, const gmx::ConstArrayRef<const char *> &selections)
+        const char *filename, const gmx::ArrayRef<const char *const> &selections)
 {
     ASSERT_NO_FATAL_FAILURE(runParser(selections));
     ASSERT_NO_FATAL_FAILURE(loadTopology(filename));
@@ -423,24 +420,56 @@ SelectionCollectionDataTest::runTest(
 
 TEST_F(SelectionCollectionTest, HandlesNoSelections)
 {
-    EXPECT_FALSE(sc_.requiresTopology());
+    EXPECT_FALSE(sc_.requiredTopologyProperties().hasAny());
     EXPECT_NO_THROW_GMX(sc_.compile());
+    EXPECT_FALSE(sc_.requiredTopologyProperties().hasAny());
+}
+
+TEST_F(SelectionCollectionTest, HandlesNoSelectionsWithDefaultPositionType)
+{
+    EXPECT_NO_THROW_GMX(sc_.setOutputPosType("res_com"));
+    EXPECT_TRUE(sc_.requiredTopologyProperties().needsTopology);
+    EXPECT_TRUE(sc_.requiredTopologyProperties().needsMasses);
+    EXPECT_NO_THROW_GMX(sc_.setOutputPosType("res_cog"));
+    EXPECT_TRUE(sc_.requiredTopologyProperties().needsTopology);
+    EXPECT_FALSE(sc_.requiredTopologyProperties().needsMasses);
+    ASSERT_NO_THROW_GMX(sc_.parseFromString("atom of atomnr 1 to 10"));
+    ASSERT_NO_FATAL_FAILURE(loadTopology("simple.gro"));
+    ASSERT_NO_THROW_GMX(sc_.compile());
+    EXPECT_FALSE(sc_.requiredTopologyProperties().hasAny());
 }
 
 TEST_F(SelectionCollectionTest, HandlesVelocityAndForceRequests)
 {
     ASSERT_NO_THROW_GMX(sel_ = sc_.parseFromString("atomnr 1 to 10; none"));
+    EXPECT_FALSE(sc_.requiredTopologyProperties().hasAny());
     ASSERT_NO_FATAL_FAILURE(setAtomCount(10));
     ASSERT_EQ(2U, sel_.size());
     ASSERT_NO_THROW_GMX(sel_[0].setEvaluateVelocities(true));
     ASSERT_NO_THROW_GMX(sel_[1].setEvaluateVelocities(true));
     ASSERT_NO_THROW_GMX(sel_[0].setEvaluateForces(true));
     ASSERT_NO_THROW_GMX(sel_[1].setEvaluateForces(true));
+    EXPECT_FALSE(sc_.requiredTopologyProperties().hasAny());
     ASSERT_NO_THROW_GMX(sc_.compile());
+    EXPECT_FALSE(sc_.requiredTopologyProperties().hasAny());
     EXPECT_TRUE(sel_[0].hasVelocities());
     EXPECT_TRUE(sel_[1].hasVelocities());
     EXPECT_TRUE(sel_[0].hasForces());
     EXPECT_TRUE(sel_[1].hasForces());
+}
+
+TEST_F(SelectionCollectionTest, HandlesForceRequestForCenterOfGeometry)
+{
+    ASSERT_NO_THROW_GMX(sel_ = sc_.parseFromString("res_cog of atomnr 1 to 10"));
+    EXPECT_TRUE(sc_.requiredTopologyProperties().needsTopology);
+    ASSERT_NO_FATAL_FAILURE(loadTopology("simple.gro"));
+    ASSERT_EQ(1U, sel_.size());
+    ASSERT_NO_THROW_GMX(sel_[0].setEvaluateForces(true));
+    // In principle, the code could know here that the masses are required, but
+    // currently it only knows this after compilation.
+    ASSERT_NO_THROW_GMX(sc_.compile());
+    EXPECT_TRUE(sc_.requiredTopologyProperties().needsMasses);
+    EXPECT_TRUE(sel_[0].hasForces());
 }
 
 TEST_F(SelectionCollectionTest, ParsesSelectionsFromFile)
@@ -505,7 +534,7 @@ TEST_F(SelectionCollectionTest, HandlesMissingMethodParamValue3)
 
 TEST_F(SelectionCollectionTest, HandlesUnknownGroupReferenceParser1)
 {
-    ASSERT_NO_THROW_GMX(sc_.setIndexGroups(NULL));
+    ASSERT_NO_THROW_GMX(sc_.setIndexGroups(nullptr));
     EXPECT_THROW_GMX(sc_.parseFromString("group \"foo\""), gmx::InconsistentInputError);
     EXPECT_THROW_GMX(sc_.parseFromString("4"), gmx::InconsistentInputError);
 }
@@ -521,7 +550,7 @@ TEST_F(SelectionCollectionTest, HandlesUnknownGroupReferenceDelayed1)
 {
     ASSERT_NO_THROW_GMX(sc_.parseFromString("group \"foo\""));
     ASSERT_NO_FATAL_FAILURE(setAtomCount(10));
-    EXPECT_THROW_GMX(sc_.setIndexGroups(NULL), gmx::InconsistentInputError);
+    EXPECT_THROW_GMX(sc_.setIndexGroups(nullptr), gmx::InconsistentInputError);
     EXPECT_THROW_GMX(sc_.compile(), gmx::APIError);
 }
 
@@ -557,7 +586,7 @@ TEST_F(SelectionCollectionTest, HandlesUnsortedGroupReferenceDelayed)
 
 TEST_F(SelectionCollectionTest, HandlesOutOfRangeAtomIndexInGroup)
 {
-    ASSERT_NO_THROW_GMX(sc_.setTopology(NULL, 5));
+    ASSERT_NO_THROW_GMX(sc_.setTopology(nullptr, 5));
     ASSERT_NO_THROW_GMX(loadIndexGroups("simple.ndx"));
     EXPECT_THROW_GMX(sc_.parseFromString("group \"GrpB\""), gmx::InconsistentInputError);
 }
@@ -566,12 +595,12 @@ TEST_F(SelectionCollectionTest, HandlesOutOfRangeAtomIndexInGroupDelayed)
 {
     ASSERT_NO_THROW_GMX(loadIndexGroups("simple.ndx"));
     ASSERT_NO_THROW_GMX(sc_.parseFromString("group \"GrpB\""));
-    EXPECT_THROW_GMX(sc_.setTopology(NULL, 5), gmx::InconsistentInputError);
+    EXPECT_THROW_GMX(sc_.setTopology(nullptr, 5), gmx::InconsistentInputError);
 }
 
 TEST_F(SelectionCollectionTest, HandlesOutOfRangeAtomIndexInGroupDelayed2)
 {
-    ASSERT_NO_THROW_GMX(sc_.setTopology(NULL, 5));
+    ASSERT_NO_THROW_GMX(sc_.setTopology(nullptr, 5));
     ASSERT_NO_THROW_GMX(sc_.parseFromString("group \"GrpB\""));
     EXPECT_THROW_GMX(loadIndexGroups("simple.ndx"), gmx::InconsistentInputError);
 }
@@ -616,7 +645,7 @@ TEST_F(SelectionCollectionTest, RecoversFromInvalidPermutation3)
     ASSERT_NO_THROW_GMX(sc_.parseFromString("x < 1.5 permute 3 2 1"));
     ASSERT_NO_FATAL_FAILURE(loadTopology("simple.gro"));
     ASSERT_NO_THROW_GMX(sc_.compile());
-    EXPECT_THROW_GMX(sc_.evaluate(topManager_.frame(), NULL), gmx::InconsistentInputError);
+    EXPECT_THROW_GMX(sc_.evaluate(topManager_.frame(), nullptr), gmx::InconsistentInputError);
 }
 
 TEST_F(SelectionCollectionTest, HandlesFramesWithTooSmallAtomSubsets)
@@ -625,7 +654,7 @@ TEST_F(SelectionCollectionTest, HandlesFramesWithTooSmallAtomSubsets)
     ASSERT_NO_FATAL_FAILURE(loadTopology("simple.gro"));
     ASSERT_NO_THROW_GMX(sc_.compile());
     topManager_.frame()->natoms = 8;
-    EXPECT_THROW_GMX(sc_.evaluate(topManager_.frame(), NULL), gmx::InconsistentInputError);
+    EXPECT_THROW_GMX(sc_.evaluate(topManager_.frame(), nullptr), gmx::InconsistentInputError);
 }
 
 TEST_F(SelectionCollectionTest, HandlesFramesWithTooSmallAtomSubsets2)
@@ -635,18 +664,18 @@ TEST_F(SelectionCollectionTest, HandlesFramesWithTooSmallAtomSubsets2)
     ASSERT_NO_FATAL_FAILURE(loadTopology("simple.gro"));
     ASSERT_NO_THROW_GMX(sc_.compile());
     topManager_.initFrameIndices(index);
-    EXPECT_THROW_GMX(sc_.evaluate(topManager_.frame(), NULL), gmx::InconsistentInputError);
+    EXPECT_THROW_GMX(sc_.evaluate(topManager_.frame(), nullptr), gmx::InconsistentInputError);
 }
 
 TEST_F(SelectionCollectionTest, HandlesFramesWithTooSmallAtomSubsets3)
 {
     const int index[] = { 0, 1, 2, 3, 4, 5, 6, 9, 10, 11 };
     // Evaluating the positions will require atoms 1-3, 7-12.
-    ASSERT_NO_THROW_GMX(sc_.parseFromString("whole_res_com of atomnr 2 7 11"));
+    ASSERT_NO_THROW_GMX(sc_.parseFromString("whole_res_cog of atomnr 2 7 11"));
     ASSERT_NO_FATAL_FAILURE(loadTopology("simple.gro"));
     ASSERT_NO_THROW_GMX(sc_.compile());
     topManager_.initFrameIndices(index);
-    EXPECT_THROW_GMX(sc_.evaluate(topManager_.frame(), NULL), gmx::InconsistentInputError);
+    EXPECT_THROW_GMX(sc_.evaluate(topManager_.frame(), nullptr), gmx::InconsistentInputError);
 }
 
 TEST_F(SelectionCollectionTest, HandlesFramesWithTooSmallAtomSubsets4)
@@ -655,7 +684,7 @@ TEST_F(SelectionCollectionTest, HandlesFramesWithTooSmallAtomSubsets4)
     ASSERT_NO_FATAL_FAILURE(loadTopology("simple.gro"));
     ASSERT_NO_THROW_GMX(sc_.compile());
     topManager_.frame()->natoms = 10;
-    EXPECT_THROW_GMX(sc_.evaluate(topManager_.frame(), NULL), gmx::InconsistentInputError);
+    EXPECT_THROW_GMX(sc_.evaluate(topManager_.frame(), nullptr), gmx::InconsistentInputError);
 }
 
 // TODO: Tests for more evaluation errors
@@ -853,8 +882,9 @@ TEST_F(SelectionCollectionDataTest, HandlesMolIndex)
         "molecule 2 3 5"
     };
     ASSERT_NO_FATAL_FAILURE(runParser(selections));
-    ASSERT_NO_FATAL_FAILURE(loadTopology("simple.gro"));
+    ASSERT_NO_FATAL_FAILURE(topManager_.loadTopology("simple.gro"));
     topManager_.initUniformMolecules(3);
+    ASSERT_NO_FATAL_FAILURE(setTopology());
     ASSERT_NO_FATAL_FAILURE(runCompiler());
 }
 
@@ -885,9 +915,10 @@ TEST_F(SelectionCollectionDataTest, HandlesAtomtype)
         "atomtype CA"
     };
     ASSERT_NO_FATAL_FAILURE(runParser(selections));
-    ASSERT_NO_FATAL_FAILURE(loadTopology("simple.gro"));
+    ASSERT_NO_FATAL_FAILURE(topManager_.loadTopology("simple.gro"));
     const char *const types[] = { "CA", "SA", "SB" };
     topManager_.initAtomTypes(types);
+    ASSERT_NO_FATAL_FAILURE(setTopology());
     ASSERT_NO_FATAL_FAILURE(runCompiler());
 }
 
@@ -906,11 +937,15 @@ TEST_F(SelectionCollectionDataTest, HandlesMass)
         "mass > 5"
     };
     ASSERT_NO_FATAL_FAILURE(runParser(selections));
-    ASSERT_NO_FATAL_FAILURE(loadTopology("simple.gro"));
-    for (int i = 0; i < top_->atoms.nr; ++i)
+    EXPECT_TRUE(sc_.requiredTopologyProperties().needsMasses);
+    ASSERT_NO_FATAL_FAILURE(topManager_.loadTopology("simple.gro"));
+    t_atoms &atoms = topManager_.atoms();
+    for (int i = 0; i < atoms.nr; ++i)
     {
-        top_->atoms.atom[i].m = 1.0 + i;
+        atoms.atom[i].m = 1.0 + i;
     }
+    atoms.haveMass = TRUE;
+    ASSERT_NO_FATAL_FAILURE(setTopology());
     ASSERT_NO_FATAL_FAILURE(runCompiler());
 }
 
@@ -920,13 +955,17 @@ TEST_F(SelectionCollectionDataTest, HandlesCharge)
         "charge < 0.5"
     };
     ASSERT_NO_FATAL_FAILURE(runParser(selections));
-    ASSERT_NO_FATAL_FAILURE(loadTopology("simple.gro"));
-    for (int i = 0; i < top_->atoms.nr; ++i)
+    ASSERT_NO_FATAL_FAILURE(topManager_.loadTopology("simple.gro"));
+    t_atoms &atoms = topManager_.atoms();
+    for (int i = 0; i < atoms.nr; ++i)
     {
-        top_->atoms.atom[i].q = i / 10.0;
+        atoms.atom[i].q = i / 10.0;
     }
-    //ensure exact representation of 0.5 is used, so the test is always reproducible
-    top_->atoms.atom[5].q = 0.5;
+    // Ensure exact representation of 0.5 is used, so that the test is
+    // reproducible.
+    atoms.atom[5].q  = 0.5;
+    atoms.haveCharge = TRUE;
+    ASSERT_NO_FATAL_FAILURE(setTopology());
     ASSERT_NO_FATAL_FAILURE(runCompiler());
 }
 
@@ -1115,12 +1154,16 @@ TEST_F(SelectionCollectionDataTest, ComputesMassesAndCharges)
     setFlags(TestFlags() | efTestEvaluation | efTestPositionAtoms
              | efTestPositionMasses | efTestPositionCharges);
     ASSERT_NO_FATAL_FAILURE(runParser(selections));
-    ASSERT_NO_FATAL_FAILURE(loadTopology("simple.gro"));
-    for (int i = 0; i < top_->atoms.nr; ++i)
+    ASSERT_NO_FATAL_FAILURE(topManager_.loadTopology("simple.gro"));
+    t_atoms &atoms = topManager_.atoms();
+    for (int i = 0; i < atoms.nr; ++i)
     {
-        top_->atoms.atom[i].m =   1.0 + i / 100.0;
-        top_->atoms.atom[i].q = -(1.0 + i / 100.0);
+        atoms.atom[i].m =   1.0 + i / 100.0;
+        atoms.atom[i].q = -(1.0 + i / 100.0);
     }
+    atoms.haveMass   = TRUE;
+    atoms.haveCharge = TRUE;
+    ASSERT_NO_FATAL_FAILURE(setTopology());
     ASSERT_NO_FATAL_FAILURE(runCompiler());
     ASSERT_NO_FATAL_FAILURE(runEvaluate());
     ASSERT_NO_FATAL_FAILURE(runEvaluateFinal());
@@ -1289,11 +1332,14 @@ TEST_F(SelectionCollectionDataTest, HandlesOverlappingRealRanges)
         "charge {0.05 to -0.3 -0.05 to 0.55}"
     };
     ASSERT_NO_FATAL_FAILURE(runParser(selections));
-    ASSERT_NO_FATAL_FAILURE(loadTopology("simple.gro"));
-    for (int i = 0; i < top_->atoms.nr; ++i)
+    ASSERT_NO_FATAL_FAILURE(topManager_.loadTopology("simple.gro"));
+    t_atoms &atoms = topManager_.atoms();
+    for (int i = 0; i < atoms.nr; ++i)
     {
-        top_->atoms.atom[i].q = i / 10.0 - 0.5;
+        atoms.atom[i].q = i / 10.0 - 0.5;
     }
+    atoms.haveCharge = TRUE;
+    ASSERT_NO_FATAL_FAILURE(setTopology());
     ASSERT_NO_FATAL_FAILURE(runCompiler());
 }
 
@@ -1480,6 +1526,18 @@ TEST_F(SelectionCollectionDataTest, HandlesPositionVariables)
         "bar = cog of resname RA",
         "bar",
         "within 1 of bar"
+    };
+    setFlags(TestFlags() | efTestEvaluation | efTestPositionCoordinates);
+    runTest("simple.gro", selections);
+}
+
+
+TEST_F(SelectionCollectionDataTest, HandlesPositionVariableInModifier)
+{
+    static const char * const selections[] = {
+        "foo = cog of resnr 1",
+        "cog of resnr 2 plus foo",
+        "cog of resnr 3 plus foo"
     };
     setFlags(TestFlags() | efTestEvaluation | efTestPositionCoordinates);
     runTest("simple.gro", selections);

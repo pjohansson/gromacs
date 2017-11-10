@@ -3,7 +3,7 @@
  *
  * Copyright (c) 1991-2000, University of Groningen, The Netherlands.
  * Copyright (c) 2001-2004, The GROMACS development team.
- * Copyright (c) 2013,2014,2015,2016, by the GROMACS development team, led by
+ * Copyright (c) 2013,2014,2015,2016,2017, by the GROMACS development team, led by
  * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
  * and including many others, as listed in the AUTHORS file in the
  * top-level source directory and at http://www.gromacs.org.
@@ -46,7 +46,6 @@
 #include <cctype>
 #include <cstring>
 
-#include <sstream>
 #include <string>
 #include <vector>
 
@@ -54,7 +53,9 @@
 #include "gromacs/utility/fatalerror.h"
 #include "gromacs/utility/futil.h"
 #include "gromacs/utility/smalloc.h"
-#include "gromacs/utility/sysinfo.h"
+
+//! Comment sign to use.
+#define COMMENTSIGN ';'
 
 int continuing(char *s)
 {
@@ -79,11 +80,11 @@ int continuing(char *s)
 char *fgets2(char *line, int n, FILE *stream)
 {
     char *c;
-    if (fgets(line, n, stream) == NULL)
+    if (fgets(line, n, stream) == nullptr)
     {
-        return NULL;
+        return nullptr;
     }
-    if ((c = strchr(line, '\n')) != NULL)
+    if ((c = strchr(line, '\n')) != nullptr)
     {
         *c = '\0';
     }
@@ -98,7 +99,7 @@ char *fgets2(char *line, int n, FILE *stream)
             gmx_fatal(FARGS, "An input file contains a line longer than %d characters, while the buffer passed to fgets2 has size %d. The line starts with: '%20.20s'", n, n, line);
         }
     }
-    if ((c = strchr(line, '\r')) != NULL)
+    if ((c = strchr(line, '\r')) != nullptr)
     {
         *c = '\0';
     }
@@ -116,7 +117,7 @@ void strip_comment (char *line)
     }
 
     /* search for a comment mark and replace it by a zero */
-    if ((c = strchr(line, COMMENTSIGN)) != NULL)
+    if ((c = strchr(line, COMMENTSIGN)) != nullptr)
     {
         (*c) = 0;
     }
@@ -136,7 +137,7 @@ void ltrim (char *str)
 {
     int   i, c;
 
-    if (NULL == str)
+    if (nullptr == str)
     {
         return;
     }
@@ -160,7 +161,7 @@ void rtrim (char *str)
 {
     int nul;
 
-    if (NULL == str)
+    if (nullptr == str)
     {
         return;
     }
@@ -177,28 +178,6 @@ void trim (char *str)
 {
     ltrim (str);
     rtrim (str);
-}
-
-void nice_header(FILE *out, const char *fn)
-{
-    int            uid;
-    char           userbuf[256];
-    char           hostbuf[256];
-    char           timebuf[STRLEN];
-
-    /* Print a nice header above the file */
-    fprintf(out, "%c\n", COMMENTSIGN);
-    fprintf(out, "%c\tFile '%s' was generated\n", COMMENTSIGN, fn ? fn : "unknown");
-
-    uid  = gmx_getuid();
-    gmx_getusername(userbuf, 256);
-    gmx_gethostname(hostbuf, 256);
-    gmx_format_current_time(timebuf, STRLEN);
-
-    fprintf(out, "%c\tBy user: %s (%d)\n", COMMENTSIGN, userbuf, uid);
-    fprintf(out, "%c\tOn host: %s\n", COMMENTSIGN, hostbuf);
-    fprintf(out, "%c\tAt date: %s\n", COMMENTSIGN, timebuf);
-    fprintf(out, "%c\n", COMMENTSIGN);
 }
 
 int gmx_strcasecmp_min(const char *str1, const char *str2)
@@ -440,7 +419,7 @@ char *wrap_lines(const char *buf, int line_width, int indent, gmx_bool bIndentFi
      * the current line (where it also won't fit, but looks better)
      */
 
-    b2    = NULL;
+    b2    = nullptr;
     b2len = strlen(buf)+1+indent;
     snew(b2, b2len);
     i0 = i2 = 0;
@@ -539,81 +518,4 @@ char *gmx_step_str(gmx_int64_t i, char *buf)
 {
     sprintf(buf, "%" GMX_PRId64, i);
     return buf;
-}
-
-void parse_digits_from_string(const char *digitstring, int *ndigits, int **digitlist)
-{
-    /* TODO use std::string, once gmx_gpu_opt_t is ready for it */
-    if (NULL == digitstring)
-    {
-        *ndigits   = 0;
-        *digitlist = NULL;
-        return;
-    }
-
-    if (strstr(digitstring, ",") != NULL)
-    {
-        parse_digits_from_csv_string(digitstring, ndigits, digitlist);
-    }
-    else
-    {
-        parse_digits_from_plain_string(digitstring, ndigits, digitlist);
-    }
-}
-
-void parse_digits_from_plain_string(const char *digitstring, int *ndigits, int **digitlist)
-{
-    int i;
-
-    if (NULL == digitstring)
-    {
-        *ndigits   = 0;
-        *digitlist = NULL;
-        return;
-    }
-
-    *ndigits = strlen(digitstring);
-
-    snew(*digitlist, *ndigits);
-
-    for (i = 0; i < *ndigits; i++)
-    {
-        if (digitstring[i] < '0' || digitstring[i] > '9')
-        {
-            gmx_fatal(FARGS, "Invalid character in digit-only string: '%c'\n",
-                      digitstring[i]);
-        }
-        (*digitlist)[i] = digitstring[i] - '0';
-    }
-}
-
-void parse_digits_from_csv_string(const char *digitstring, int *ndigits, int **digitlist)
-{
-    if (NULL == digitstring)
-    {
-        *ndigits   = 0;
-        *digitlist = NULL;
-        return;
-    }
-
-    std::vector<int>   digits;
-    std::istringstream ss(digitstring);
-    std::string        token;
-    while (std::getline(ss, token, ','))
-    {
-        if (token.find_first_not_of("0123456789") != std::string::npos)
-        {
-            gmx_fatal(FARGS, "Invalid token in digit-only string: \"%s\"\n",
-                      token.c_str());
-        }
-        int number = static_cast<int>(str_to_int64_t(token.c_str(), NULL));
-        digits.push_back(number);
-    }
-
-    *ndigits = digits.size();
-    snew(*digitlist, *ndigits);
-    for (size_t i = 0; i < digits.size(); i++)
-    {
-        (*digitlist)[i] = digits[i];
-    }
 }

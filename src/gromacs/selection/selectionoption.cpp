@@ -1,7 +1,7 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2010,2011,2012,2013,2014,2015, by the GROMACS development team, led by
+ * Copyright (c) 2010,2011,2012,2013,2014,2015,2016,2017, by the GROMACS development team, led by
  * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
  * and including many others, as listed in the AUTHORS file in the
  * top-level source directory and at http://www.gromacs.org.
@@ -70,7 +70,7 @@ SelectionOptionStorage::SelectionOptionStorage(const SelectionOption  &settings,
       info_(this), manager_(*manager), defaultText_(settings.defaultText_),
       selectionFlags_(settings.selectionFlags_)
 {
-    GMX_RELEASE_ASSERT(manager != NULL,
+    GMX_RELEASE_ASSERT(manager != nullptr,
                        "SelectionOptionManager must be added before SelectionOption");
     GMX_RELEASE_ASSERT(!hasFlag(efOption_MultipleTimes),
                        "allowMultiple() is not supported for selection options");
@@ -81,6 +81,13 @@ SelectionOptionStorage::SelectionOptionStorage(const SelectionOption  &settings,
 std::string SelectionOptionStorage::formatSingleValue(const Selection &value) const
 {
     return value.selectionText();
+}
+
+
+std::vector<Variant>
+SelectionOptionStorage::normalizeValues(const std::vector<Variant> & /*values*/) const
+{
+    GMX_THROW(NotImplementedError("Selection options not supported in this context"));
 }
 
 
@@ -118,9 +125,9 @@ void SelectionOptionStorage::addSelections(
 }
 
 
-void SelectionOptionStorage::convertValue(const std::string &value)
+void SelectionOptionStorage::convertValue(const Variant &value)
 {
-    manager_.convertOptionValue(this, value, false);
+    manager_.convertOptionValue(this, value.cast<std::string>(), false);
 }
 
 void SelectionOptionStorage::processSetValues(ValueList *values)
@@ -180,10 +187,9 @@ void SelectionOptionStorage::setAllowedValueCount(int count)
 
 void SelectionOptionStorage::setSelectionFlag(SelectionFlag flag, bool bSet)
 {
-    ValueList::iterator i;
-    for (i = values().begin(); i != values().end(); ++i)
+    for (const Selection &value : values())
     {
-        if (flag == efSelection_OnlyStatic && bSet && i->isDynamic())
+        if (flag == efSelection_OnlyStatic && bSet && value.isDynamic())
         {
             MessageStringCollector errors;
             errors.startContext("In option '" + name() + "'");
@@ -193,9 +199,9 @@ void SelectionOptionStorage::setSelectionFlag(SelectionFlag flag, bool bSet)
         }
     }
     selectionFlags_.set(flag, bSet);
-    for (i = values().begin(); i != values().end(); ++i)
+    for (Selection &value : values())
     {
-        i->data().setFlags(selectionFlags_);
+        value.data().setFlags(selectionFlags_);
     }
 }
 
@@ -272,7 +278,7 @@ SelectionFileOptionStorage::SelectionFileOptionStorage(
                             | efOption_DontCheckMinimumCount),
       info_(this), manager_(*manager), bValueParsed_(false)
 {
-    GMX_RELEASE_ASSERT(manager != NULL,
+    GMX_RELEASE_ASSERT(manager != nullptr,
                        "SelectionOptionManager must be added before SelectionFileOption");
 }
 
@@ -281,7 +287,7 @@ void SelectionFileOptionStorage::clearSet()
     bValueParsed_ = false;
 }
 
-void SelectionFileOptionStorage::convertValue(const std::string &value)
+void SelectionFileOptionStorage::convertValue(const Variant &value)
 {
     if (bValueParsed_)
     {
@@ -289,7 +295,7 @@ void SelectionFileOptionStorage::convertValue(const std::string &value)
     }
     bValueParsed_ = true;
     // TODO: Should we throw an InvalidInputError if the file does not exist?
-    manager_.parseRequestedFromFile(value);
+    manager_.parseRequestedFromFile(value.cast<std::string>());
 }
 
 void SelectionFileOptionStorage::processSet()

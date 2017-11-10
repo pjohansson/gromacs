@@ -3,7 +3,7 @@
  *
  * Copyright (c) 1991-2000, University of Groningen, The Netherlands.
  * Copyright (c) 2001-2008, The GROMACS development team.
- * Copyright (c) 2013,2014,2015,2016, by the GROMACS development team, led by
+ * Copyright (c) 2013,2014,2015,2016,2017, by the GROMACS development team, led by
  * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
  * and including many others, as listed in the AUTHORS file in the
  * top-level source directory and at http://www.gromacs.org.
@@ -39,6 +39,8 @@
 
 #include <cstdio>
 
+#include "gromacs/domdec/dlbtiming.h"
+#include "gromacs/math/paddedvector.h"
 #include "gromacs/mdlib/vsite.h"
 #include "gromacs/timing/wallcycle.h"
 
@@ -51,7 +53,7 @@ struct t_forcerec;
 struct t_fcdata;
 struct t_graph;
 struct t_inputrec;
-struct t_state;
+class t_state;
 
 /* Initialization function, also predicts the initial shell postions.
  */
@@ -71,7 +73,7 @@ void relax_shell_flexcon(FILE *log, t_commrec *cr, gmx_bool bVerbose,
                          gmx_localtop_t *top,
                          gmx_constr *constr,
                          gmx_enerdata_t *enerd, t_fcdata *fcd,
-                         t_state *state, rvec f[],
+                         t_state *state, PaddedRVecVector *f,
                          tensor force_vir,
                          t_mdatoms *md,
                          t_nrnb *nrnb, gmx_wallcycle_t wcycle,
@@ -82,7 +84,8 @@ void relax_shell_flexcon(FILE *log, t_commrec *cr, gmx_bool bVerbose,
                          gmx_bool bBornRadii,
                          double t, rvec mu_tot,
                          gmx_vsite_t *vsite,
-                         FILE *fp_field);
+                         DdOpenBalanceRegionBeforeForceComputation ddOpenBalanceRegion,
+                         DdCloseBalanceRegionAfterForceComputation ddCloseBalanceRegion);
 
 /* Print some final output */
 void done_shellfc(FILE *fplog, gmx_shellfc_t *shellfc, gmx_int64_t numSteps);

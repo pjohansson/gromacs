@@ -1,7 +1,7 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2010,2011,2012,2013,2014,2015, by the GROMACS development team, led by
+ * Copyright (c) 2010,2011,2012,2013,2014,2015,2016,2017, by the GROMACS development team, led by
  * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
  * and including many others, as listed in the AUTHORS file in the
  * top-level source directory and at http://www.gromacs.org.
@@ -120,7 +120,7 @@ class OptionsFilter : public OptionsVisitor
          * Does not throw.
          */
         OptionsFilter()
-            : formatter_(NULL), filterType_(eSelectOtherOptions),
+            : formatter_(nullptr), filterType_(eSelectOtherOptions),
               bShowHidden_(false)
         {
         }
@@ -136,7 +136,7 @@ class OptionsFilter : public OptionsVisitor
                             IOptionsFormatter         *formatter,
                             const Options             &options);
 
-        virtual void visitSubSection(const Options &section);
+        virtual void visitSection(const OptionSectionInfo &section);
         virtual void visitOption(const OptionInfo &option);
 
     private:
@@ -153,13 +153,13 @@ void OptionsFilter::formatSelected(FilterType                 type,
 {
     formatter_  = formatter;
     filterType_ = type;
-    visitSubSection(options);
+    visitSection(options.rootSection());
 }
 
-void OptionsFilter::visitSubSection(const Options &section)
+void OptionsFilter::visitSection(const OptionSectionInfo &section)
 {
     OptionsIterator iterator(section);
-    iterator.acceptSubSections(this);
+    iterator.acceptSections(this);
     iterator.acceptOptions(this);
 }
 
@@ -170,7 +170,7 @@ void OptionsFilter::visitOption(const OptionInfo &option)
         return;
     }
     const FileNameOptionInfo *const fileOption = option.toType<FileNameOptionInfo>();
-    if (fileOption != NULL && fileOption->isInputFile())
+    if (fileOption != nullptr && fileOption->isInputFile())
     {
         if (filterType_ == eSelectInputFileOptions)
         {
@@ -178,7 +178,7 @@ void OptionsFilter::visitOption(const OptionInfo &option)
         }
         return;
     }
-    if (fileOption != NULL && fileOption->isInputOutputFile())
+    if (fileOption != nullptr && fileOption->isInputOutputFile())
     {
         if (filterType_ == eSelectInputOutputFileOptions)
         {
@@ -186,7 +186,7 @@ void OptionsFilter::visitOption(const OptionInfo &option)
         }
         return;
     }
-    if (fileOption != NULL && fileOption->isOutputFile())
+    if (fileOption != nullptr && fileOption->isOutputFile())
     {
         if (filterType_ == eSelectOutputFileOptions)
         {
@@ -248,27 +248,9 @@ void formatOptionNameAndValue(const OptionInfo &option, std::string *name,
 }
 
 //! Formats the default option value as a string.
-std::string
-defaultOptionValue(const OptionInfo &option)
+std::string defaultOptionValue(const OptionInfo &option)
 {
-    if (option.valueCount() == 0
-        || (option.valueCount() == 1 && option.formatValue(0).empty()))
-    {
-        return option.formatDefaultValueIfSet();
-    }
-    else
-    {
-        std::string result;
-        for (int i = 0; i < option.valueCount(); ++i)
-        {
-            if (i != 0)
-            {
-                result.append(" ");
-            }
-            result.append(option.formatValue(i));
-        }
-        return result;
-    }
+    return joinStrings(option.defaultValuesAsStrings(), " ");
 }
 
 //! Formats the flags for a file option as a string.
@@ -300,8 +282,8 @@ descriptionWithOptionDetails(const CommonFormatterData &common,
 
     const FloatOptionInfo  *floatOption  = option.toType<FloatOptionInfo>();
     const DoubleOptionInfo *doubleOption = option.toType<DoubleOptionInfo>();
-    if ((floatOption != NULL && floatOption->isTime())
-        || (doubleOption != NULL && doubleOption->isTime()))
+    if ((floatOption != nullptr && floatOption->isTime())
+        || (doubleOption != nullptr && doubleOption->isTime()))
     {
         // TODO: It could be nicer to have this in basicoptions.cpp.
         description = replaceAll(description, "%t", common.timeUnit);
@@ -434,14 +416,14 @@ class OptionsListFormatter : public IOptionsFormatter
     private:
         void writeSectionStartIfNecessary()
         {
-            if (title_ != NULL)
+            if (title_ != nullptr)
             {
                 context_.writeTitle(title_);
-                title_ = NULL;
+                title_ = nullptr;
             }
             if (!bDidOutput_)
             {
-                if (header_ != NULL)
+                if (header_ != nullptr)
                 {
                     context_.paragraphBreak();
                     context_.writeTextBlock(header_);
@@ -466,7 +448,7 @@ OptionsListFormatter::OptionsListFormatter(
         const CommonFormatterData &common,
         const char                *title)
     : context_(context), common_(common),
-      title_(title), header_(NULL), bDidOutput_(false)
+      title_(title), header_(nullptr), bDidOutput_(false)
 {
 }
 
@@ -478,7 +460,7 @@ void OptionsListFormatter::formatOption(const OptionInfo &option)
     std::string               defaultValue(defaultOptionValue(option));
     std::string               info;
     const FileNameOptionInfo *fileOption = option.toType<FileNameOptionInfo>();
-    if (fileOption != NULL)
+    if (fileOption != nullptr)
     {
         const bool bAbbrev = (context_.outputFormat() == eHelpOutputFormat_Console);
         info = fileOptionFlagsAsString(*fileOption, bAbbrev);
@@ -517,7 +499,7 @@ class CommandLineHelpWriter::Impl
         //! Help text.
         std::string                  helpText_;
         //! List of bugs/knows issues.
-        ConstArrayRef<const char *>  bugs_;
+        ArrayRef<const char *const>  bugs_;
 };
 
 void CommandLineHelpWriter::Impl::formatBugs(const HelpWriterContext &context)
@@ -527,7 +509,7 @@ void CommandLineHelpWriter::Impl::formatBugs(const HelpWriterContext &context)
         return;
     }
     context.writeTitle("Known Issues");
-    ConstArrayRef<const char *>::const_iterator i;
+    ArrayRef<const char *const>::const_iterator i;
     for (i = bugs_.begin(); i != bugs_.end(); ++i)
     {
         const char *const       bug = *i;
@@ -557,14 +539,14 @@ CommandLineHelpWriter::setHelpText(const std::string &help)
 }
 
 CommandLineHelpWriter &
-CommandLineHelpWriter::setHelpText(const ConstArrayRef<const char *> &help)
+CommandLineHelpWriter::setHelpText(const ArrayRef<const char *const> &help)
 {
     impl_->helpText_ = joinStrings(help, "\n");
     return *this;
 }
 
 CommandLineHelpWriter &
-CommandLineHelpWriter::setKnownIssues(const ConstArrayRef<const char *> &bugs)
+CommandLineHelpWriter::setKnownIssues(const ArrayRef<const char *const> &bugs)
 {
     impl_->bugs_ = bugs;
     return *this;

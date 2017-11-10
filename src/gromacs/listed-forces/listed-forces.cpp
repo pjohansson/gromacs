@@ -1,7 +1,7 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2014,2015,2016, by the GROMACS development team, led by
+ * Copyright (c) 2014,2015,2016,2017, by the GROMACS development team, led by
  * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
  * and including many others, as listed in the AUTHORS file in the
  * top-level source directory and at http://www.gromacs.org.
@@ -91,6 +91,11 @@ isPairInteraction(int ftype)
 static void
 zero_thread_output(struct bonded_threading_t *bt, int thread)
 {
+    if (!bt->haveBondeds)
+    {
+        return;
+    }
+
     f_thread_t *f_t      = &bt->f_t[thread];
     const int   nelem_fa = sizeof(*f_t->f)/sizeof(real);
 
@@ -198,6 +203,8 @@ reduce_thread_output(int n, rvec *f, rvec *fshift,
                      gmx_bool bCalcEnerVir,
                      gmx_bool bDHDL)
 {
+    assert(bt->haveBondeds);
+
     if (bt->nblock_used > 0)
     {
         /* Reduce the bonded force buffer */
@@ -249,15 +256,15 @@ reduce_thread_output(int n, rvec *f, rvec *fshift,
 
 /*! \brief Calculate one element of the list of bonded interactions
     for this thread */
-real
+static real
 calc_one_bond(int thread,
               int ftype, const t_idef *idef,
               const rvec x[], rvec4 f[], rvec fshift[],
-              t_forcerec *fr,
+              const t_forcerec *fr,
               const t_pbc *pbc, const t_graph *g,
               gmx_grppairener_t *grpp,
               t_nrnb *nrnb,
-              real *lambda, real *dvdl,
+              const real *lambda, real *dvdl,
               const t_mdatoms *md, t_fcdata *fcd,
               gmx_bool bCalcEnerVir,
               int *global_atom_index)
@@ -390,101 +397,27 @@ ftype_is_bonded_potential(int ftype)
         (ftype < F_GB12 || ftype > F_GB14);
 }
 
-void calc_listed(const t_commrec             *cr,
-                 struct gmx_wallcycle        *wcycle,
-                 const t_idef *idef,
-                 const rvec x[], history_t *hist,
-                 rvec f[], t_forcerec *fr,
-                 const struct t_pbc *pbc,
-                 const struct t_pbc *pbc_full,
-                 const struct t_graph *g,
-                 gmx_enerdata_t *enerd, t_nrnb *nrnb,
-                 real *lambda,
-                 const t_mdatoms *md,
-                 t_fcdata *fcd, int *global_atom_index,
-                 int force_flags)
+/*! \brief Compute the bonded part of the listed forces, parallelized over threads
+ */
+static void
+calcBondedForces(const t_idef     *idef,
+                 const rvec        x[],
+                 const t_forcerec *fr,
+                 const t_pbc      *pbc_null,
+                 const t_graph    *g,
+                 gmx_enerdata_t   *enerd,
+                 t_nrnb           *nrnb,
+                 const real       *lambda,
+                 real             *dvdl,
+                 const t_mdatoms  *md,
+                 t_fcdata         *fcd,
+                 gmx_bool          bCalcEnerVir,
+                 int              *global_atom_index)
 {
-    struct bonded_threading_t *bt;
-    gmx_bool                   bCalcEnerVir;
-    int                        i;
-    /* The dummy array is to have a place to store the dhdl at other values
-       of lambda, which will be thrown away in the end */
-    real                       dvdl[efptNR];
-    const  t_pbc              *pbc_null;
-    int                        thread;
+    struct bonded_threading_t *bt = fr->bonded_threading;
 
-    bt = fr->bonded_threading;
-
-    assert(bt->nthreads == idef->nthreads);
-
-    bCalcEnerVir = (force_flags & (GMX_FORCE_VIRIAL | GMX_FORCE_ENERGY));
-
-    for (i = 0; i < efptNR; i++)
-    {
-        dvdl[i] = 0.0;
-    }
-    if (fr->bMolPBC)
-    {
-        pbc_null = pbc;
-    }
-    else
-    {
-        pbc_null = NULL;
-    }
-
-#ifdef DEBUG
-    if (g && debug)
-    {
-        p_graph(debug, "Bondage is fun", g);
-    }
-#endif
-
-    if ((idef->il[F_POSRES].nr > 0) ||
-        (idef->il[F_FBPOSRES].nr > 0) ||
-        fcd->orires.nr > 0 ||
-        fcd->disres.nres > 0)
-    {
-        /* TODO Use of restraints triggers further function calls
-           inside the loop over calc_one_bond(), but those are too
-           awkward to account to this subtimer properly in the present
-           code. We don't test / care much about performance with
-           restraints, anyway. */
-        wallcycle_sub_start(wcycle, ewcsRESTRAINTS);
-
-        if (idef->il[F_POSRES].nr > 0)
-        {
-            posres_wrapper(nrnb, idef, pbc_full, x, enerd, lambda, fr);
-        }
-
-        if (idef->il[F_FBPOSRES].nr > 0)
-        {
-            fbposres_wrapper(nrnb, idef, pbc_full, x, enerd, fr);
-        }
-
-        /* Do pre force calculation stuff which might require communication */
-        if (fcd->orires.nr > 0)
-        {
-            enerd->term[F_ORIRESDEV] =
-                calc_orires_dev(cr->ms, idef->il[F_ORIRES].nr,
-                                idef->il[F_ORIRES].iatoms,
-                                idef->iparams, md, x,
-                                pbc_null, fcd, hist);
-        }
-        if (fcd->disres.nres > 0)
-        {
-            calc_disres_R_6(cr,
-                            idef->il[F_DISRES].nr,
-                            idef->il[F_DISRES].iatoms,
-                            x, pbc_null,
-                            fcd, hist);
-        }
-
-        wallcycle_sub_stop(wcycle, ewcsRESTRAINTS);
-    }
-
-    wallcycle_sub_start(wcycle, ewcsLISTED);
 #pragma omp parallel for num_threads(bt->nthreads) schedule(static)
-    for (thread = 0; thread < bt->nthreads; thread++)
+    for (int thread = 0; thread < bt->nthreads; thread++)
     {
         try
         {
@@ -530,39 +463,135 @@ void calc_listed(const t_commrec             *cr,
         }
         GMX_CATCH_ALL_AND_EXIT_WITH_FATAL_ERROR;
     }
-    wallcycle_sub_stop(wcycle, ewcsLISTED);
+}
 
-    wallcycle_sub_start(wcycle, ewcsLISTED_BUF_OPS);
-    reduce_thread_output(fr->natoms_force, f, fr->fshift,
-                         enerd->term, &enerd->grpp, dvdl,
-                         bt,
-                         bCalcEnerVir,
-                         force_flags & GMX_FORCE_DHDL);
-    wallcycle_sub_stop(wcycle, ewcsLISTED_BUF_OPS);
+void calc_listed(const t_commrec             *cr,
+                 struct gmx_wallcycle        *wcycle,
+                 const t_idef *idef,
+                 const rvec x[], history_t *hist,
+                 rvec f[],
+                 gmx::ForceWithVirial *forceWithVirial,
+                 const t_forcerec *fr,
+                 const struct t_pbc *pbc,
+                 const struct t_pbc *pbc_full,
+                 const struct t_graph *g,
+                 gmx_enerdata_t *enerd, t_nrnb *nrnb,
+                 const real *lambda,
+                 const t_mdatoms *md,
+                 t_fcdata *fcd, int *global_atom_index,
+                 int force_flags)
+{
+    struct bonded_threading_t *bt;
+    gmx_bool                   bCalcEnerVir;
+    const  t_pbc              *pbc_null;
 
-    /* Remaining code does not have enough flops to bother counting */
-    if (force_flags & GMX_FORCE_DHDL)
+    bt = fr->bonded_threading;
+
+    assert(bt->nthreads == idef->nthreads);
+
+    bCalcEnerVir = (force_flags & (GMX_FORCE_VIRIAL | GMX_FORCE_ENERGY));
+
+    if (fr->bMolPBC)
     {
-        for (i = 0; i < efptNR; i++)
+        pbc_null = pbc;
+    }
+    else
+    {
+        pbc_null = nullptr;
+    }
+
+    if ((idef->il[F_POSRES].nr > 0) ||
+        (idef->il[F_FBPOSRES].nr > 0) ||
+        fcd->orires.nr > 0 ||
+        fcd->disres.nres > 0)
+    {
+        /* TODO Use of restraints triggers further function calls
+           inside the loop over calc_one_bond(), but those are too
+           awkward to account to this subtimer properly in the present
+           code. We don't test / care much about performance with
+           restraints, anyway. */
+        wallcycle_sub_start(wcycle, ewcsRESTRAINTS);
+
+        if (idef->il[F_POSRES].nr > 0)
         {
-            enerd->dvdl_nonlin[i] += dvdl[i];
+            posres_wrapper(nrnb, idef, pbc_full, x, enerd, lambda, fr,
+                           forceWithVirial);
         }
+
+        if (idef->il[F_FBPOSRES].nr > 0)
+        {
+            fbposres_wrapper(nrnb, idef, pbc_full, x, enerd, fr,
+                             forceWithVirial);
+        }
+
+        /* Do pre force calculation stuff which might require communication */
+        if (fcd->orires.nr > 0)
+        {
+            /* This assertion is to ensure we have whole molecules.
+             * Unfortunately we do not have an mdrun state variable that tells
+             * us if molecules in x are not broken over PBC, so we have to make
+             * do with checking graph!=nullptr, which should tell us if we made
+             * molecules whole before calling the current function.
+             */
+            GMX_RELEASE_ASSERT(fr->ePBC == epbcNONE || g != nullptr, "With orientation restraints molecules should be whole");
+            enerd->term[F_ORIRESDEV] =
+                calc_orires_dev(cr->ms, idef->il[F_ORIRES].nr,
+                                idef->il[F_ORIRES].iatoms,
+                                idef->iparams, md, x,
+                                pbc_null, fcd, hist);
+        }
+        if (fcd->disres.nres > 0)
+        {
+            calc_disres_R_6(cr,
+                            idef->il[F_DISRES].nr,
+                            idef->il[F_DISRES].iatoms,
+                            x, pbc_null,
+                            fcd, hist);
+        }
+
+        wallcycle_sub_stop(wcycle, ewcsRESTRAINTS);
+    }
+
+    if (bt->haveBondeds)
+    {
+        wallcycle_sub_start(wcycle, ewcsLISTED);
+        /* The dummy array is to have a place to store the dhdl at other values
+           of lambda, which will be thrown away in the end */
+        real dvdl[efptNR] = {0};
+        calcBondedForces(idef, x, fr, pbc_null, g, enerd, nrnb, lambda, dvdl, md,
+                         fcd, bCalcEnerVir, global_atom_index);
+        wallcycle_sub_stop(wcycle, ewcsLISTED);
+
+        wallcycle_sub_start(wcycle, ewcsLISTED_BUF_OPS);
+        reduce_thread_output(fr->natoms_force, f, fr->fshift,
+                             enerd->term, &enerd->grpp, dvdl,
+                             bt,
+                             bCalcEnerVir,
+                             force_flags & GMX_FORCE_DHDL);
+
+        if (force_flags & GMX_FORCE_DHDL)
+        {
+            for (int i = 0; i < efptNR; i++)
+            {
+                enerd->dvdl_nonlin[i] += dvdl[i];
+            }
+        }
+        wallcycle_sub_stop(wcycle, ewcsLISTED_BUF_OPS);
     }
 
     /* Copy the sum of violations for the distance restraints from fcd */
     if (fcd)
     {
         enerd->term[F_DISRESVIOL] = fcd->disres.sumviol;
-
     }
 }
 
 void calc_listed_lambda(const t_idef *idef,
                         const rvec x[],
-                        t_forcerec *fr,
+                        const t_forcerec *fr,
                         const struct t_pbc *pbc, const struct t_graph *g,
                         gmx_grppairener_t *grpp, real *epot, t_nrnb *nrnb,
-                        real *lambda,
+                        const real *lambda,
                         const t_mdatoms *md,
                         t_fcdata *fcd,
                         int *global_atom_index)
@@ -581,7 +610,7 @@ void calc_listed_lambda(const t_idef *idef,
     }
     else
     {
-        pbc_null = NULL;
+        pbc_null = nullptr;
     }
 
     /* Copy the whole idef, so we can modify the contents locally */
@@ -633,13 +662,14 @@ do_force_listed(struct gmx_wallcycle        *wcycle,
                 const t_idef                *idef,
                 const rvec                   x[],
                 history_t                   *hist,
-                rvec                         f[],
-                t_forcerec                  *fr,
+                rvec                        *forceForUseWithShiftForces,
+                gmx::ForceWithVirial        *forceWithVirial,
+                const t_forcerec            *fr,
                 const struct t_pbc          *pbc,
                 const struct t_graph        *graph,
                 gmx_enerdata_t              *enerd,
                 t_nrnb                      *nrnb,
-                real                        *lambda,
+                const real                  *lambda,
                 const t_mdatoms             *md,
                 t_fcdata                    *fcd,
                 int                         *global_atom_index,
@@ -658,7 +688,9 @@ do_force_listed(struct gmx_wallcycle        *wcycle,
         /* Not enough flops to bother counting */
         set_pbc(&pbc_full, fr->ePBC, box);
     }
-    calc_listed(cr, wcycle, idef, x, hist, f, fr, pbc, &pbc_full,
+    calc_listed(cr, wcycle, idef, x, hist,
+                forceForUseWithShiftForces, forceWithVirial,
+                fr, pbc, &pbc_full,
                 graph, enerd, nrnb, lambda, md, fcd,
                 global_atom_index, flags);
 

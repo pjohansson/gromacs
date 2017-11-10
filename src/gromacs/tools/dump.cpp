@@ -3,7 +3,7 @@
  *
  * Copyright (c) 1991-2000, University of Groningen, The Netherlands.
  * Copyright (c) 2001-2013, The GROMACS development team.
- * Copyright (c) 2013,2014,2015,2016, by the GROMACS development team, led by
+ * Copyright (c) 2013,2014,2015,2016,2017, by the GROMACS development team, led by
  * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
  * and including many others, as listed in the AUTHORS file in the
  * top-level source directory and at http://www.gromacs.org.
@@ -36,6 +36,8 @@
  */
 #include "gmxpre.h"
 
+#include "dump.h"
+
 #include "config.h"
 
 #include <cassert>
@@ -49,13 +51,13 @@
 #include "gromacs/fileio/gmxfio.h"
 #include "gromacs/fileio/mtxio.h"
 #include "gromacs/fileio/tngio.h"
-#include "gromacs/fileio/tngio_for_tools.h"
 #include "gromacs/fileio/tpxio.h"
 #include "gromacs/fileio/trrio.h"
 #include "gromacs/fileio/xtcio.h"
 #include "gromacs/gmxpreprocess/gmxcpp.h"
 #include "gromacs/linearalgebra/sparsematrix.h"
 #include "gromacs/math/vecdump.h"
+#include "gromacs/mdrunutility/mdmodules.h"
 #include "gromacs/mdtypes/forcerec.h"
 #include "gromacs/mdtypes/inputrec.h"
 #include "gromacs/mdtypes/md_enums.h"
@@ -70,29 +72,36 @@
 #include "gromacs/utility/smalloc.h"
 #include "gromacs/utility/txtdump.h"
 
-static void list_tpx(const char *fn, gmx_bool bShowNumbers, const char *mdpfn,
-                     gmx_bool bSysTop)
+static void list_tpx(const char *fn,
+                     gmx_bool    bShowNumbers,
+                     gmx_bool    bShowParameters,
+                     const char *mdpfn,
+                     gmx_bool    bSysTop,
+                     gmx_bool    bOriginalInputrec)
 {
     FILE         *gp;
     int           indent, i, j, **gcount, atot;
     t_state       state;
-    t_inputrec    ir;
     t_tpxheader   tpx;
     gmx_mtop_t    mtop;
     gmx_groups_t *groups;
     t_topology    top;
 
     read_tpxheader(fn, &tpx, TRUE);
-
+    t_inputrec     ir;
     read_tpx_state(fn,
-                   tpx.bIr  ? &ir : NULL,
+                   tpx.bIr ? &ir : nullptr,
                    &state,
-                   tpx.bTop ? &mtop : NULL);
+                   tpx.bTop ? &mtop : nullptr);
+    if (tpx.bIr && !bOriginalInputrec)
+    {
+        gmx::MDModules().adjustInputrecBasedOnModules(&ir);
+    }
 
     if (mdpfn && tpx.bIr)
     {
         gp = gmx_fio_fopen(mdpfn, "w");
-        pr_inputrec(gp, 0, NULL, &(ir), TRUE);
+        pr_inputrec(gp, 0, nullptr, &ir, TRUE);
         gmx_fio_fclose(gp);
     }
 
@@ -100,38 +109,38 @@ static void list_tpx(const char *fn, gmx_bool bShowNumbers, const char *mdpfn,
     {
         if (bSysTop)
         {
-            top = gmx_mtop_t_to_t_topology(&mtop);
+            top = gmx_mtop_t_to_t_topology(&mtop, false);
         }
 
         if (available(stdout, &tpx, 0, fn))
         {
             indent = 0;
             pr_title(stdout, indent, fn);
-            pr_inputrec(stdout, 0, "inputrec", tpx.bIr ? &(ir) : NULL, FALSE);
+            pr_inputrec(stdout, 0, "inputrec", tpx.bIr ? &ir : nullptr, FALSE);
 
             pr_tpxheader(stdout, indent, "header", &(tpx));
 
             if (!bSysTop)
             {
-                pr_mtop(stdout, indent, "topology", &(mtop), bShowNumbers);
+                pr_mtop(stdout, indent, "topology", &(mtop), bShowNumbers, bShowParameters);
             }
             else
             {
-                pr_top(stdout, indent, "topology", &(top), bShowNumbers);
+                pr_top(stdout, indent, "topology", &(top), bShowNumbers, bShowParameters);
             }
 
-            pr_rvecs(stdout, indent, "box", tpx.bBox ? state.box : NULL, DIM);
-            pr_rvecs(stdout, indent, "box_rel", tpx.bBox ? state.box_rel : NULL, DIM);
-            pr_rvecs(stdout, indent, "boxv", tpx.bBox ? state.boxv : NULL, DIM);
-            pr_rvecs(stdout, indent, "pres_prev", tpx.bBox ? state.pres_prev : NULL, DIM);
-            pr_rvecs(stdout, indent, "svir_prev", tpx.bBox ? state.svir_prev : NULL, DIM);
-            pr_rvecs(stdout, indent, "fvir_prev", tpx.bBox ? state.fvir_prev : NULL, DIM);
+            pr_rvecs(stdout, indent, "box", tpx.bBox ? state.box : nullptr, DIM);
+            pr_rvecs(stdout, indent, "box_rel", tpx.bBox ? state.box_rel : nullptr, DIM);
+            pr_rvecs(stdout, indent, "boxv", tpx.bBox ? state.boxv : nullptr, DIM);
+            pr_rvecs(stdout, indent, "pres_prev", tpx.bBox ? state.pres_prev : nullptr, DIM);
+            pr_rvecs(stdout, indent, "svir_prev", tpx.bBox ? state.svir_prev : nullptr, DIM);
+            pr_rvecs(stdout, indent, "fvir_prev", tpx.bBox ? state.fvir_prev : nullptr, DIM);
             /* leave nosehoover_xi in for now to match the tpr version */
-            pr_doubles(stdout, indent, "nosehoover_xi", state.nosehoover_xi, state.ngtc);
+            pr_doubles(stdout, indent, "nosehoover_xi", state.nosehoover_xi.data(), state.ngtc);
             /*pr_doubles(stdout,indent,"nosehoover_vxi",state.nosehoover_vxi,state.ngtc);*/
             /*pr_doubles(stdout,indent,"therm_integral",state.therm_integral,state.ngtc);*/
-            pr_rvecs(stdout, indent, "x", tpx.bX ? state.x : NULL, state.natoms);
-            pr_rvecs(stdout, indent, "v", tpx.bV ? state.v : NULL, state.natoms);
+            pr_rvecs(stdout, indent, "x", tpx.bX ? as_rvec_array(state.x.data()) : nullptr, state.natoms);
+            pr_rvecs(stdout, indent, "v", tpx.bV ? as_rvec_array(state.v.data()) : nullptr, state.natoms);
         }
 
         groups = &mtop.groups;
@@ -164,7 +173,6 @@ static void list_tpx(const char *fn, gmx_bool bShowNumbers, const char *mdpfn,
         }
         sfree(gcount);
     }
-    done_state(&state);
 }
 
 static void list_top(const char *fn)
@@ -173,7 +181,7 @@ static void list_top(const char *fn)
 #define BUFLEN 256
     char      buf[BUFLEN];
     gmx_cpp_t handle;
-    char     *cppopts[] = { NULL };
+    char     *cppopts[] = { nullptr };
 
     status = cpp_open_file(fn, &handle, cppopts);
     if (status != 0)
@@ -223,10 +231,10 @@ static void list_trr(const char *fn)
         snew(v, trrheader.natoms);
         snew(f, trrheader.natoms);
         if (gmx_trr_read_frame_data(fpread, &trrheader,
-                                    trrheader.box_size ? box : NULL,
-                                    trrheader.x_size   ? x : NULL,
-                                    trrheader.v_size   ? v : NULL,
-                                    trrheader.f_size   ? f : NULL))
+                                    trrheader.box_size ? box : nullptr,
+                                    trrheader.x_size   ? x : nullptr,
+                                    trrheader.v_size   ? v : nullptr,
+                                    trrheader.f_size   ? f : nullptr))
         {
             sprintf(buf, "%s frame %d", fn, nframe);
             indent = 0;
@@ -270,7 +278,7 @@ static void list_trr(const char *fn)
     gmx_trr_close(fpread);
 }
 
-void list_xtc(const char *fn)
+static void list_xtc(const char *fn)
 {
     t_fileio   *xd;
     int         indent;
@@ -344,15 +352,16 @@ static void list_tng(const char gmx_unused *fn)
 #ifdef GMX_USE_TNG
     tng_trajectory_t     tng;
     gmx_int64_t          nframe = 0;
-    gmx_int64_t          i, *block_ids = NULL, step, ndatablocks;
+    gmx_int64_t          i, *block_ids = nullptr, step, ndatablocks;
     gmx_bool             bOK;
+    real                *values = nullptr;
 
     gmx_tng_open(fn, 'r', &tng);
     gmx_print_tng_molecule_system(tng, stdout);
 
     bOK    = gmx_get_tng_data_block_types_of_next_frame(tng, -1,
                                                         0,
-                                                        NULL,
+                                                        nullptr,
                                                         &step, &ndatablocks,
                                                         &block_ids);
     do
@@ -360,7 +369,7 @@ static void list_tng(const char gmx_unused *fn)
         for (i = 0; i < ndatablocks; i++)
         {
             double               frame_time;
-            real                 prec, *values = NULL;
+            real                 prec;
             gmx_int64_t          n_values_per_frame, n_atoms;
             char                 block_name[STRLEN];
 
@@ -385,7 +394,7 @@ static void list_tng(const char gmx_unused *fn)
     }
     while (gmx_get_tng_data_block_types_of_next_frame(tng, step,
                                                       0,
-                                                      NULL,
+                                                      nullptr,
                                                       &step,
                                                       &ndatablocks,
                                                       &block_ids));
@@ -394,12 +403,12 @@ static void list_tng(const char gmx_unused *fn)
     {
         sfree(block_ids);
     }
-
+    sfree(values);
     gmx_tng_close(&tng);
 #endif
 }
 
-void list_trx(const char *fn)
+static void list_trx(const char *fn)
 {
     switch (fn2ftp(fn))
     {
@@ -418,11 +427,11 @@ void list_trx(const char *fn)
     }
 }
 
-void list_ene(const char *fn)
+static void list_ene(const char *fn)
 {
     ener_file_t    in;
     gmx_bool       bCont;
-    gmx_enxnm_t   *enm = NULL;
+    gmx_enxnm_t   *enm = nullptr;
     t_enxframe    *fr;
     int            i, j, nre, b;
     char           buf[22];
@@ -550,12 +559,12 @@ void list_ene(const char *fn)
 static void list_mtx(const char *fn)
 {
     int                  nrow, ncol, i, j, k;
-    real                *full   = NULL, value;
-    gmx_sparsematrix_t * sparse = NULL;
+    real                *full   = nullptr, value;
+    gmx_sparsematrix_t * sparse = nullptr;
 
     gmx_mtxio_read(fn, &nrow, &ncol, &full, &sparse);
 
-    if (full == NULL)
+    if (full == nullptr)
     {
         snew(full, nrow*ncol);
         for (i = 0; i < nrow*ncol; i++)
@@ -606,23 +615,27 @@ int gmx_dump(int argc, char *argv[])
         "Position restraint output from -sys -s is broken"
     };
     t_filenm    fnm[] = {
-        { efTPR, "-s", NULL, ffOPTRD },
-        { efTRX, "-f", NULL, ffOPTRD },
-        { efEDR, "-e", NULL, ffOPTRD },
-        { efCPT, NULL, NULL, ffOPTRD },
-        { efTOP, "-p", NULL, ffOPTRD },
+        { efTPR, "-s", nullptr, ffOPTRD },
+        { efTRX, "-f", nullptr, ffOPTRD },
+        { efEDR, "-e", nullptr, ffOPTRD },
+        { efCPT, nullptr, nullptr, ffOPTRD },
+        { efTOP, "-p", nullptr, ffOPTRD },
         { efMTX, "-mtx", "hessian", ffOPTRD },
-        { efMDP, "-om", NULL, ffOPTWR }
+        { efMDP, "-om", nullptr, ffOPTWR }
     };
 #define NFILE asize(fnm)
 
     gmx_output_env_t *oenv;
     /* Command line options */
-    static gmx_bool   bShowNumbers = TRUE;
-    static gmx_bool   bSysTop      = FALSE;
-    t_pargs           pa[]         = {
+    gmx_bool          bShowNumbers      = TRUE;
+    gmx_bool          bShowParams       = FALSE;
+    gmx_bool          bSysTop           = FALSE;
+    gmx_bool          bOriginalInputrec = FALSE;
+    t_pargs           pa[]              = {
         { "-nr", FALSE, etBOOL, {&bShowNumbers}, "Show index numbers in output (leaving them out makes comparison easier, but creates a useless topology)" },
-        { "-sys", FALSE, etBOOL, {&bSysTop}, "List the atoms and bonded interactions for the whole system instead of for each molecule type" }
+        { "-param", FALSE, etBOOL, {&bShowParams}, "Show parameters for each bonded interaction (for comparing dumps, it is useful to combine this with -nonr)" },
+        { "-sys", FALSE, etBOOL, {&bSysTop}, "List the atoms and bonded interactions for the whole system instead of for each molecule type" },
+        { "-orgir", FALSE, etBOOL, {&bOriginalInputrec}, "Show input parameters from tpr as they were written by the version that produced the file, instead of how the current version reads them" }
     };
 
     if (!parse_common_args(&argc, argv, 0, NFILE, fnm, asize(pa), pa,
@@ -634,8 +647,8 @@ int gmx_dump(int argc, char *argv[])
 
     if (ftp2bSet(efTPR, NFILE, fnm))
     {
-        list_tpx(ftp2fn(efTPR, NFILE, fnm), bShowNumbers,
-                 ftp2fn_null(efMDP, NFILE, fnm), bSysTop);
+        list_tpx(ftp2fn(efTPR, NFILE, fnm), bShowNumbers, bShowParams,
+                 ftp2fn_null(efMDP, NFILE, fnm), bSysTop, bOriginalInputrec);
     }
     else if (ftp2bSet(efTRX, NFILE, fnm))
     {

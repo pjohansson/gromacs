@@ -1,7 +1,7 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2012,2013,2014,2015, by the GROMACS development team, led by
+ * Copyright (c) 2012,2013,2014,2015,2016,2017, by the GROMACS development team, led by
  * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
  * and including many others, as listed in the AUTHORS file in the
  * top-level source directory and at http://www.gromacs.org.
@@ -48,11 +48,17 @@
 
 #include "gromacs/mdtypes/forcerec.h"
 #include "gromacs/mdtypes/interaction_const.h"
-#include "gromacs/mdtypes/state.h"
 #include "gromacs/timing/wallcycle.h"
 
+struct NbnxnListParameters;
 struct t_commrec;
 struct t_inputrec;
+class t_state;
+
+namespace gmx
+{
+class MDLogger;
+}
 
 /*! \brief Object to manage PME load balancing */
 struct pme_load_balancing_t;
@@ -69,12 +75,13 @@ bool pme_loadbal_is_active(const pme_load_balancing_t *pme_lb);
  * usage.
  */
 void pme_loadbal_init(pme_load_balancing_t     **pme_lb_p,
-                      struct t_commrec          *cr,
-                      FILE                      *fp_log,
+                      t_commrec                 *cr,
+                      const gmx::MDLogger       &mdlog,
                       const t_inputrec          *ir,
                       matrix                     box,
                       const interaction_const_t *ic,
-                      struct gmx_pme_t          *pmedata,
+                      const NbnxnListParameters *listParams,
+                      gmx_pme_t                 *pmedata,
                       gmx_bool                   bUseGPU,
                       gmx_bool                  *bPrinting);
 
@@ -89,6 +96,7 @@ void pme_loadbal_do(pme_load_balancing_t  *pme_lb,
                     struct t_commrec      *cr,
                     FILE                  *fp_err,
                     FILE                  *fp_log,
+                    const gmx::MDLogger   &mdlog,
                     const t_inputrec      *ir,
                     t_forcerec            *fr,
                     t_state               *state,
@@ -99,8 +107,8 @@ void pme_loadbal_do(pme_load_balancing_t  *pme_lb,
 
 /*! \brief Finish the PME load balancing and print the settings when fplog!=NULL */
 void pme_loadbal_done(pme_load_balancing_t *pme_lb,
-                      struct t_commrec     *cr,
                       FILE                 *fplog,
+                      const gmx::MDLogger  &mdlog,
                       gmx_bool              bNonBondedOnGPU);
 
 #endif

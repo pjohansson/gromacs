@@ -3,7 +3,7 @@
  *
  * Copyright (c) 1991-2000, University of Groningen, The Netherlands.
  * Copyright (c) 2001-2004, The GROMACS development team.
- * Copyright (c) 2013,2014,2015, by the GROMACS development team, led by
+ * Copyright (c) 2013,2014,2015,2017, by the GROMACS development team, led by
  * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
  * and including many others, as listed in the AUTHORS file in the
  * top-level source directory and at http://www.gromacs.org.
@@ -41,6 +41,7 @@
 
 #include "gromacs/math/vectypes.h"
 #include "gromacs/utility/basedefinitions.h"
+#include "gromacs/utility/gmxassert.h"
 #include "gromacs/utility/gmxmpi.h"
 #include "gromacs/utility/real.h"
 
@@ -94,21 +95,32 @@ struct t_commrec {
     /* Not used yet: int threadid, nthreads; */
     /* The nodeid in the PP/PME, PP or PME group */
     int      nodeid;
-    MPI_Comm mpi_comm_mysim;
-    MPI_Comm mpi_comm_mygroup;
 
-    /* MPI ranks within a physical node for hardware access */
-    int            nrank_intranode;    /* nr of ranks on this physical node */
-    int            rank_intranode;     /* our rank on this physical node */
-    int            nrank_pp_intranode; /* as nrank_intranode, for particle-particle only */
-    int            rank_pp_intranode;  /* as rank_intranode, for particle-particle only */
+    /* MPI communicators within a single simulation
+     * Note: other parts of the code may further subset these communicators.
+     */
+    MPI_Comm mpi_comm_mysim;           /* communicator including all ranks of
+                                          a single simulation */
+    MPI_Comm mpi_comm_mygroup;         /* subset of mpi_comm_mysim including only
+                                          the ranks in the same group (PP or PME) */
+
+    /* MPI ranks and a communicator within a physical node for hardware access */
+    MPI_Comm       mpi_comm_physicalnode; /* communicator for all ranks of the physical node
+                                           * NOTE: this communicator should only be used during initialization and finalization, as it can contain ranks from PP, PME and multiple simulations with multisim
+                                           */
+    int            nrank_intranode;       /* nr of ranks on this physical node */
+    int            rank_intranode;        /* our rank on this physical node */
+    int            nrank_pp_intranode;    /* as nrank_intranode, for particle-particle only */
+    int            rank_pp_intranode;     /* as rank_intranode, for particle-particle only */
 
     gmx_nodecomm_t nc;
 
     /* For domain decomposition */
     gmx_domdec_t *dd;
 
-    /* The duties of this node, see the defines above */
+    /* The duties of this node, see the DUTY_ defines above.
+     * This should be read through thisRankHasDuty() or getThisRankDuties().
+     */
     int                    duty;
 
     gmx_multisim_t        *ms;
@@ -118,6 +130,31 @@ struct t_commrec {
     mpi_in_place_buf_t *mpb;
 };
 
+/*! \brief
+ * Returns the rank's duty, and asserts that it has been initialized.
+ */
+inline int getThisRankDuties(const t_commrec *cr)
+{
+    GMX_ASSERT(cr, "Invalid commrec pointer");
+    GMX_ASSERT(cr->duty != 0, "Commrec duty was not initialized!");
+    return cr->duty;
+}
+
+/*! \brief
+ * A convenience getter for the commrec duty assignment;
+ * asserts that duty is actually valid (have been initialized).
+ *
+ * \param[in] cr    Communication structure pointer
+ * \param[in] duty  A single duty's corresponding DUTY_ flag. Combinations are not supported.
+ *
+ * \returns Whether this duty is assigned to this rank.
+ */
+inline bool thisRankHasDuty(const t_commrec *cr, int duty)
+{
+    GMX_ASSERT((duty == DUTY_PME) || (duty == DUTY_PP), "Invalid duty type");
+    return (getThisRankDuties(cr) & duty);
+}
+
 //! True if this is a simulation with more than 1 node
 #define PAR(cr)        ((cr)->nnodes > 1)
 
@@ -125,7 +162,7 @@ struct t_commrec {
 #define MASTER(cr)     (((cr)->nodeid == 0) || !PAR(cr))
 
 //! True if this is the particle-particle master
-#define SIMMASTER(cr)  ((MASTER(cr) && ((cr)->duty & DUTY_PP)) || !PAR(cr))
+#define SIMMASTER(cr)  ((MASTER(cr) && thisRankHasDuty((cr), DUTY_PP)) || !PAR(cr))
 
 //! The node id for this rank
 #define RANK(cr, nodeid)    (nodeid)

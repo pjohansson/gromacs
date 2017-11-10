@@ -1,7 +1,7 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2012,2013,2014.2015, by the GROMACS development team, led by
+ * Copyright (c) 2012,2013,2014.2015,2017, by the GROMACS development team, led by
  * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
  * and including many others, as listed in the AUTHORS file in the
  * top-level source directory and at http://www.gromacs.org.
@@ -56,7 +56,7 @@ nb_kernel_ElecEwSw_VdwLJSw_GeomP1P1_VF_c
                     (t_nblist                    * gmx_restrict       nlist,
                      rvec                        * gmx_restrict          xx,
                      rvec                        * gmx_restrict          ff,
-                     t_forcerec                  * gmx_restrict          fr,
+                     struct t_forcerec           * gmx_restrict          fr,
                      t_mdatoms                   * gmx_restrict     mdatoms,
                      nb_kernel_data_t gmx_unused * gmx_restrict kernel_data,
                      t_nrnb                      * gmx_restrict        nrnb)
@@ -94,7 +94,7 @@ nb_kernel_ElecEwSw_VdwLJSw_GeomP1P1_VF_c
     gid              = nlist->gid;
     shiftvec         = fr->shift_vec[0];
     fshift           = fr->fshift[0];
-    facel            = fr->epsfac;
+    facel            = fr->ic->epsfac;
     charge           = mdatoms->chargeA;
     nvdwtype         = fr->ntype;
     vdwparam         = fr->nbfp;
@@ -106,10 +106,10 @@ nb_kernel_ElecEwSw_VdwLJSw_GeomP1P1_VF_c
     ewtabhalfspace   = 0.5/ewtabscale;
 
     /* When we use explicit cutoffs the value must be identical for elec and VdW, so use elec as an arbitrary choice */
-    rcutoff          = fr->rcoulomb;
+    rcutoff          = fr->ic->rcoulomb;
     rcutoff2         = rcutoff*rcutoff;
 
-    rswitch          = fr->rcoulomb_switch;
+    rswitch          = fr->ic->rcoulomb_switch;
     /* Setup switch parameters */
     d                = rcutoff-rswitch;
     swV3             = -10.0/(d*d*d);
@@ -296,7 +296,7 @@ nb_kernel_ElecEwSw_VdwLJSw_GeomP1P1_F_c
                     (t_nblist                    * gmx_restrict       nlist,
                      rvec                        * gmx_restrict          xx,
                      rvec                        * gmx_restrict          ff,
-                     t_forcerec                  * gmx_restrict          fr,
+                     struct t_forcerec           * gmx_restrict          fr,
                      t_mdatoms                   * gmx_restrict     mdatoms,
                      nb_kernel_data_t gmx_unused * gmx_restrict kernel_data,
                      t_nrnb                      * gmx_restrict        nrnb)
@@ -334,7 +334,7 @@ nb_kernel_ElecEwSw_VdwLJSw_GeomP1P1_F_c
     gid              = nlist->gid;
     shiftvec         = fr->shift_vec[0];
     fshift           = fr->fshift[0];
-    facel            = fr->epsfac;
+    facel            = fr->ic->epsfac;
     charge           = mdatoms->chargeA;
     nvdwtype         = fr->ntype;
     vdwparam         = fr->nbfp;
@@ -346,10 +346,10 @@ nb_kernel_ElecEwSw_VdwLJSw_GeomP1P1_F_c
     ewtabhalfspace   = 0.5/ewtabscale;
 
     /* When we use explicit cutoffs the value must be identical for elec and VdW, so use elec as an arbitrary choice */
-    rcutoff          = fr->rcoulomb;
+    rcutoff          = fr->ic->rcoulomb;
     rcutoff2         = rcutoff*rcutoff;
 
-    rswitch          = fr->rcoulomb_switch;
+    rswitch          = fr->ic->rcoulomb_switch;
     /* Setup switch parameters */
     d                = rcutoff-rswitch;
     swV3             = -10.0/(d*d*d);
