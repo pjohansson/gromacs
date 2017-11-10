@@ -3,7 +3,7 @@
  *
  * Copyright (c) 1991-2000, University of Groningen, The Netherlands.
  * Copyright (c) 2001-2008, The GROMACS development team.
- * Copyright (c) 2013,2014,2015,2016, by the GROMACS development team, led by
+ * Copyright (c) 2013,2014,2015,2016,2017, by the GROMACS development team, led by
  * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
  * and including many others, as listed in the AUTHORS file in the
  * top-level source directory and at http://www.gromacs.org.
@@ -47,7 +47,7 @@
 #include <algorithm>
 
 #include "gromacs/commandline/filenm.h"
-#include "gromacs/domdec/domdec.h"
+#include "gromacs/domdec/dlbtiming.h"
 #include "gromacs/domdec/domdec_struct.h"
 #include "gromacs/domdec/ga2la.h"
 #include "gromacs/fileio/gmxfio.h"
@@ -62,9 +62,11 @@
 #include "gromacs/mdlib/sim_util.h"
 #include "gromacs/mdtypes/inputrec.h"
 #include "gromacs/mdtypes/md_enums.h"
+#include "gromacs/mdtypes/state.h"
 #include "gromacs/pbcutil/pbc.h"
 #include "gromacs/timing/cyclecounter.h"
 #include "gromacs/timing/wallcycle.h"
+#include "gromacs/topology/mtop_lookup.h"
 #include "gromacs/topology/mtop_util.h"
 #include "gromacs/utility/fatalerror.h"
 #include "gromacs/utility/pleasecite.h"
@@ -124,7 +126,7 @@ typedef struct gmx_enfrot
     real             *mpi_inbuf;   /* MPI buffer                                     */
     real             *mpi_outbuf;  /* MPI buffer                                     */
     int               mpi_bufsize; /* Allocation size of in & outbuf                 */
-    unsigned long     Flags;       /* mdrun flags                                    */
+    gmx_bool          appendFiles; /* If true, append output files                   */
     gmx_bool          bOut;        /* Used to skip first output when appending to
                                     * avoid duplicate entries in rotation outfiles   */
 } t_gmx_enfrot;
@@ -266,7 +268,7 @@ static gmx_bool HavePotFitGroups(t_rot *rot)
 static double** allocate_square_matrix(int dim)
 {
     int      i;
-    double** mat = NULL;
+    double** mat = nullptr;
 
 
     snew(mat, dim);
@@ -665,7 +667,7 @@ static void get_slab_centers(
     } /* END of loop over slabs */
 
     /* Output on the master */
-    if ( (NULL != out_slabs) && bOutStep)
+    if ( (nullptr != out_slabs) && bOutStep)
     {
         fprintf(out_slabs, "%12.3e%6d", time, g);
         for (j = erg->slab_first; j <= erg->slab_last; j++)
@@ -789,7 +791,7 @@ static FILE *open_slab_out(const char *fn, t_rot *rot)
     t_rotgrp  *rotg;
 
 
-    if (rot->enfrot->Flags & MD_APPENDFILES)
+    if (rot->enfrot->appendFiles)
     {
         fp = gmx_fio_fopen(fn, "a");
     }
@@ -861,10 +863,10 @@ static FILE *open_rot_out(const char *fn, t_rot *rot, const gmx_output_env_t *oe
     char            buf[50], buf2[75];
     gmx_enfrotgrp_t erg;       /* Pointer to enforced rotation group data */
     gmx_bool        bFlex;
-    char           *LegendStr = NULL;
+    char           *LegendStr = nullptr;
 
 
-    if (rot->enfrot->Flags & MD_APPENDFILES)
+    if (rot->enfrot->appendFiles)
     {
         fp = gmx_fio_fopen(fn, "a");
     }
@@ -1005,7 +1007,7 @@ static FILE *open_angles_out(const char *fn, t_rot *rot)
     char            buf[100];
 
 
-    if (rot->enfrot->Flags & MD_APPENDFILES)
+    if (rot->enfrot->appendFiles)
     {
         fp = gmx_fio_fopen(fn, "a");
     }
@@ -1089,7 +1091,7 @@ static FILE *open_torque_out(const char *fn, t_rot *rot)
     t_rotgrp  *rotg;
 
 
-    if (rot->enfrot->Flags & MD_APPENDFILES)
+    if (rot->enfrot->appendFiles)
     {
         fp = gmx_fio_fopen(fn, "a");
     }
@@ -1188,7 +1190,7 @@ static void align_with_z(
     int     i, j, k;
     rvec    zet         = {0.0, 0.0, 1.0};
     rvec    rot_axis    = {0.0, 0.0, 0.0};
-    rvec   *rotated_str = NULL;
+    rvec   *rotated_str = nullptr;
     real    ooanorm;
     real    angle;
     matrix  rotmat;
@@ -1287,8 +1289,8 @@ static real opt_angle_analytic(
         rvec  axis)
 {
     int      i, j, k;
-    rvec    *ref_s_1 = NULL;
-    rvec    *act_s_1 = NULL;
+    rvec    *ref_s_1 = nullptr;
+    rvec    *act_s_1 = nullptr;
     rvec     shift;
     double **Rmat, **RtR, **eigvec;
     double   eigval[3];
@@ -1331,7 +1333,7 @@ static real opt_angle_analytic(
     }
 
     /* Weight positions with sqrt(weight) */
-    if (NULL != weight)
+    if (nullptr != weight)
     {
         weigh_coords(ref_s_1, weight, natoms);
         weigh_coords(act_s_1, weight, natoms);
@@ -1454,7 +1456,7 @@ static real opt_angle_analytic(
 static real flex_fit_angle(t_rotgrp *rotg)
 {
     int             i;
-    rvec           *fitcoords = NULL;
+    rvec           *fitcoords = nullptr;
     rvec            center;     /* Center of positions passed to the fit routine */
     real            fitangle;   /* Angle of the rotation group derived by fitting */
     rvec            coord;
@@ -1610,7 +1612,7 @@ static void flex_fit_angle_perslab(
 
 
 /* Shift x with is */
-static gmx_inline void shift_single_coord(matrix box, rvec x, const ivec is)
+static gmx_inline void shift_single_coord(const matrix box, rvec x, const ivec is)
 {
     int tx, ty, tz;
 
@@ -3283,7 +3285,7 @@ static void allocate_slabs(
     /* Remember how many we allocated */
     erg->nslabs_alloc = nslabs;
 
-    if ( (NULL != fplog) && bVerbose)
+    if ( (nullptr != fplog) && bVerbose)
     {
         fprintf(fplog, "%s allocating memory to store data for %d slabs (rotation group %d).\n",
                 RotStr, nslabs, g);
@@ -3341,11 +3343,11 @@ static void get_firstlast_slab_ref(t_rotgrp *rotg, real mc[], int ref_firstindex
  * During the copy procedure of xcurr to b, the correct PBC image is chosen
  * such that the copied vector ends up near its reference position xref */
 static gmx_inline void copy_correct_pbc_image(
-        const rvec  xcurr,  /* copy vector xcurr ...                */
-        rvec        b,      /* ... to b ...                         */
-        const rvec  xref,   /* choosing the PBC image such that b ends up near xref */
-        matrix      box,
-        int         npbcdim)
+        const rvec   xcurr,  /* copy vector xcurr ...                */
+        rvec         b,      /* ... to b ...                         */
+        const rvec   xref,   /* choosing the PBC image such that b ends up near xref */
+        const matrix box,
+        int          npbcdim)
 {
     rvec  dx;
     int   d, m;
@@ -3384,16 +3386,14 @@ static gmx_inline void copy_correct_pbc_image(
 
 
 static void init_rot_group(FILE *fplog, t_commrec *cr, int g, t_rotgrp *rotg,
-                           rvec *x, gmx_mtop_t *mtop, gmx_bool bVerbose, FILE *out_slabs, matrix box,
+                           rvec *x, gmx_mtop_t *mtop, gmx_bool bVerbose, FILE *out_slabs, const matrix box,
                            t_inputrec *ir, gmx_bool bOutputCenters)
 {
     int                   i, ii;
     rvec                  coord, xref, *xdum;
     gmx_bool              bFlex, bColl;
-    t_atom               *atom;
     gmx_enfrotgrp_t       erg; /* Pointer to enforced rotation group data */
     int                   ref_firstindex, ref_lastindex;
-    gmx_mtop_atomlookup_t alook = NULL;
     real                  mass, totalmass;
     real                  start = 0.0;
     double                t_start;
@@ -3447,7 +3447,7 @@ static void init_rot_group(FILE *fplog, t_commrec *cr, int g, t_rotgrp *rotg,
     }
     else
     {
-        erg->PotAngleFit = NULL;
+        erg->PotAngleFit = nullptr;
     }
 
     /* xc_ref_ind needs to be set to identity in the serial case */
@@ -3461,10 +3461,6 @@ static void init_rot_group(FILE *fplog, t_commrec *cr, int g, t_rotgrp *rotg,
 
     /* Copy the masses so that the center can be determined. For all types of
      * enforced rotation, we store the masses in the erg->mc array. */
-    if (rotg->bMassW)
-    {
-        alook = gmx_mtop_atomlookup_init(mtop);
-    }
     snew(erg->mc, rotg->nat);
     if (bFlex)
     {
@@ -3475,12 +3471,12 @@ static void init_rot_group(FILE *fplog, t_commrec *cr, int g, t_rotgrp *rotg,
         snew(erg->m_loc, rotg->nat);
     }
     totalmass = 0.0;
+    int molb  = 0;
     for (i = 0; i < rotg->nat; i++)
     {
         if (rotg->bMassW)
         {
-            gmx_mtop_atomnr_to_atom(alook, rotg->ind[i], &atom);
-            mass = atom->m;
+            mass = mtopGetAtomMass(mtop, rotg->ind[i], &molb);
         }
         else
         {
@@ -3490,11 +3486,6 @@ static void init_rot_group(FILE *fplog, t_commrec *cr, int g, t_rotgrp *rotg,
         totalmass += mass;
     }
     erg->invmass = 1.0/totalmass;
-
-    if (rotg->bMassW)
-    {
-        gmx_mtop_atomlookup_destroy(alook);
-    }
 
     /* Set xc_ref_center for any rotation potential */
     if ((rotg->eType == erotgISO) || (rotg->eType == erotgPM) || (rotg->eType == erotgRM) || (rotg->eType == erotgRM2))
@@ -3667,30 +3658,30 @@ static int calc_mpi_bufsize(t_rot *rot)
 
 
 extern void init_rot(FILE *fplog, t_inputrec *ir, int nfile, const t_filenm fnm[],
-                     t_commrec *cr, rvec *x, matrix box, gmx_mtop_t *mtop, const gmx_output_env_t *oenv,
-                     gmx_bool bVerbose, unsigned long Flags)
+                     t_commrec *cr, const t_state *globalState, gmx_mtop_t *mtop, const gmx_output_env_t *oenv,
+                     const MdrunOptions &mdrunOptions)
 {
     t_rot          *rot;
     t_rotgrp       *rotg;
     int             g;
-    int             nat_max = 0;  /* Size of biggest rotation group */
-    gmx_enfrot_t    er;           /* Pointer to the enforced rotation buffer variables */
-    gmx_enfrotgrp_t erg;          /* Pointer to enforced rotation group data */
-    rvec           *x_pbc = NULL; /* Space for the pbc-correct atom positions */
+    int             nat_max = 0;     /* Size of biggest rotation group */
+    gmx_enfrot_t    er;              /* Pointer to the enforced rotation buffer variables */
+    gmx_enfrotgrp_t erg;             /* Pointer to enforced rotation group data */
+    rvec           *x_pbc = nullptr; /* Space for the pbc-correct atom positions */
 
 
-    if (MASTER(cr) && bVerbose)
+    if (MASTER(cr) && mdrunOptions.verbose)
     {
         fprintf(stdout, "%s Initializing ...\n", RotStr);
     }
 
     rot = ir->rot;
     snew(rot->enfrot, 1);
-    er        = rot->enfrot;
-    er->Flags = Flags;
+    er              = rot->enfrot;
+    er->appendFiles = mdrunOptions.continuationOptions.appendFiles;
 
     /* When appending, skip first output to avoid duplicate entries in the data files */
-    if (er->Flags & MD_APPENDFILES)
+    if (er->appendFiles)
     {
         er->bOut = FALSE;
     }
@@ -3705,9 +3696,9 @@ extern void init_rot(FILE *fplog, t_inputrec *ir, int nfile, const t_filenm fnm[
     }
 
     /* Output every step for reruns */
-    if (er->Flags & MD_RERUN)
+    if (mdrunOptions.rerun)
     {
-        if (NULL != fplog)
+        if (nullptr != fplog)
         {
             fprintf(fplog, "%s rerun - will write rotation output every available step.\n", RotStr);
         }
@@ -3715,7 +3706,7 @@ extern void init_rot(FILE *fplog, t_inputrec *ir, int nfile, const t_filenm fnm[
         rot->nstsout = 1;
     }
 
-    er->out_slabs = NULL;
+    er->out_slabs = nullptr;
     if (MASTER(cr) && HaveFlexibleGroups(rot) )
     {
         er->out_slabs = open_slab_out(opt2fn("-rs", nfile, fnm), rot);
@@ -3726,8 +3717,8 @@ extern void init_rot(FILE *fplog, t_inputrec *ir, int nfile, const t_filenm fnm[
         /* Remove pbc, make molecule whole.
          * When ir->bContinuation=TRUE this has already been done, but ok. */
         snew(x_pbc, mtop->natoms);
-        copy_rvecn(x, x_pbc, 0, mtop->natoms);
-        do_pbc_first_mtop(NULL, ir->ePBC, box, mtop, x_pbc);
+        copy_rvecn(as_rvec_array(globalState->x.data()), x_pbc, 0, mtop->natoms);
+        do_pbc_first_mtop(nullptr, ir->ePBC, globalState->box, mtop, x_pbc);
         /* All molecules will be whole now, but not necessarily in the home box.
          * Additionally, if a rotation group consists of more than one molecule
          * (e.g. two strands of DNA), each one of them can end up in a different
@@ -3738,7 +3729,7 @@ extern void init_rot(FILE *fplog, t_inputrec *ir, int nfile, const t_filenm fnm[
     {
         rotg = &rot->grp[g];
 
-        if (NULL != fplog)
+        if (nullptr != fplog)
         {
             fprintf(fplog, "%s group %d type '%s'\n", RotStr, g, erotg_names[rotg->eType]);
         }
@@ -3755,16 +3746,16 @@ extern void init_rot(FILE *fplog, t_inputrec *ir, int nfile, const t_filenm fnm[
             {
                 erg->nat_loc    = 0;
                 erg->nalloc_loc = 0;
-                erg->ind_loc    = NULL;
+                erg->ind_loc    = nullptr;
             }
             else
             {
                 erg->nat_loc = rotg->nat;
                 erg->ind_loc = rotg->ind;
             }
-            init_rot_group(fplog, cr, g, rotg, x_pbc, mtop, bVerbose, er->out_slabs, box, ir,
-                           !(er->Flags & MD_APPENDFILES) ); /* Do not output the reference centers
-                                                             * again if we are appending */
+            init_rot_group(fplog, cr, g, rotg, x_pbc, mtop, mdrunOptions.verbose, er->out_slabs, MASTER(cr) ? globalState->box : nullptr, ir,
+                           !er->appendFiles); /* Do not output the reference centers
+                                               * again if we are appending */
         }
     }
 
@@ -3784,14 +3775,14 @@ extern void init_rot(FILE *fplog, t_inputrec *ir, int nfile, const t_filenm fnm[
     else
     {
         er->mpi_bufsize = 0;
-        er->mpi_inbuf   = NULL;
-        er->mpi_outbuf  = NULL;
+        er->mpi_inbuf   = nullptr;
+        er->mpi_outbuf  = nullptr;
     }
 
     /* Only do I/O on the MASTER */
-    er->out_angles  = NULL;
-    er->out_rot     = NULL;
-    er->out_torque  = NULL;
+    er->out_angles  = nullptr;
+    er->out_rot     = nullptr;
+    er->out_torque  = nullptr;
     if (MASTER(cr))
     {
         er->out_rot = open_rot_out(opt2fn("-ro", nfile, fnm), rot, oenv);
@@ -3899,7 +3890,6 @@ extern void do_rotation(
         rvec            x[],
         real            t,
         gmx_int64_t     step,
-        gmx_wallcycle_t wcycle,
         gmx_bool        bNS)
 {
     int             g, i, ii;
@@ -3907,16 +3897,11 @@ extern void do_rotation(
     t_rotgrp       *rotg;
     gmx_bool        outstep_slab, outstep_rot;
     gmx_bool        bColl;
-    gmx_enfrot_t    er;         /* Pointer to the enforced rotation buffer variables */
-    gmx_enfrotgrp_t erg;        /* Pointer to enforced rotation group data           */
+    gmx_enfrot_t    er;            /* Pointer to the enforced rotation buffer variables */
+    gmx_enfrotgrp_t erg;           /* Pointer to enforced rotation group data           */
     rvec            transvec;
-    t_gmx_potfit   *fit = NULL; /* For fit type 'potential' determine the fit
-                                   angle via the potential minimum            */
-
-    /* Enforced rotation cycle counting: */
-    gmx_cycles_t cycles_comp;   /* Cycles for the enf. rotation computation
-                                   only, does not count communication. This
-                                   counter is used for load-balancing         */
+    t_gmx_potfit   *fit = nullptr; /* For fit type 'potential' determine the fit
+                                      angle via the potential minimum            */
 
 #ifdef TAKETIME
     double t0;
@@ -3990,8 +3975,10 @@ extern void do_rotation(
 
     /**************************************************************************/
     /* Done communicating, we can start to count cycles for the load balancing now ... */
-    cycles_comp = gmx_cycles_read();
-
+    if (DOMAINDECOMP(cr))
+    {
+        ddReopenBalanceRegionCpu(cr->dd);
+    }
 
 #ifdef TAKETIME
     t0 = MPI_Wtime();
@@ -4072,13 +4059,4 @@ extern void do_rotation(
         fprintf(stderr, "%s calculation (step %d) took %g seconds.\n", RotStr, step, MPI_Wtime()-t0);
     }
 #endif
-
-    /* Stop the enforced rotation cycle counter and add the computation-only
-     * cycles to the force cycles for load balancing */
-    cycles_comp  = gmx_cycles_read() - cycles_comp;
-
-    if (DOMAINDECOMP(cr) && wcycle)
-    {
-        dd_cycles_add(cr->dd, cycles_comp, ddCyclF);
-    }
 }

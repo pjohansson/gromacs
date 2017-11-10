@@ -1,7 +1,7 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2012,2013,2014,2015,2016, by the GROMACS development team, led by
+ * Copyright (c) 2012,2013,2014,2015,2016,2017, by the GROMACS development team, led by
  * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
  * and including many others, as listed in the AUTHORS file in the
  * top-level source directory and at http://www.gromacs.org.
@@ -145,7 +145,7 @@ void printHelp(const Options &options)
                  "\nYou can use the following GROMACS-specific command-line flags\n"
                  "to control the behavior of the tests:\n\n");
     TextWriter             writer(&TextOutputFile::standardError());
-    CommandLineHelpContext context(&writer, eHelpOutputFormat_Console, NULL, program);
+    CommandLineHelpContext context(&writer, eHelpOutputFormat_Console, nullptr, program);
     context.setModuleDisplayName(program);
     CommandLineHelpWriter(options).writeHelp(context);
 }
@@ -158,7 +158,7 @@ std::unique_ptr<TestProgramContext> g_testContext;
 
 //! \cond internal
 void initTestUtils(const char *dataPath, const char *tempPath, bool usesMpi,
-                   int *argc, char ***argv)
+                   bool usesHardwareDetection, int *argc, char ***argv)
 {
 #ifndef NDEBUG
     gmx_feenableexcept();
@@ -168,37 +168,41 @@ void initTestUtils(const char *dataPath, const char *tempPath, bool usesMpi,
     {
         if (!usesMpi && gmx_node_num() > 1)
         {
+            // We cannot continue, since some tests might be using
+            // MPI_COMM_WORLD, which could deadlock if we would only
+            // continue with the master rank here.
             if (gmx_node_rank() == 0)
             {
                 fprintf(stderr, "NOTE: You are running %s on %d MPI ranks, "
                         "but it is does not contain MPI-enabled tests. "
-                        "Rank 0 will run the tests, other ranks will exit.",
+                        "The test will now exit.\n",
                         context.programName(), gmx_node_num());
             }
-            else
-            {
-                finalizeForCommandLine();
-                std::exit(0);
-            }
+            finalizeForCommandLine();
+            std::exit(1);
+        }
+        if (usesHardwareDetection)
+        {
+            callAddGlobalTestEnvironment();
         }
         g_testContext.reset(new TestProgramContext(context));
         setProgramContext(g_testContext.get());
         // Use the default finder that does not respect GMXLIB, since the tests
         // generally can only get confused by a different set of data files.
-        setLibraryFileFinder(NULL);
+        setLibraryFileFinder(nullptr);
         ::testing::InitGoogleMock(argc, *argv);
-        if (dataPath != NULL)
+        if (dataPath != nullptr)
         {
             TestFileManager::setInputDataDirectory(
                     Path::join(CMAKE_SOURCE_DIR, dataPath));
         }
-        if (tempPath != NULL)
+        if (tempPath != nullptr)
         {
             TestFileManager::setGlobalOutputTempDirectory(tempPath);
         }
         bool        bHelp = false;
         std::string sourceRoot;
-        Options     options(NULL, NULL);
+        Options     options;
         // TODO: A single option that accepts multiple names would be nicer.
         // Also, we recognize -help, but GTest doesn't, which leads to a bit
         // unintuitive behavior.
@@ -256,7 +260,7 @@ void initTestUtils(const char *dataPath, const char *tempPath, bool usesMpi,
 
 void finalizeTestUtils()
 {
-    setProgramContext(NULL);
+    setProgramContext(nullptr);
     g_testContext.reset();
     finalizeForCommandLine();
 }

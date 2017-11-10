@@ -3,7 +3,7 @@
  *
  * Copyright (c) 1991-2000, University of Groningen, The Netherlands.
  * Copyright (c) 2001-2004, The GROMACS development team.
- * Copyright (c) 2013,2014,2015, by the GROMACS development team, led by
+ * Copyright (c) 2013,2014,2015,2016,2017, by the GROMACS development team, led by
  * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
  * and including many others, as listed in the AUTHORS file in the
  * top-level source directory and at http://www.gromacs.org.
@@ -59,8 +59,8 @@
 #include "gromacs/utility/futil.h"
 #include "gromacs/utility/smalloc.h"
 
-real calc_gyro(rvec x[], int gnx, int index[], t_atom atom[], real tm,
-               rvec gvec, rvec d, gmx_bool bQ, gmx_bool bRot, gmx_bool bMOI, matrix trans)
+static real calc_gyro(rvec x[], int gnx, int index[], t_atom atom[], real tm,
+                      rvec gvec, rvec d, gmx_bool bQ, gmx_bool bRot, gmx_bool bMOI, matrix trans)
 {
     int    i, ii, m;
     real   gyro, dx2, m0, Itot;
@@ -108,16 +108,16 @@ real calc_gyro(rvec x[], int gnx, int index[], t_atom atom[], real tm,
     return std::sqrt(gyro/tm);
 }
 
-void calc_gyro_z(rvec x[], matrix box,
-                 int gnx, int index[], t_atom atom[],
-                 int nz, real time, FILE *out)
+static void calc_gyro_z(rvec x[], matrix box,
+                        int gnx, int index[], t_atom atom[],
+                        int nz, real time, FILE *out)
 {
-    static dvec   *inertia = NULL;
-    static double *tm      = NULL;
+    static dvec   *inertia = nullptr;
+    static double *tm      = nullptr;
     int            i, ii, j, zi;
     real           zf, w, sdet, e1, e2;
 
-    if (inertia == NULL)
+    if (inertia == nullptr)
     {
         snew(inertia, nz);
         snew(tm, nz);
@@ -208,7 +208,7 @@ int gmx_gyrate(int argc, char *argv[])
     rvec              xcm, gvec, gvec1;
     matrix            box, trans;
     gmx_bool          bACF;
-    real            **moi_trans = NULL;
+    real            **moi_trans = nullptr;
     int               max_moi   = 0, delta_moi = 100;
     rvec              d, d1; /* eigenvalues of inertia tensor */
     real              t, t0, tm, gyro;
@@ -217,15 +217,15 @@ int gmx_gyrate(int argc, char *argv[])
     int               j, m, gnx, nam, mol;
     int              *index;
     gmx_output_env_t *oenv;
-    gmx_rmpbc_t       gpbc   = NULL;
+    gmx_rmpbc_t       gpbc   = nullptr;
     const char       *leg[]  = { "Rg", "Rg\\sX\\N", "Rg\\sY\\N", "Rg\\sZ\\N" };
     const char       *legI[] = { "Itot", "I1", "I2", "I3" };
 #define NLEG asize(leg)
     t_filenm          fnm[] = {
-        { efTRX, "-f",   NULL,       ffREAD },
-        { efTPS, NULL,   NULL,       ffREAD },
-        { efNDX, NULL,   NULL,       ffOPTRD },
-        { efXVG, NULL,   "gyrate",   ffWRITE },
+        { efTRX, "-f",   nullptr,       ffREAD },
+        { efTPS, nullptr,   nullptr,       ffREAD },
+        { efNDX, nullptr,   nullptr,       ffOPTRD },
+        { efXVG, nullptr,   "gyrate",   ffWRITE },
         { efXVG, "-acf", "moi-acf",  ffOPTWR },
     };
 #define NFILE asize(fnm)
@@ -236,8 +236,9 @@ int gmx_gyrate(int argc, char *argv[])
     ppa    = add_acf_pargs(&npargs, pa);
 
     if (!parse_common_args(&argc, argv, PCA_CAN_TIME | PCA_CAN_VIEW,
-                           NFILE, fnm, npargs, ppa, asize(desc), desc, 0, NULL, &oenv))
+                           NFILE, fnm, npargs, ppa, asize(desc), desc, 0, nullptr, &oenv))
     {
+        sfree(ppa);
         return 0;
     }
     bACF = opt2bSet("-acf", NFILE, fnm);
@@ -265,7 +266,7 @@ int gmx_gyrate(int argc, char *argv[])
         printf("Will print radius normalised by charge\n");
     }
 
-    read_tps_conf(ftp2fn(efTPS, NFILE, fnm), &top, &ePBC, &x, NULL, box, TRUE);
+    read_tps_conf(ftp2fn(efTPS, NFILE, fnm), &top, &ePBC, &x, nullptr, box, TRUE);
     get_index(&top.atoms, ftp2fn_null(efNDX, NFILE, fnm), 1, &gnx, &index, &grpname);
 
     if (nmol > gnx || gnx % nmol != 0)
@@ -374,7 +375,7 @@ int gmx_gyrate(int argc, char *argv[])
         j++;
     }
     while (read_next_x(oenv, status, &t, x, box));
-    close_trj(status);
+    close_trx(status);
     if (nz == 0)
     {
         gmx_rmpbc_done(gpbc);

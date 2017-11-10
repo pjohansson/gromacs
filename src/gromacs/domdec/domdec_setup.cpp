@@ -1,7 +1,7 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2008,2009,2010,2011,2012,2013,2014,2015, by the GROMACS development team, led by
+ * Copyright (c) 2008,2009,2010,2011,2012,2013,2014,2015,2017, by the GROMACS development team, led by
  * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
  * and including many others, as listed in the AUTHORS file in the
  * top-level source directory and at http://www.gromacs.org.
@@ -51,6 +51,7 @@
 
 #include "gromacs/domdec/domdec.h"
 #include "gromacs/domdec/domdec_struct.h"
+#include "gromacs/ewald/pme.h"
 #include "gromacs/gmxlib/network.h"
 #include "gromacs/math/utilities.h"
 #include "gromacs/math/vec.h"
@@ -180,7 +181,7 @@ static gmx_bool fits_pp_pme_perf(int ntot, int npme, float ratio)
 
 /*! \brief Make a guess for the number of PME ranks to use. */
 static int guess_npme(FILE *fplog, const gmx_mtop_t *mtop, const t_inputrec *ir,
-                      matrix box,
+                      const matrix box,
                       int nrank_tot)
 {
     float      ratio;
@@ -341,7 +342,7 @@ static float comm_pme_cost_vol(int npme, int a, int b, int c)
 
 /*! \brief Estimate cost of communication for a possible domain decomposition. */
 static float comm_cost_est(real limit, real cutoff,
-                           matrix box, const gmx_ddbox_t *ddbox,
+                           const matrix box, const gmx_ddbox_t *ddbox,
                            int natoms, const t_inputrec *ir,
                            float pbcdxr,
                            int npme_tot, ivec nc)
@@ -425,6 +426,28 @@ static float comm_cost_est(real limit, real cutoff,
             /* Will we use 1D or 2D PME decomposition? */
             npme[XX] = (npme_tot % nc[XX] == 0) ? nc[XX] : npme_tot;
             npme[YY] = npme_tot/npme[XX];
+        }
+    }
+
+    if (EEL_PME(ir->coulombtype) || EVDW_PME(ir->vdwtype))
+    {
+        /* Check the PME grid restrictions.
+         * Currently these can only be invalid here with too few grid lines
+         * along the x dimension per rank doing PME.
+         */
+        int npme_x = (npme_tot > 1 ? npme[XX] : nc[XX]);
+
+        /* Currently we don't have the OpenMP thread count available here.
+         * But with threads we have only tighter restrictions and it's
+         * probably better anyhow to avoid settings where we need to reduce
+         * grid lines over multiple ranks, as the thread check will do.
+         */
+        bool useThreads     = true;
+        bool errorsAreFatal = false;
+        if (!gmx_pme_check_restrictions(ir->pme_order, ir->nkx, ir->nky, ir->nkz,
+                                        npme_x, useThreads, errorsAreFatal))
+        {
+            return -1;
         }
     }
 
@@ -532,7 +555,7 @@ static float comm_cost_est(real limit, real cutoff,
 /*! \brief Assign penalty factors to possible domain decompositions, based on the estimated communication costs. */
 static void assign_factors(const gmx_domdec_t *dd,
                            real limit, real cutoff,
-                           matrix box, const gmx_ddbox_t *ddbox,
+                           const matrix box, const gmx_ddbox_t *ddbox,
                            int natoms, const t_inputrec *ir,
                            float pbcdxr, int npme,
                            int ndiv, int *div, int *mdiv, ivec ir_try, ivec opt)
@@ -597,7 +620,7 @@ static real optimize_ncells(FILE *fplog,
                             int nnodes_tot, int npme_only,
                             gmx_bool bDynLoadBal, real dlb_scale,
                             const gmx_mtop_t *mtop,
-                            matrix box, const gmx_ddbox_t *ddbox,
+                            const matrix box, const gmx_ddbox_t *ddbox,
                             const t_inputrec *ir,
                             gmx_domdec_t *dd,
                             real cellsize_limit, real cutoff,
@@ -631,7 +654,7 @@ static real optimize_ncells(FILE *fplog,
          * we can save some time (e.g. 3D DD with pbc=xyz).
          * Here we ignore SIMD bondeds as they always do (fast) PBC.
          */
-        count_bonded_distances(mtop, ir, &pbcdxr, NULL);
+        count_bonded_distances(mtop, ir, &pbcdxr, nullptr);
         pbcdxr /= (double)mtop->natoms;
     }
     else
@@ -715,7 +738,7 @@ real dd_choose_grid(FILE *fplog,
                     t_commrec *cr, gmx_domdec_t *dd,
                     const t_inputrec *ir,
                     const gmx_mtop_t *mtop,
-                    matrix box, const gmx_ddbox_t *ddbox,
+                    const matrix box, const gmx_ddbox_t *ddbox,
                     int nPmeRanks,
                     gmx_bool bDynLoadBal, real dlb_scale,
                     real cellsize_limit, real cutoff_dd,

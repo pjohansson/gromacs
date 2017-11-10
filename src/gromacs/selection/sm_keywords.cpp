@@ -1,7 +1,7 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2009,2010,2011,2012,2013,2014,2015, by the GROMACS development team, led by
+ * Copyright (c) 2009,2010,2011,2012,2013,2014,2015,2016,2017, by the GROMACS development team, led by
  * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
  * and including many others, as listed in the AUTHORS file in the
  * top-level source directory and at http://www.gromacs.org.
@@ -104,7 +104,7 @@ init_data_kwstr(int npar, gmx_ana_selparam_t * param);
  * \param[in] data  Should point to \ref t_methoddata_kwint.
  */
 static void
-init_kwint(t_topology *top, int npar, gmx_ana_selparam_t *param, void *data);
+init_kwint(const gmx_mtop_t *top, int npar, gmx_ana_selparam_t *param, void *data);
 /*! \brief
  * Initializes data for real keyword evaluation.
  *
@@ -115,7 +115,7 @@ init_kwint(t_topology *top, int npar, gmx_ana_selparam_t *param, void *data);
  * \returns   0 (the initialization always succeeds).
  */
 static void
-init_kwreal(t_topology *top, int npar, gmx_ana_selparam_t *param, void *data);
+init_kwreal(const gmx_mtop_t *top, int npar, gmx_ana_selparam_t *param, void *data);
 /*! \brief
  * Initializes data for string keyword evaluation.
  *
@@ -125,21 +125,21 @@ init_kwreal(t_topology *top, int npar, gmx_ana_selparam_t *param, void *data);
  * \param[in] data  Should point to t_methoddata_kwstr.
  */
 static void
-init_kwstr(t_topology *top, int npar, gmx_ana_selparam_t *param, void *data);
+init_kwstr(const gmx_mtop_t *top, int npar, gmx_ana_selparam_t *param, void *data);
 /** Frees the memory allocated for string keyword evaluation. */
 static void
 free_data_kwstr(void *data);
 /** Evaluates integer selection keywords. */
 static void
-evaluate_keyword_int(t_topology * /* top */, t_trxframe * /* fr */, t_pbc * /* pbc */,
+evaluate_keyword_int(const gmx::SelMethodEvalContext &context,
                      gmx_ana_index_t *g, gmx_ana_selvalue_t *out, void *data);
 /** Evaluates real selection keywords. */
 static void
-evaluate_keyword_real(t_topology * /* top */, t_trxframe * /* fr */, t_pbc * /* pbc */,
+evaluate_keyword_real(const gmx::SelMethodEvalContext &context,
                       gmx_ana_index_t *g, gmx_ana_selvalue_t *out, void *data);
 /** Evaluates string selection keywords. */
 static void
-evaluate_keyword_str(t_topology * /* top */, t_trxframe * /* fr */, t_pbc * /* pbc */,
+evaluate_keyword_str(const gmx::SelMethodEvalContext &context,
                      gmx_ana_index_t *g, gmx_ana_selvalue_t *out, void *data);
 
 /*! \internal \brief
@@ -274,20 +274,20 @@ struct t_methoddata_kwstr
 
 /** Parameters for integer keyword evaluation. */
 static gmx_ana_selparam_t smparams_keyword_int[] = {
-    {NULL, {INT_VALUE, -1, {NULL}}, NULL, SPAR_ATOMVAL},
-    {NULL, {INT_VALUE, -1, {NULL}}, NULL, SPAR_RANGES | SPAR_VARNUM},
+    {nullptr, {INT_VALUE, -1, {nullptr}}, nullptr, SPAR_ATOMVAL},
+    {nullptr, {INT_VALUE, -1, {nullptr}}, nullptr, SPAR_RANGES | SPAR_VARNUM},
 };
 
 /** Parameters for real keyword evaluation. */
 static gmx_ana_selparam_t smparams_keyword_real[] = {
-    {NULL, {REAL_VALUE, -1, {NULL}}, NULL, SPAR_ATOMVAL | SPAR_DYNAMIC},
-    {NULL, {REAL_VALUE, -1, {NULL}}, NULL, SPAR_RANGES | SPAR_VARNUM},
+    {nullptr, {REAL_VALUE, -1, {nullptr}}, nullptr, SPAR_ATOMVAL | SPAR_DYNAMIC},
+    {nullptr, {REAL_VALUE, -1, {nullptr}}, nullptr, SPAR_RANGES | SPAR_VARNUM},
 };
 
 /** Parameters for string keyword evaluation. */
 static gmx_ana_selparam_t smparams_keyword_str[] = {
-    {NULL, {STR_VALUE, -1, {NULL}}, NULL, SPAR_ATOMVAL},
-    {NULL, {STR_VALUE, -1, {NULL}}, NULL, SPAR_VARNUM},
+    {nullptr, {STR_VALUE, -1, {nullptr}}, nullptr, SPAR_ATOMVAL},
+    {nullptr, {STR_VALUE, -1, {nullptr}}, nullptr, SPAR_VARNUM},
 };
 
 /** Selection method data for integer keyword evaluation. */
@@ -295,14 +295,14 @@ gmx_ana_selmethod_t sm_keyword_int = {
     "kw_int", GROUP_VALUE, SMETH_SINGLEVAL,
     asize(smparams_keyword_int), smparams_keyword_int,
     &init_data_kwint,
-    NULL,
+    nullptr,
     &init_kwint,
-    NULL,
-    NULL,
-    NULL,
+    nullptr,
+    nullptr,
+    nullptr,
     &evaluate_keyword_int,
-    NULL,
-    {NULL, NULL, 0, NULL},
+    nullptr,
+    {nullptr, nullptr, 0, nullptr},
 };
 
 /** Selection method data for real keyword evaluation. */
@@ -310,14 +310,14 @@ gmx_ana_selmethod_t sm_keyword_real = {
     "kw_real", GROUP_VALUE, SMETH_SINGLEVAL,
     asize(smparams_keyword_real), smparams_keyword_real,
     &init_data_kwreal,
-    NULL,
+    nullptr,
     &init_kwreal,
-    NULL,
-    NULL,
-    NULL,
+    nullptr,
+    nullptr,
+    nullptr,
     &evaluate_keyword_real,
-    NULL,
-    {NULL, NULL, 0, NULL},
+    nullptr,
+    {nullptr, nullptr, 0, nullptr},
 };
 
 /** Selection method data for string keyword evaluation. */
@@ -325,14 +325,14 @@ gmx_ana_selmethod_t sm_keyword_str = {
     "kw_str", GROUP_VALUE, SMETH_SINGLEVAL,
     asize(smparams_keyword_str), smparams_keyword_str,
     &init_data_kwstr,
-    NULL,
+    nullptr,
     &init_kwstr,
-    NULL,
+    nullptr,
     &free_data_kwstr,
-    NULL,
+    nullptr,
     &evaluate_keyword_str,
-    NULL,
-    {NULL, NULL, 0, NULL},
+    nullptr,
+    {nullptr, nullptr, 0, nullptr},
 };
 
 /*! \brief
@@ -347,7 +347,7 @@ gmx_ana_selmethod_t sm_keyword_str = {
  * Calls the initialization method of the wrapped keyword.
  */
 static void
-init_kweval(t_topology *top, int npar, gmx_ana_selparam_t * param, void *data);
+init_kweval(const gmx_mtop_t *top, int npar, gmx_ana_selparam_t * param, void *data);
 /*! \brief
  * Initializes output for keyword evaluation in an arbitrary group.
  *
@@ -357,13 +357,13 @@ init_kweval(t_topology *top, int npar, gmx_ana_selparam_t * param, void *data);
  * \returns       0 for success.
  */
 static void
-init_output_kweval(t_topology *top, gmx_ana_selvalue_t *out, void *data);
+init_output_kweval(const gmx_mtop_t *top, gmx_ana_selvalue_t *out, void *data);
 /** Frees the data allocated for keyword evaluation in an arbitrary group. */
 static void
 free_data_kweval(void *data);
 /** Initializes frame evaluation for keyword evaluation in an arbitrary group. */
 static void
-init_frame_kweval(t_topology *top, t_trxframe *fr, t_pbc *pbc, void *data);
+init_frame_kweval(const gmx::SelMethodEvalContext &context, void *data);
 /*! \brief
  * Evaluates keywords in an arbitrary group.
  *
@@ -375,7 +375,7 @@ init_frame_kweval(t_topology *top, t_trxframe *fr, t_pbc *pbc, void *data);
  * evaluation group.
  */
 static void
-evaluate_kweval(t_topology *top, t_trxframe *fr, t_pbc *pbc, gmx_ana_index_t *g,
+evaluate_kweval(const gmx::SelMethodEvalContext &context, gmx_ana_index_t *g,
                 gmx_ana_selvalue_t *out, void *data);
 /*! \brief
  * Evaluates keywords in an arbitrary set of positions.
@@ -388,7 +388,7 @@ evaluate_kweval(t_topology *top, t_trxframe *fr, t_pbc *pbc, gmx_ana_index_t *g,
  * evaluation positions.
  */
 static void
-evaluate_kweval_pos(t_topology *top, t_trxframe *fr, t_pbc *pbc, gmx_ana_index_t *g,
+evaluate_kweval_pos(const gmx::SelMethodEvalContext &context, gmx_ana_index_t *g,
                     gmx_ana_selvalue_t *out, void *data);
 
 /*! \internal \brief
@@ -419,11 +419,11 @@ struct t_methoddata_kweval
 
 /** Parameters for keyword evaluation in an arbitrary group. */
 static gmx_ana_selparam_t smparams_kweval_group[] = {
-    {NULL,   {GROUP_VALUE, 1, {NULL}}, NULL, SPAR_DYNAMIC},
+    {nullptr,   {GROUP_VALUE, 1, {nullptr}}, nullptr, SPAR_DYNAMIC},
 };
 /** Parameters for keyword evaluation from positions. */
 static gmx_ana_selparam_t smparams_kweval_pos[] = {
-    {NULL,   {POS_VALUE, 1, {NULL}}, NULL, SPAR_DYNAMIC},
+    {nullptr,   {POS_VALUE, 1, {nullptr}}, nullptr, SPAR_DYNAMIC},
 };
 
 
@@ -441,7 +441,7 @@ init_data_kwint(int  /* npar */, gmx_ana_selparam_t * /* param */)
 }
 
 static void
-init_kwint(t_topology * /* top */, int /* npar */, gmx_ana_selparam_t *param, void *data)
+init_kwint(const gmx_mtop_t * /* top */, int /* npar */, gmx_ana_selparam_t *param, void *data)
 {
     t_methoddata_kwint *d = (t_methoddata_kwint *)data;
 
@@ -459,7 +459,7 @@ init_kwint(t_topology * /* top */, int /* npar */, gmx_ana_selparam_t *param, vo
  * Matching atoms are stored in \p out->u.g.
  */
 static void
-evaluate_keyword_int(t_topology * /* top */, t_trxframe * /* fr */, t_pbc * /* pbc */,
+evaluate_keyword_int(const gmx::SelMethodEvalContext & /*context*/,
                      gmx_ana_index_t *g, gmx_ana_selvalue_t *out, void *data)
 {
     t_methoddata_kwint *d = (t_methoddata_kwint *)data;
@@ -516,7 +516,7 @@ init_data_kwreal(int /* npar */, gmx_ana_selparam_t * /* param */)
 }
 
 static void
-init_kwreal(t_topology * /* top */, int /* npar */, gmx_ana_selparam_t *param, void *data)
+init_kwreal(const gmx_mtop_t * /* top */, int /* npar */, gmx_ana_selparam_t *param, void *data)
 {
     t_methoddata_kwreal *d = (t_methoddata_kwreal *)data;
 
@@ -534,7 +534,7 @@ init_kwreal(t_topology * /* top */, int /* npar */, gmx_ana_selparam_t *param, v
  * Matching atoms are stored in \p out->u.g.
  */
 static void
-evaluate_keyword_real(t_topology * /* top */, t_trxframe * /* fr */, t_pbc * /* pbc */,
+evaluate_keyword_real(const gmx::SelMethodEvalContext & /*context*/,
                       gmx_ana_index_t *g, gmx_ana_selvalue_t *out, void *data)
 {
     t_methoddata_kwreal *d = (t_methoddata_kwreal *)data;
@@ -610,7 +610,7 @@ _gmx_selelem_set_kwstr_match_type(const gmx::SelectionTreeElementPointer &sel,
 }
 
 static void
-init_kwstr(t_topology * /* top */, int /* npar */, gmx_ana_selparam_t *param, void *data)
+init_kwstr(const gmx_mtop_t * /* top */, int /* npar */, gmx_ana_selparam_t *param, void *data)
 {
     t_methoddata_kwstr *d = static_cast<t_methoddata_kwstr *>(data);
 
@@ -625,7 +625,7 @@ init_kwstr(t_topology * /* top */, int /* npar */, gmx_ana_selparam_t *param, vo
     for (int i = 0; i < n; ++i)
     {
         const char *s = param[1].val.u.s[i];
-        d->matches.push_back(StringKeywordMatchItem(d->matchType, s));
+        d->matches.emplace_back(d->matchType, s);
     }
 }
 
@@ -649,7 +649,7 @@ free_data_kwstr(void *data)
  * Matching atoms are stored in \p out->u.g.
  */
 static void
-evaluate_keyword_str(t_topology * /* top */, t_trxframe * /* fr */, t_pbc * /* pbc */,
+evaluate_keyword_str(const gmx::SelMethodEvalContext & /*context*/,
                      gmx_ana_index_t *g, gmx_ana_selvalue_t *out, void *data)
 {
     t_methoddata_kwstr *d = static_cast<t_methoddata_kwstr *>(data);
@@ -674,15 +674,15 @@ evaluate_keyword_str(t_topology * /* top */, t_trxframe * /* fr */, t_pbc * /* p
  ********************************************************************/
 
 static void
-init_kweval(t_topology *top, int /* npar */, gmx_ana_selparam_t * /* param */, void *data)
+init_kweval(const gmx_mtop_t *top, int /* npar */, gmx_ana_selparam_t * /* param */, void *data)
 {
     t_methoddata_kweval *d = static_cast<t_methoddata_kweval *>(data);
 
-    d->kwmethod->init(top, 0, NULL, d->kwmdata);
+    d->kwmethod->init(top, 0, nullptr, d->kwmdata);
 }
 
 static void
-init_output_kweval(t_topology * /* top */, gmx_ana_selvalue_t *out, void *data)
+init_output_kweval(const gmx_mtop_t * /* top */, gmx_ana_selvalue_t *out, void *data)
 {
     t_methoddata_kweval *d = static_cast<t_methoddata_kweval *>(data);
 
@@ -704,39 +704,33 @@ free_data_kweval(void *data)
 }
 
 /*!
- * \param[in]  top  Topology.
- * \param[in]  fr   Current frame.
- * \param[in]  pbc  PBC structure.
+ * \param[in]  context  Evaluation context.
  * \param      data Should point to a \ref t_methoddata_kweval.
- * \returns    0 on success, a non-zero error code on error.
- *
- * Creates a lookup structure that enables fast queries of whether a point
- * is within the solid angle or not.
  */
 static void
-init_frame_kweval(t_topology *top, t_trxframe *fr, t_pbc *pbc, void *data)
+init_frame_kweval(const gmx::SelMethodEvalContext &context, void *data)
 {
     t_methoddata_kweval *d = static_cast<t_methoddata_kweval *>(data);
 
-    d->kwmethod->init_frame(top, fr, pbc, d->kwmdata);
+    d->kwmethod->init_frame(context, d->kwmdata);
 }
 
 static void
-evaluate_kweval(t_topology *top, t_trxframe *fr, t_pbc *pbc,
+evaluate_kweval(const gmx::SelMethodEvalContext &context,
                 gmx_ana_index_t * /* g */, gmx_ana_selvalue_t *out, void *data)
 {
     t_methoddata_kweval *d = static_cast<t_methoddata_kweval *>(data);
 
-    d->kwmethod->update(top, fr, pbc, &d->g, out, d->kwmdata);
+    d->kwmethod->update(context, &d->g, out, d->kwmdata);
 }
 
 static void
-evaluate_kweval_pos(t_topology *top, t_trxframe *fr, t_pbc *pbc,
+evaluate_kweval_pos(const gmx::SelMethodEvalContext &context,
                     gmx_ana_index_t * /* g */, gmx_ana_selvalue_t *out, void *data)
 {
     t_methoddata_kweval *d = static_cast<t_methoddata_kweval *>(data);
 
-    d->kwmethod->pupdate(top, fr, pbc, &d->p, out, d->kwmdata);
+    d->kwmethod->pupdate(context, &d->p, out, d->kwmdata);
 }
 
 /*! \brief
@@ -777,14 +771,14 @@ init_evaluator_group(gmx_ana_selmethod_t                     *method,
     sel->u.expr.method->name         = data->kwmethod->name;
     sel->u.expr.method->type         = data->kwmethod->type;
     sel->u.expr.method->flags        = data->kwmethod->flags | SMETH_VARNUMVAL;
-    sel->u.expr.method->init_data    = NULL;
-    sel->u.expr.method->set_poscoll  = NULL;
-    sel->u.expr.method->init         = method->init ? &init_kweval : NULL;
+    sel->u.expr.method->init_data    = nullptr;
+    sel->u.expr.method->set_poscoll  = nullptr;
+    sel->u.expr.method->init         = method->init ? &init_kweval : nullptr;
     sel->u.expr.method->outinit      = &init_output_kweval;
     sel->u.expr.method->free         = &free_data_kweval;
-    sel->u.expr.method->init_frame   = method->init_frame ? &init_frame_kweval : NULL;
+    sel->u.expr.method->init_frame   = method->init_frame ? &init_frame_kweval : nullptr;
     sel->u.expr.method->update       = &evaluate_kweval;
-    sel->u.expr.method->pupdate      = NULL;
+    sel->u.expr.method->pupdate      = nullptr;
     sel->u.expr.method->nparams      = asize(smparams_kweval_group);
     sel->u.expr.method->param        = smparams_kweval_group;
     _gmx_selelem_init_method_params(sel, scanner);
@@ -814,7 +808,7 @@ init_evaluator_pos(gmx_ana_selmethod_t                     *method,
                    void                                    *scanner)
 {
     if ((method->flags & (SMETH_SINGLEVAL | SMETH_VARNUMVAL))
-        || method->outinit || method->pupdate == NULL)
+        || method->outinit || method->pupdate == nullptr)
     {
         std::string message
             = gmx::formatString("Keyword '%s' cannot be evaluated in this context",
@@ -834,14 +828,14 @@ init_evaluator_pos(gmx_ana_selmethod_t                     *method,
     sel->u.expr.method->name         = data->kwmethod->name;
     sel->u.expr.method->type         = data->kwmethod->type;
     sel->u.expr.method->flags        = data->kwmethod->flags | SMETH_SINGLEVAL;
-    sel->u.expr.method->init_data    = NULL;
-    sel->u.expr.method->set_poscoll  = NULL;
-    sel->u.expr.method->init         = method->init ? &init_kweval : NULL;
-    sel->u.expr.method->outinit      = NULL;
+    sel->u.expr.method->init_data    = nullptr;
+    sel->u.expr.method->set_poscoll  = nullptr;
+    sel->u.expr.method->init         = method->init ? &init_kweval : nullptr;
+    sel->u.expr.method->outinit      = nullptr;
     sel->u.expr.method->free         = &free_data_kweval;
-    sel->u.expr.method->init_frame   = method->init_frame ? &init_frame_kweval : NULL;
+    sel->u.expr.method->init_frame   = method->init_frame ? &init_frame_kweval : nullptr;
     sel->u.expr.method->update       = &evaluate_kweval_pos;
-    sel->u.expr.method->pupdate      = NULL;
+    sel->u.expr.method->pupdate      = nullptr;
     sel->u.expr.method->nparams      = asize(smparams_kweval_pos);
     sel->u.expr.method->param        = smparams_kweval_pos;
     _gmx_selelem_init_method_params(sel, scanner);
@@ -861,7 +855,7 @@ _gmx_sel_init_keyword_evaluator(gmx_ana_selmethod_t                    *method,
 {
     gmx::SelectionParserParameterList    params;
     params.push_back(
-            gmx::SelectionParserParameter::createFromExpression(NULL, child));
+            gmx::SelectionParserParameter::createFromExpression(nullptr, child));
     if (child->v.type == GROUP_VALUE)
     {
         return init_evaluator_group(method, params, scanner);

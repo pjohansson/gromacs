@@ -1,7 +1,7 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2014,2015,2016, by the GROMACS development team, led by
+ * Copyright (c) 2014,2015,2016,2017, by the GROMACS development team, led by
  * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
  * and including many others, as listed in the AUTHORS file in the
  * top-level source directory and at http://www.gromacs.org.
@@ -48,9 +48,12 @@
 #include "gromacs/domdec/domdec.h"
 #include "gromacs/domdec/domdec_struct.h"
 #include "gromacs/mdtypes/commrec.h"
+#include "gromacs/timing/cyclecounter.h"
 #include "gromacs/topology/block.h"
 
 /*! \cond INTERNAL */
+
+struct BalanceRegion;
 
 typedef struct
 {
@@ -144,21 +147,30 @@ enum {
     ddnatHOME, ddnatZONE, ddnatVSITE, ddnatCON, ddnatNR
 };
 
-/*! \brief Enum of dynamic load balancing states */
-enum {
-    edlbsOffForever,           /**< DLB is off and will never be turned on */
-    edlbsOffCanTurnOn,         /**< DLB is off and will turn on on imbalance */
-    edlbsOffTemporarilyLocked, /**< DLB is off and temporarily can't turn on */
-    edlbsOn,                   /**< DLB is on and will stay on forever */
-    edlbsNR                    /**< The number of DLB states */
-};
-
-/* Allowed DLB state transitions:
- *   edlbsOffCanTurnOn         -> edlbsOn
+/*! \brief Enum of dynamic load balancing states
+ *
+ * Allowed DLB states and transitions
+ * - intialization at startup:
+ *                             -> edlbsOffUser ("-dlb no")
+ *                             -> edlbsOnUser  ("-dlb yes")
+ *                             -> edlbsOffCanTurnOn ("-dlb auto")
+ *
+ * - in automatic mode (i.e. initial state edlbsOffCanTurnOn):
+ *   edlbsOffCanTurnOn         -> edlbsOnCanTurnOff
  *   edlbsOffCanTurnOn         -> edlbsOffForever
  *   edlbsOffCanTurnOn         -> edlbsOffTemporarilyLocked
  *   edlbsOffTemporarilyLocked -> edlbsOffCanTurnOn
+ *   edlbsOnCanTurnOff         -> edlbsOffCanTurnOn
  */
+enum {
+    edlbsOffUser,              /**< DLB is permanently off per user request */
+    edlbsOffForever,           /**< DLB is off due to a runtime condition (not supported or causes performance loss) and will never be turned on */
+    edlbsOffCanTurnOn,         /**< DLB is off and will turn on on imbalance */
+    edlbsOffTemporarilyLocked, /**< DLB is off and temporarily can't turn on */
+    edlbsOnCanTurnOff,         /**< DLB is on and can turn off when slow */
+    edlbsOnUser,               /**< DLB is permanently on per user request */
+    edlbsNR                    /**< The number of DLB states */
+};
 
 /*! \brief The PME domain decomposition for one dimension */
 typedef struct
@@ -243,6 +255,8 @@ struct gmx_domdec_comm_t
     int      dlbState;
     /* With dlbState=edlbsOffCanTurnOn, should we check if to DLB on at the next DD? */
     gmx_bool bCheckWhetherToTurnDlbOn;
+    /* The first DD count since we are running without DLB */
+    int      ddPartioningCountFirstDlbOff;
 
     /* Cell sizes for static load balancing, first index cartesian */
     real **slb_frac;
@@ -290,7 +304,7 @@ struct gmx_domdec_comm_t
     /** Which cg distribution is stored on the master node,
      *  stored as DD partitioning call count.
      */
-    int master_cg_ddp_count;
+    gmx_int64_t master_cg_ddp_count;
 
     /** The number of cg's received from the direct neighbors */
     int  zone_ncg1[DD_MAXZONE];
@@ -341,10 +355,12 @@ struct gmx_domdec_comm_t
     MPI_Comm        mpi_comm_gpu_shared; /**< The MPI load communicator for ranks sharing a GPU */
 #endif
 
-    /** Maximum DLB scaling per load balancing step in percent */
-    int dlb_scale_lim;
+    /* Information for managing the dynamic load balancing */
+    int            dlb_scale_lim;      /**< Maximum DLB scaling per load balancing step in percent */
 
-    /* Cycle counters */
+    BalanceRegion *balanceRegion;      /**< Struct for timing the force load balancing region */
+
+    /* Cycle counters over nstlist steps */
     float  cycl[ddCyclNr];             /**< Total cycles counted */
     int    cycl_n[ddCyclNr];           /**< The number of cycle recordings */
     float  cycl_max[ddCyclNr];         /**< The maximum cycle count */
@@ -356,6 +372,12 @@ struct gmx_domdec_comm_t
     int    n_load_have;
     /** How many times have we collected the load measurements */
     int    n_load_collect;
+
+    /* Cycle count history for DLB checks */
+    float       cyclesPerStepBeforeDLB;     /**< The averaged cycles per step over the last nstlist step before turning on DLB */
+    float       cyclesPerStepDlbExpAverage; /**< The running average of the cycles per step during DLB */
+    bool        haveTurnedOffDlb;           /**< Have we turned off DLB (after turning DLB on)? */
+    gmx_int64_t dlbSlowerPartitioningCount; /**< The DD step at which we last measured that DLB off was faster than DLB on, 0 if there was no such step */
 
     /* Statistics */
     double sum_nat[ddnatNR-ddnatZONE]; /**< The atoms per zone, summed over the steps */

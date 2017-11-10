@@ -1,7 +1,7 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2014,2015,2016, by the GROMACS development team, led by
+ * Copyright (c) 2014,2015,2016,2017, by the GROMACS development team, led by
  * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
  * and including many others, as listed in the AUTHORS file in the
  * top-level source directory and at http://www.gromacs.org.
@@ -38,6 +38,7 @@
 
 #include "config.h"
 
+#include "gromacs/math/utilities.h"
 #include "gromacs/utility/basedefinitions.h"
 
 #include "impl_ibm_vsx_definitions.h"
@@ -99,22 +100,11 @@ class SimdDIBool
         __vector vsxBool int  simdInternal_;
 };
 
-// The VSX load & store operations are a bit of a mess. The interface is different
-// for xlc version 12, xlc version 13, and gcc. Long-term IBM recommends
-// simply using pointer dereferencing both for aligned and unaligned loads.
-// That's nice, but unfortunately xlc still bugs out when the pointer is
-// not aligned. Sticking to vec_xl/vec_xst isn't a solution either, since
-// that appears to be buggy for some _aligned_ loads :-)
-//
-// For now, we use pointer dereferencing for all aligned load/stores, and
-// for unaligned ones with gcc. On xlc we use vec_xlw4/vec_xstw4 for
-// unaligned memory operations. The latest docs recommend using the overloaded
-// vec_xl/vec_xst, but that is not supported on xlc version 12. We'll
-// revisit things once xlc is a bit more stable - for now you probably want
-// to stick to gcc...
+// Note that the interfaces we use here have been a mess in xlc;
+// currently version 13.1.5 is required.
 
 static inline SimdDouble gmx_simdcall
-simdLoad(const double *m)
+simdLoad(const double *m, SimdDoubleTag = {})
 {
     return {
                *reinterpret_cast<const __vector double *>(m)
@@ -128,27 +118,17 @@ store(double *m, SimdDouble a)
 }
 
 static inline SimdDouble gmx_simdcall
-simdLoadU(const double *m)
+simdLoadU(const double *m, SimdDoubleTag = {})
 {
-#if defined(__ibmxl__) || defined(__xlC__)
-    return {
-               vec_xlw4(0, const_cast<double *>(m))
-    }
-#else
     return {
                *reinterpret_cast<const __vector double *>(m)
     };
-#endif
 }
 
 static inline void gmx_simdcall
 storeU(double *m, SimdDouble a)
 {
-#if defined(__ibmxl__) || defined(__xlC__)
-    vec_xstw4(a.simdInternal_, 0, m);
-#else
     *reinterpret_cast<__vector double *>(m) = a.simdInternal_;
-#endif
 }
 
 static inline SimdDouble gmx_simdcall
@@ -160,7 +140,7 @@ setZeroD()
 }
 
 static inline SimdDInt32 gmx_simdcall
-simdLoadDI(const std::int32_t * m)
+simdLoad(const std::int32_t * m, SimdDInt32Tag)
 {
     __vector signed int          t0, t1;
     const __vector unsigned char perm = { 0, 1, 2, 3, 0, 1, 2, 3, 16, 17, 18, 19, 16, 17, 18, 19 };
@@ -180,9 +160,9 @@ store(std::int32_t * m, SimdDInt32 gmx_unused x)
 }
 
 static inline SimdDInt32 gmx_simdcall
-simdLoadUDI(const std::int32_t *m)
+simdLoadU(const std::int32_t *m, SimdDInt32Tag)
 {
-    return simdLoadDI(m);
+    return simdLoad(m, SimdDInt32Tag());
 }
 
 static inline void gmx_simdcall
@@ -443,6 +423,7 @@ frexp(SimdDouble value, SimdDInt32 * exponent)
     };
 }
 
+template <MathOptimization opt = MathOptimization::Safe>
 static inline SimdDouble
 ldexp(SimdDouble value, SimdDInt32 exponent)
 {
@@ -455,6 +436,13 @@ ldexp(SimdDouble value, SimdDInt32 exponent)
 #endif
 
     iExponent = vec_add(exponent.simdInternal_, exponentBias);
+
+    if (opt == MathOptimization::Safe)
+    {
+        // Make sure biased argument is not negative
+        iExponent = vec_max(iExponent, vec_splat_s32(0));
+    }
+
     // exponent is now present in pairs of integers; 0011.
     // Elements 0/2 already correspond to the upper half of each double,
     // so we only need to shift by another 52-32=20 bits.

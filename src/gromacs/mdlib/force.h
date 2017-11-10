@@ -3,7 +3,7 @@
  *
  * Copyright (c) 1991-2000, University of Groningen, The Netherlands.
  * Copyright (c) 2001-2004, The GROMACS development team.
- * Copyright (c) 2013,2014,2015, by the GROMACS development team, led by
+ * Copyright (c) 2013,2014,2015,2016,2017, by the GROMACS development team, led by
  * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
  * and including many others, as listed in the AUTHORS file in the
  * top-level source directory and at http://www.gromacs.org.
@@ -37,17 +37,20 @@
 #ifndef GMX_MDLIB_FORCE_H
 #define GMX_MDLIB_FORCE_H
 
+#include "gromacs/domdec/dlbtiming.h"
 #include "gromacs/mdlib/force_flags.h"
 #include "gromacs/mdlib/vsite.h"
 #include "gromacs/mdtypes/fcdata.h"
 #include "gromacs/mdtypes/forcerec.h"
 #include "gromacs/timing/wallcycle.h"
+#include "gromacs/utility/arrayref.h"
 
+struct gmx_device_info_t;
 struct gmx_edsam;
 struct gmx_gpu_info_t;
 struct gmx_groups_t;
 struct gmx_vsite_t;
-struct history_t;
+class history_t;
 struct nonbonded_verlet_t;
 struct t_blocka;
 struct t_commrec;
@@ -59,6 +62,12 @@ struct t_lambda;
 struct t_mdatoms;
 struct t_nrnb;
 struct t_pbc;
+
+namespace gmx
+{
+class ForceWithVirial;
+class MDLogger;
+}
 
 void calc_vir(int nxf, rvec x[], rvec f[], tensor vir,
               gmx_bool bScrewPBC, matrix box);
@@ -80,7 +89,7 @@ real RF_excl_correction(const t_forcerec *fr, t_graph *g,
 void calc_rffac(FILE *fplog, int eel, real eps_r, real eps_rf,
                 real Rc, real Temp,
                 real zsq, matrix box,
-                real *kappa, real *krf, real *crf);
+                real *krf, real *crf);
 /* Determine the reaction-field constants */
 
 void init_generalized_rf(FILE *fplog,
@@ -105,20 +114,8 @@ gmx_bool can_use_allvsall(const t_inputrec *ir,
  * and fp (if !=NULL) on the master node.
  */
 
-
-gmx_bool nbnxn_gpu_acceleration_supported(FILE             *fplog,
-                                          const t_commrec  *cr,
-                                          const t_inputrec *ir,
-                                          gmx_bool          bRerunMD);
-/* Return if GPU acceleration is supported with the given settings.
- *
- * If the return value is FALSE and fplog/cr != NULL, prints a fallback
- * message to fplog/stderr.
- */
-
-gmx_bool nbnxn_simd_supported(FILE             *fplog,
-                              const t_commrec  *cr,
-                              const t_inputrec *ir);
+gmx_bool nbnxn_simd_supported(const gmx::MDLogger &mdlog,
+                              const t_inputrec    *ir);
 /* Return if CPU SIMD support exists for the given inputrec
  * If the return value is FALSE and fplog/cr != NULL, prints a fallback
  * message to fplog/stderr.
@@ -146,7 +143,7 @@ void reset_enerdata(gmx_enerdata_t *enerd);
 void sum_epot(gmx_grppairener_t *grpp, real *epot);
 /* Locally sum the non-bonded potential energy terms */
 
-void sum_dhdl(gmx_enerdata_t *enerd, real *lambda, t_lambda *fepvals);
+void sum_dhdl(gmx_enerdata_t *enerd, gmx::ArrayRef<const real> lambda, t_lambda *fepvals);
 /* Sum the free energy contributions */
 
 /* Compute the average C6 and C12 params for LJ corrections */
@@ -158,17 +155,19 @@ void do_force(FILE *log, t_commrec *cr,
               gmx_int64_t step, struct t_nrnb *nrnb, gmx_wallcycle_t wcycle,
               gmx_localtop_t *top,
               gmx_groups_t *groups,
-              matrix box, rvec x[], history_t *hist,
-              rvec f[],
+              matrix box, PaddedRVecVector *coordinates, history_t *hist,
+              PaddedRVecVector *force,
               tensor vir_force,
               t_mdatoms *mdatoms,
               gmx_enerdata_t *enerd, t_fcdata *fcd,
-              real *lambda, struct t_graph *graph,
+              gmx::ArrayRef<real> lambda, t_graph *graph,
               t_forcerec *fr,
               gmx_vsite_t *vsite, rvec mu_tot,
-              double t, FILE *field, struct gmx_edsam *ed,
+              double t, struct gmx_edsam *ed,
               gmx_bool bBornRadii,
-              int flags);
+              int flags,
+              DdOpenBalanceRegionBeforeForceComputation ddOpenBalanceRegion,
+              DdCloseBalanceRegionAfterForceComputation ddCloseBalanceRegion);
 
 /* Communicate coordinates (if parallel).
  * Do neighbor searching (if necessary).
@@ -200,6 +199,7 @@ void do_force_lowlevel(t_forcerec   *fr,
                        rvec         x[],
                        history_t    *hist,
                        rvec         f_shortrange[],
+                       gmx::ForceWithVirial *forceWithVirial,
                        gmx_enerdata_t *enerd,
                        t_fcdata     *fcd,
                        gmx_localtop_t *top,
@@ -217,7 +217,6 @@ void do_force_lowlevel(t_forcerec   *fr,
 
 void free_gpu_resources(const t_forcerec            *fr,
                         const t_commrec             *cr,
-                        const gmx_gpu_info_t        *gpu_info,
-                        const gmx_gpu_opt_t         *gpu_opt);
+                        const gmx_device_info_t     *deviceInfo);
 
 #endif

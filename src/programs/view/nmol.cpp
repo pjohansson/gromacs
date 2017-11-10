@@ -3,7 +3,7 @@
  *
  * Copyright (c) 1991-2000, University of Groningen, The Netherlands.
  * Copyright (c) 2001-2013, The GROMACS development team.
- * Copyright (c) 2013,2014,2015, by the GROMACS development team, led by
+ * Copyright (c) 2013,2014,2015,2016,2017, by the GROMACS development team, led by
  * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
  * and including many others, as listed in the AUTHORS file in the
  * top-level source directory and at http://www.gromacs.org.
@@ -61,7 +61,7 @@ static bool MWCallBack(t_x11 *x11, XEvent *event, Window /*w*/, void *data)
     Window    To;
     XEvent    letter;
 
-    mw                          = (t_molwin *)data;
+    mw                          = static_cast<t_molwin *>(data);
     To                          = mw->wd.Parent;
     letter.type                 = ClientMessage;
     letter.xclient.display      = x11->disp;
@@ -98,7 +98,7 @@ static bool MWCallBack(t_x11 *x11, XEvent *event, Window /*w*/, void *data)
     return false;
 }
 
-void set_def (t_molwin *mw, int ePBC, matrix box)
+static void set_def (t_molwin *mw, int ePBC, matrix box)
 {
     mw->bShowHydrogen = true;
     mw->bond_type     = eBFat;
@@ -284,11 +284,11 @@ static void draw_bond(Display *disp, Window w, GC gc,
 
 int compare_obj(const void *a, const void *b)
 {
-    t_object *oa, *ob;
-    real      z;
+    const t_object *oa, *ob;
+    real            z;
 
-    oa = (t_object *)a;
-    ob = (t_object *)b;
+    oa = static_cast<const t_object *>(a);
+    ob = static_cast<const t_object *>(b);
 
     z = oa->z-ob->z;
 
@@ -368,10 +368,10 @@ int filter_vis(t_manager *man)
     return nvis;
 }
 
-void draw_objects(Display *disp, Window w, GC gc, int nobj,
-                  t_object objs[], iv2 vec2[], rvec x[],
-                  unsigned long col[], int size[], bool bShowHydro, int bond_type,
-                  bool bPlus)
+static void draw_objects(Display *disp, Window w, GC gc, int nobj,
+                         t_object objs[], iv2 vec2[], rvec x[],
+                         unsigned long col[], int size[], bool bShowHydro, int bond_type,
+                         bool bPlus)
 {
     bool         bBalls;
     int          i;
@@ -442,7 +442,7 @@ static void draw_box(t_x11 *x11, Window w, t_3dview *view, matrix box,
         { 4, 5 }, { 5, 6 }, { 6, 7 }, { 7, 4 },
         { 0, 4 }, { 1, 5 }, { 2, 6 }, { 3, 7 }
     };
-    static int *edge = NULL;
+    static int *edge = nullptr;
     int         i, j, k, i0, i1;
     rvec        corner[NCUCEDGE], box_center;
     vec4        x4;
@@ -452,7 +452,7 @@ static void draw_box(t_x11 *x11, Window w, t_3dview *view, matrix box,
     if (boxtype == esbTrunc)
     {
         calc_compact_unitcell_vertices(view->ecenter, box, corner);
-        if (edge == NULL)
+        if (edge == nullptr)
         {
             edge = compact_unitcell_edges();
         }

@@ -3,7 +3,7 @@
  *
  * Copyright (c) 1991-2000, University of Groningen, The Netherlands.
  * Copyright (c) 2001-2004, The GROMACS development team.
- * Copyright (c) 2013,2014,2015,2016, by the GROMACS development team, led by
+ * Copyright (c) 2013,2014,2015,2016,2017, by the GROMACS development team, led by
  * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
  * and including many others, as listed in the AUTHORS file in the
  * top-level source directory and at http://www.gromacs.org.
@@ -58,10 +58,7 @@
 #include "gromacs/utility/basedefinitions.h"
 #include "gromacs/utility/real.h"
 
-#ifdef __cplusplus
-extern "C" {
-#endif
-
+struct ContinuationOptions;
 struct gmx_mtop_t;
 struct gmx_output_env_t;
 struct pull_params_t;
@@ -70,6 +67,11 @@ struct t_filenm;
 struct t_inputrec;
 struct t_mdatoms;
 struct t_pbc;
+
+namespace gmx
+{
+class ForceWithVirial;
+}
 
 /*! \brief Returns the units of the pull coordinate.
  *
@@ -122,6 +124,8 @@ void get_pull_coord_value(struct pull_t      *pull,
  * will exit with a (release) assertion failure when used incorrely or
  * with a fatal error when the user (mdp) input in inconsistent.
  *
+ * Thread-safe for simultaneous registration from multiple threads.
+ *
  * \param[in,out] pull         The pull struct.
  * \param[in]     coord_index  The pull coordinate index to register the external potential for.
  * \param[in]     provider     Provider string, should match the potential-provider pull coordinate mdp option.
@@ -172,15 +176,14 @@ void clear_pull_forces(struct pull_t *pull);
  * \param[in]     t      Time.
  * \param[in]     lambda The value of lambda in FEP calculations.
  * \param[in]     x      Positions.
- * \param[in]     f      Forces.
- * \param[in,out] vir    The virial, which, if != NULL, gets a pull correction.
+ * \param[in,out] force  Forces and virial.
  * \param[out] dvdlambda Pull contribution to dV/d(lambda).
  *
  * \returns The pull potential energy.
  */
 real pull_potential(struct pull_t *pull, t_mdatoms *md, struct t_pbc *pbc,
                     t_commrec *cr, double t, real lambda,
-                    rvec *x, rvec *f, tensor vir, real *dvdlambda);
+                    rvec *x, gmx::ForceWithVirial *force, real *dvdlambda);
 
 
 /*! \brief Constrain the coordinates xp in the directions in x
@@ -225,20 +228,19 @@ void dd_make_local_pull_groups(t_commrec *cr,
  * \param oenv        Output options.
  * \param lambda      FEP lambda.
  * \param bOutFile    Open output files?
- * \param Flags       Flags passed over from main, used to determine
- *                    whether or not we are appending.
+ * \param continuationOptions  Options for continuing from checkpoint file
  */
-struct pull_t *init_pull(FILE                   *fplog,
-                         const pull_params_t    *pull_params,
-                         const t_inputrec       *ir,
-                         int                     nfile,
-                         const t_filenm          fnm[],
-                         const gmx_mtop_t       *mtop,
-                         t_commrec             * cr,
-                         const gmx_output_env_t *oenv,
-                         real                    lambda,
-                         gmx_bool                bOutFile,
-                         unsigned long           Flags);
+struct pull_t *init_pull(FILE                      *fplog,
+                         const pull_params_t       *pull_params,
+                         const t_inputrec          *ir,
+                         int                        nfile,
+                         const t_filenm             fnm[],
+                         const gmx_mtop_t          *mtop,
+                         t_commrec                * cr,
+                         const gmx_output_env_t    *oenv,
+                         real                       lambda,
+                         gmx_bool                   bOutFile,
+                         const ContinuationOptions &continuationOptions);
 
 
 /*! \brief Close the pull output files.
@@ -303,9 +305,5 @@ gmx_bool pull_have_constraint(const struct pull_t *pull);
  */
 real max_pull_distance2(const pull_coord_work_t *pcrd,
                         const t_pbc             *pbc);
-
-#ifdef __cplusplus
-}
-#endif
 
 #endif

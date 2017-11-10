@@ -1,7 +1,7 @@
 #
 # This file is part of the GROMACS molecular simulation package.
 #
-# Copyright (c) 2015,2016, by the GROMACS development team, led by
+# Copyright (c) 2015,2016,2017, by the GROMACS development team, led by
 # Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
 # and including many others, as listed in the AUTHORS file in the
 # top-level source directory and at http://www.gromacs.org.
@@ -63,7 +63,9 @@ if releng_path and os.path.isdir(releng_path):
 # -- General configuration ------------------------------------------------
 
 # If your documentation needs a minimal Sphinx version, state it here.
-needs_sphinx = '1.3'
+# gmx_min_sphinx is set from the expected minimum version of Sphinx
+# in CMakeLists.txt
+needs_sphinx = gmx_min_sphinx
 
 # Add any Sphinx extension module names here, as strings. They can be
 # extensions coming with Sphinx (named 'sphinx.ext.*') or your custom
@@ -161,6 +163,8 @@ rst_epilog += """
 .. _LAM-MPI: http://www.lam-mpi.org
 .. _OpenMP: http://en.wikipedia.org/wiki/OpenMP
 .. _CMake installation page: http://www.cmake.org/install/
+.. _Ubuntu toolchain ppa page: https://launchpad.net/~ubuntu-toolchain-r/+archive/ubuntu/test
+.. _EPEL page: https://fedoraproject.org/wiki/EPEL
 .. _running CMake: http://www.cmake.org/runningcmake/
 .. _CMake environment variables: http://cmake.org/Wiki/CMake_Useful_Variables#Environment_Variables
 .. _FFTW: http://www.fftw.org
@@ -307,7 +311,8 @@ latex_documents = [
 
 # One entry per manual page. List of tuples
 # (source start file, name, description, authors, manual section).
-execfile('conf-man.py')
+if tags.has('do_man'):
+    execfile('conf-man.py')
 
 # If true, show URL addresses after external links.
 #man_show_urls = False

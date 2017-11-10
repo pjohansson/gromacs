@@ -3,7 +3,7 @@
  *
  * Copyright (c) 1991-2000, University of Groningen, The Netherlands.
  * Copyright (c) 2001-2004, The GROMACS development team.
- * Copyright (c) 2013,2014,2015, by the GROMACS development team, led by
+ * Copyright (c) 2013,2014,2015,2017, by the GROMACS development team, led by
  * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
  * and including many others, as listed in the AUTHORS file in the
  * top-level source directory and at http://www.gromacs.org.
@@ -63,14 +63,14 @@
 
 #define FARAWAY 10000
 
-int *res_ndx(t_atoms *atoms)
+static int *res_ndx(t_atoms *atoms)
 {
     int *rndx;
     int  i, r0;
 
     if (atoms->nr <= 0)
     {
-        return NULL;
+        return nullptr;
     }
     snew(rndx, atoms->nr);
     r0 = atoms->atom[0].resind;
@@ -82,14 +82,14 @@ int *res_ndx(t_atoms *atoms)
     return rndx;
 }
 
-int *res_natm(t_atoms *atoms)
+static int *res_natm(t_atoms *atoms)
 {
     int *natm;
     int  i, j, r0;
 
     if (atoms->nr <= 0)
     {
-        return NULL;
+        return nullptr;
     }
     snew(natm, atoms->nres);
     r0 = atoms->atom[0].resind;
@@ -194,16 +194,16 @@ int gmx_mdmat(int argc, char *argv[])
           "Discretize distance in this number of levels" }
     };
     t_filenm        fnm[] = {
-        { efTRX, "-f",  NULL, ffREAD },
-        { efTPS, NULL,  NULL, ffREAD },
-        { efNDX, NULL,  NULL, ffOPTRD },
+        { efTRX, "-f",  nullptr, ffREAD },
+        { efTPS, nullptr,  nullptr, ffREAD },
+        { efNDX, nullptr,  nullptr, ffOPTRD },
         { efXPM, "-mean", "dm", ffWRITE },
         { efXPM, "-frames", "dmf", ffOPTWR },
         { efXVG, "-no", "num", ffOPTWR },
     };
 #define NFILE asize(fnm)
 
-    FILE             *out = NULL, *fp;
+    FILE             *out = nullptr, *fp;
     t_topology        top;
     int               ePBC;
     t_atoms           useatoms;
@@ -225,10 +225,10 @@ int gmx_mdmat(int argc, char *argv[])
     int              *tot_n;
     matrix            box = {{0}};
     gmx_output_env_t *oenv;
-    gmx_rmpbc_t       gpbc = NULL;
+    gmx_rmpbc_t       gpbc = nullptr;
 
     if (!parse_common_args(&argc, argv, PCA_CAN_TIME, NFILE, fnm,
-                           asize(pa), pa, asize(desc), desc, 0, NULL, &oenv))
+                           asize(pa), pa, asize(desc), desc, 0, nullptr, &oenv))
     {
         return 0;
     }
@@ -241,7 +241,7 @@ int gmx_mdmat(int argc, char *argv[])
         fprintf(stderr, "Will calculate number of different contacts\n");
     }
 
-    read_tps_conf(ftp2fn(efTPS, NFILE, fnm), &top, &ePBC, &x, NULL, box, FALSE);
+    read_tps_conf(ftp2fn(efTPS, NFILE, fnm), &top, &ePBC, &x, nullptr, box, FALSE);
 
     fprintf(stderr, "Select group for analysis\n");
     get_index(&top.atoms, ftp2fn_null(efNDX, NFILE, fnm), 1, &isize, &index, &grpname);
@@ -345,7 +345,7 @@ int gmx_mdmat(int argc, char *argv[])
     }
     while (read_next_x(oenv, status, &t, x, box));
     fprintf(stderr, "\n");
-    close_trj(status);
+    close_trx(status);
     gmx_rmpbc_done(gpbc);
     if (bFrames)
     {

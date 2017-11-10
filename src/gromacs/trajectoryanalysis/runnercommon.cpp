@@ -1,7 +1,7 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2010,2011,2012,2013,2014,2015,2016, by the GROMACS development team, led by
+ * Copyright (c) 2010,2011,2012,2013,2014,2015,2016,2017, by the GROMACS development team, led by
  * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
  * and including many others, as listed in the AUTHORS file in the
  * top-level source directory and at http://www.gromacs.org.
@@ -90,10 +90,10 @@ class TrajectoryAnalysisRunnerCommon::Impl : public ITopologyProvider
         void finishTrajectory();
 
         // From ITopologyProvider
-        virtual t_topology *getTopology(bool required)
+        virtual gmx_mtop_t *getTopology(bool required)
         {
             initTopology(required);
-            return topInfo_.topology();
+            return topInfo_.mtop_;
         }
         virtual int getAtomCount()
         {
@@ -140,7 +140,7 @@ TrajectoryAnalysisRunnerCommon::Impl::Impl(TrajectoryAnalysisSettings *settings)
     : settings_(*settings),
       startTime_(0.0), endTime_(0.0), deltaTime_(0.0),
       bStartTimeSet_(false), bEndTimeSet_(false), bDeltaTimeSet_(false),
-      bTrajOpen_(false), fr(NULL), gpbc_(NULL), status_(NULL), oenv_(NULL)
+      bTrajOpen_(false), fr(nullptr), gpbc_(nullptr), status_(nullptr), oenv_(nullptr)
 {
 }
 
@@ -180,14 +180,26 @@ TrajectoryAnalysisRunnerCommon::Impl::initTopology(bool required)
     // Load the topology if requested.
     if (!topfile_.empty())
     {
-        snew(topInfo_.top_, 1);
-        topInfo_.bTop_ = read_tps_conf(topfile_.c_str(), topInfo_.top_, &topInfo_.ePBC_,
-                                       &topInfo_.xtop_, NULL, topInfo_.boxtop_, TRUE);
+        snew(topInfo_.mtop_, 1);
+        readConfAndTopology(topfile_.c_str(), &topInfo_.bTop_, topInfo_.mtop_,
+                            &topInfo_.ePBC_, &topInfo_.xtop_, nullptr,
+                            topInfo_.boxtop_);
+        // TODO: Only load this here if the tool actually needs it; selections
+        // take care of themselves.
+        for (int i = 0; i < topInfo_.mtop_->nmoltype; ++i)
+        {
+            gmx_moltype_t &moltype = topInfo_.mtop_->moltype[i];
+            if (!moltype.atoms.haveMass)
+            {
+                // Try to read masses from database, be silent about missing masses
+                atomsSetMassesBasedOnNames(&moltype.atoms, FALSE);
+            }
+        }
         if (hasTrajectory()
             && !settings_.hasFlag(TrajectoryAnalysisSettings::efUseTopX))
         {
             sfree(topInfo_.xtop_);
-            topInfo_.xtop_ = NULL;
+            topInfo_.xtop_ = nullptr;
         }
     }
 }
@@ -196,7 +208,7 @@ void
 TrajectoryAnalysisRunnerCommon::Impl::initFirstFrame()
 {
     // Return if we have already initialized the trajectory.
-    if (fr != NULL)
+    if (fr != nullptr)
     {
         return;
     }
@@ -290,10 +302,10 @@ TrajectoryAnalysisRunnerCommon::Impl::finishTrajectory()
         close_trx(status_);
         bTrajOpen_ = false;
     }
-    if (gpbc_ != NULL)
+    if (gpbc_ != nullptr)
     {
         gmx_rmpbc_done(gpbc_);
-        gpbc_ = NULL;
+        gpbc_ = nullptr;
     }
 }
 
@@ -452,7 +464,7 @@ TrajectoryAnalysisRunnerCommon::readNextFrame()
 void
 TrajectoryAnalysisRunnerCommon::initFrame()
 {
-    if (impl_->gpbc_ != NULL)
+    if (impl_->gpbc_ != nullptr)
     {
         gmx_rmpbc_trxfr(impl_->gpbc_, impl_->fr);
     }
@@ -476,7 +488,7 @@ TrajectoryAnalysisRunnerCommon::topologyInformation() const
 t_trxframe &
 TrajectoryAnalysisRunnerCommon::frame() const
 {
-    GMX_RELEASE_ASSERT(impl_->fr != NULL, "Frame not available when accessed");
+    GMX_RELEASE_ASSERT(impl_->fr != nullptr, "Frame not available when accessed");
     return *impl_->fr;
 }
 

@@ -3,7 +3,7 @@
  *
  * Copyright (c) 1991-2000, University of Groningen, The Netherlands.
  * Copyright (c) 2001-2004, The GROMACS development team.
- * Copyright (c) 2013,2014,2015, by the GROMACS development team, led by
+ * Copyright (c) 2013,2014,2015,2017, by the GROMACS development team, led by
  * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
  * and including many others, as listed in the AUTHORS file in the
  * top-level source directory and at http://www.gromacs.org.
@@ -71,7 +71,7 @@ typedef struct {
 /****************************************************************************/
 
 /* used for sorting the list */
-int compare(void *a, void *b)
+static int compare(void *a, void *b)
 {
     t_electron *tmp1, *tmp2;
     tmp1 = (t_electron *)a; tmp2 = (t_electron *)b;
@@ -79,7 +79,7 @@ int compare(void *a, void *b)
     return std::strcmp(tmp1->atomname, tmp2->atomname);
 }
 
-int get_electrons(t_electron **eltab, const char *fn)
+static int get_electrons(t_electron **eltab, const char *fn)
 {
     char  buffer[256];  /* to read in a line   */
     char  tempname[80]; /* buffer to hold name */
@@ -94,7 +94,7 @@ int get_electrons(t_electron **eltab, const char *fn)
         gmx_fatal(FARGS, "Couldn't open %s. Exiting.\n", fn);
     }
 
-    if (NULL == fgets(buffer, 255, in))
+    if (nullptr == fgets(buffer, 255, in))
     {
         gmx_fatal(FARGS, "Error reading from file %s", fn);
     }
@@ -108,7 +108,7 @@ int get_electrons(t_electron **eltab, const char *fn)
 
     for (i = 0; i < nr; i++)
     {
-        if (fgets(buffer, 255, in) == NULL)
+        if (fgets(buffer, 255, in) == nullptr)
         {
             gmx_fatal(FARGS, "reading datafile. Check your datafile.\n");
         }
@@ -129,8 +129,8 @@ int get_electrons(t_electron **eltab, const char *fn)
     return nr;
 }
 
-void center_coords(t_atoms *atoms, int *index_center, int ncenter,
-                   matrix box, rvec x0[])
+static void center_coords(t_atoms *atoms, int *index_center, int ncenter,
+                          matrix box, rvec x0[])
 {
     int  i, k, m;
     real tmass, mm;
@@ -167,13 +167,13 @@ void center_coords(t_atoms *atoms, int *index_center, int ncenter,
     }
 }
 
-void calc_electron_density(const char *fn, int **index, int gnx[],
-                           double ***slDensity, int *nslices, t_topology *top,
-                           int ePBC,
-                           int axis, int nr_grps, real *slWidth,
-                           t_electron eltab[], int nr, gmx_bool bCenter,
-                           int *index_center, int ncenter,
-                           gmx_bool bRelative, const gmx_output_env_t *oenv)
+static void calc_electron_density(const char *fn, int **index, int gnx[],
+                                  double ***slDensity, int *nslices, t_topology *top,
+                                  int ePBC,
+                                  int axis, int nr_grps, real *slWidth,
+                                  t_electron eltab[], int nr, gmx_bool bCenter,
+                                  int *index_center, int ncenter,
+                                  gmx_bool bRelative, const gmx_output_env_t *oenv)
 {
     rvec        *x0;            /* coordinates without pbc */
     matrix       box;           /* box (3x3) */
@@ -186,7 +186,7 @@ void calc_electron_density(const char *fn, int **index, int gnx[],
     t_electron  *found;         /* found by bsearch */
     t_electron   sought;        /* thingie thought by bsearch */
     real         boxSz, aveBox;
-    gmx_rmpbc_t  gpbc = NULL;
+    gmx_rmpbc_t  gpbc = nullptr;
 
     real         t,
                  z;
@@ -281,7 +281,7 @@ void calc_electron_density(const char *fn, int **index, int gnx[],
                             (const void *)eltab, nr, sizeof(t_electron),
                             (int(*)(const void*, const void*))compare);
 
-                if (found == NULL)
+                if (found == nullptr)
                 {
                     fprintf(stderr, "Couldn't find %s. Add it to the .dat file\n",
                             *(top->atoms.atomname[index[n][i]]));
@@ -300,7 +300,7 @@ void calc_electron_density(const char *fn, int **index, int gnx[],
     gmx_rmpbc_done(gpbc);
 
     /*********** done with status file **********/
-    close_trj(status);
+    close_trx(status);
 
 /* slDensity now contains the total number of electrons per slice, summed
    over all frames. Now divide by nr_frames and volume of slice
@@ -326,11 +326,11 @@ void calc_electron_density(const char *fn, int **index, int gnx[],
     sfree(x0); /* free memory used by coordinate array */
 }
 
-void calc_density(const char *fn, int **index, int gnx[],
-                  double ***slDensity, int *nslices, t_topology *top, int ePBC,
-                  int axis, int nr_grps, real *slWidth, gmx_bool bCenter,
-                  int *index_center, int ncenter,
-                  gmx_bool bRelative, const gmx_output_env_t *oenv)
+static void calc_density(const char *fn, int **index, int gnx[],
+                         double ***slDensity, int *nslices, t_topology *top, int ePBC,
+                         int axis, int nr_grps, real *slWidth, gmx_bool bCenter,
+                         int *index_center, int ncenter,
+                         gmx_bool bRelative, const gmx_output_env_t *oenv)
 {
     rvec        *x0;            /* coordinates without pbc */
     matrix       box;           /* box (3x3) */
@@ -343,7 +343,7 @@ void calc_density(const char *fn, int **index, int gnx[],
     real         t,
                  z;
     real         boxSz, aveBox;
-    gmx_rmpbc_t  gpbc = NULL;
+    gmx_rmpbc_t  gpbc = nullptr;
 
     if (axis < 0 || axis >= DIM)
     {
@@ -449,7 +449,7 @@ void calc_density(const char *fn, int **index, int gnx[],
     gmx_rmpbc_done(gpbc);
 
     /*********** done with status file **********/
-    close_trj(status);
+    close_trx(status);
 
     /* slDensity now contains the total mass per slice, summed over all
        frames. Now divide by nr_frames and volume of slice
@@ -475,16 +475,16 @@ void calc_density(const char *fn, int **index, int gnx[],
     sfree(x0); /* free memory used by coordinate array */
 }
 
-void plot_density(double *slDensity[], const char *afile, int nslices,
-                  int nr_grps, char *grpname[], real slWidth,
-                  const char **dens_opt,
-                  gmx_bool bCenter, gmx_bool bRelative, gmx_bool bSymmetrize,
-                  const gmx_output_env_t *oenv)
+static void plot_density(double *slDensity[], const char *afile, int nslices,
+                         int nr_grps, char *grpname[], real slWidth,
+                         const char **dens_opt,
+                         gmx_bool bCenter, gmx_bool bRelative, gmx_bool bSymmetrize,
+                         const gmx_output_env_t *oenv)
 {
     FILE       *den;
-    const char *title  = NULL;
-    const char *xlabel = NULL;
-    const char *ylabel = NULL;
+    const char *title  = nullptr;
+    const char *xlabel = nullptr;
+    const char *ylabel = nullptr;
     int         slice, n;
     real        ddd;
     real        axispos;
@@ -621,7 +621,7 @@ int gmx_density(int argc, char *argv[])
 
     gmx_output_env_t  *oenv;
     static const char *dens_opt[] =
-    { NULL, "mass", "number", "charge", "electron", NULL };
+    { nullptr, "mass", "number", "charge", "electron", nullptr };
     static int         axis        = 2;  /* normal to memb. default z  */
     static const char *axtitle     = "Z";
     static int         nslices     = 50; /* nr of slices defined       */
@@ -666,9 +666,9 @@ int gmx_density(int argc, char *argv[])
     int                i;
 
     t_filenm           fnm[] = { /* files for g_density       */
-        { efTRX, "-f", NULL,  ffREAD },
-        { efNDX, NULL, NULL,  ffOPTRD },
-        { efTPR, NULL, NULL,  ffREAD },
+        { efTRX, "-f", nullptr,  ffREAD },
+        { efNDX, nullptr, nullptr,  ffOPTRD },
+        { efTPR, nullptr, nullptr,  ffREAD },
         { efDAT, "-ei", "electrons", ffOPTRD }, /* file with nr. of electrons */
         { efXVG, "-o", "density", ffWRITE },
     };
@@ -682,7 +682,7 @@ int gmx_density(int argc, char *argv[])
         return 0;
     }
 
-    GMX_RELEASE_ASSERT(dens_opt[0] != NULL, "Option setting inconsistency; dens_opt[0] is NULL");
+    GMX_RELEASE_ASSERT(dens_opt[0] != nullptr, "Option setting inconsistency; dens_opt[0] is NULL");
 
     if (bSymmetrize && !bCenter)
     {
@@ -725,7 +725,7 @@ int gmx_density(int argc, char *argv[])
     else
     {
         ncenter      = 0;
-        index_center = NULL;
+        index_center = nullptr;
     }
 
     fprintf(stderr, "\nSelect %d group%s to calculate density for:\n", ngrps, (ngrps > 1) ? "s" : "");

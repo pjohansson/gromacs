@@ -3,7 +3,7 @@
  *
  * Copyright (c) 1991-2000, University of Groningen, The Netherlands.
  * Copyright (c) 2001-2004, The GROMACS development team.
- * Copyright (c) 2013,2014,2015,2016, by the GROMACS development team, led by
+ * Copyright (c) 2013,2014,2015,2016,2017, by the GROMACS development team, led by
  * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
  * and including many others, as listed in the AUTHORS file in the
  * top-level source directory and at http://www.gromacs.org.
@@ -44,7 +44,6 @@
 #include <algorithm>
 
 #include "gromacs/domdec/domdec.h"
-#include "gromacs/gmxlib/md_logging.h"
 #include "gromacs/gmxlib/network.h"
 #include "gromacs/gmxlib/nrnb.h"
 #include "gromacs/math/vec.h"
@@ -69,6 +68,7 @@
 #include "gromacs/utility/cstringutil.h"
 #include "gromacs/utility/fatalerror.h"
 #include "gromacs/utility/gmxassert.h"
+#include "gromacs/utility/logger.h"
 #include "gromacs/utility/smalloc.h"
 #include "gromacs/utility/snprintf.h"
 
@@ -146,93 +146,6 @@ int multisim_min(const gmx_multisim_t *ms, int nmin, int n)
     return nmin;
 }
 
-void copy_coupling_state(t_state *statea, t_state *stateb,
-                         gmx_ekindata_t *ekinda, gmx_ekindata_t *ekindb, t_grpopts* opts)
-{
-
-    /* MRS note -- might be able to get rid of some of the arguments.  Look over it when it's all debugged */
-
-    int i, j, nc;
-
-    /* Make sure we have enough space for x and v */
-    if (statea->nalloc > stateb->nalloc)
-    {
-        stateb->nalloc = statea->nalloc;
-        /* We need to allocate one element extra, since we might use
-         * (unaligned) 4-wide SIMD loads to access rvec entries.
-         */
-        srenew(stateb->x, stateb->nalloc + 1);
-        srenew(stateb->v, stateb->nalloc + 1);
-    }
-
-    stateb->natoms     = statea->natoms;
-    stateb->ngtc       = statea->ngtc;
-    stateb->nnhpres    = statea->nnhpres;
-    stateb->veta       = statea->veta;
-    if (ekinda)
-    {
-        copy_mat(ekinda->ekin, ekindb->ekin);
-        for (i = 0; i < stateb->ngtc; i++)
-        {
-            ekindb->tcstat[i].T  = ekinda->tcstat[i].T;
-            ekindb->tcstat[i].Th = ekinda->tcstat[i].Th;
-            copy_mat(ekinda->tcstat[i].ekinh, ekindb->tcstat[i].ekinh);
-            copy_mat(ekinda->tcstat[i].ekinf, ekindb->tcstat[i].ekinf);
-            ekindb->tcstat[i].ekinscalef_nhc =  ekinda->tcstat[i].ekinscalef_nhc;
-            ekindb->tcstat[i].ekinscaleh_nhc =  ekinda->tcstat[i].ekinscaleh_nhc;
-            ekindb->tcstat[i].vscale_nhc     =  ekinda->tcstat[i].vscale_nhc;
-        }
-    }
-    copy_rvecn(statea->x, stateb->x, 0, stateb->natoms);
-    copy_rvecn(statea->v, stateb->v, 0, stateb->natoms);
-    copy_mat(statea->box, stateb->box);
-    copy_mat(statea->box_rel, stateb->box_rel);
-    copy_mat(statea->boxv, stateb->boxv);
-
-    for (i = 0; i < stateb->ngtc; i++)
-    {
-        nc = i*opts->nhchainlength;
-        for (j = 0; j < opts->nhchainlength; j++)
-        {
-            stateb->nosehoover_xi[nc+j]  = statea->nosehoover_xi[nc+j];
-            stateb->nosehoover_vxi[nc+j] = statea->nosehoover_vxi[nc+j];
-        }
-    }
-    if (stateb->nhpres_xi != NULL)
-    {
-        for (i = 0; i < stateb->nnhpres; i++)
-        {
-            nc = i*opts->nhchainlength;
-            for (j = 0; j < opts->nhchainlength; j++)
-            {
-                stateb->nhpres_xi[nc+j]  = statea->nhpres_xi[nc+j];
-                stateb->nhpres_vxi[nc+j] = statea->nhpres_vxi[nc+j];
-            }
-        }
-    }
-}
-
-real compute_conserved_from_auxiliary(t_inputrec *ir, t_state *state, t_extmass *MassQ)
-{
-    real quantity = 0;
-    switch (ir->etc)
-    {
-        case etcNO:
-            break;
-        case etcBERENDSEN:
-            break;
-        case etcNOSEHOOVER:
-            quantity = NPT_energy(ir, state, MassQ);
-            break;
-        case etcVRESCALE:
-            quantity = vrescale_energy(&(ir->opts), state->therm_integral);
-            break;
-        default:
-            break;
-    }
-    return quantity;
-}
-
 /* TODO Specialize this routine into init-time and loop-time versions?
    e.g. bReadEkin is only true when restoring from checkpoint */
 void compute_globals(FILE *fplog, gmx_global_stat *gstat, t_commrec *cr, t_inputrec *ir,
@@ -240,7 +153,7 @@ void compute_globals(FILE *fplog, gmx_global_stat *gstat, t_commrec *cr, t_input
                      t_state *state, t_mdatoms *mdatoms,
                      t_nrnb *nrnb, t_vcm *vcm, gmx_wallcycle_t wcycle,
                      gmx_enerdata_t *enerd, tensor force_vir, tensor shake_vir, tensor total_vir,
-                     tensor pres, rvec mu_tot, gmx_constr_t constr,
+                     tensor pres, rvec mu_tot, struct gmx_constr *constr,
                      gmx::SimulationSignaller *signalCoordinator,
                      matrix box, int *totalNumberOfBondedInteractions,
                      gmx_bool *bSumEkinhOld, int flags)
@@ -291,7 +204,7 @@ void compute_globals(FILE *fplog, gmx_global_stat *gstat, t_commrec *cr, t_input
     if (bStopCM)
     {
         calc_vcm_grp(0, mdatoms->homenr, mdatoms,
-                     state->x, state->v, vcm);
+                     as_rvec_array(state->x.data()), as_rvec_array(state->v.data()), vcm);
     }
 
     if (bTemp || bStopCM || bPres || bEner || bConstrain)
@@ -311,7 +224,7 @@ void compute_globals(FILE *fplog, gmx_global_stat *gstat, t_commrec *cr, t_input
             {
                 wallcycle_start(wcycle, ewcMoveE);
                 global_stat(gstat, cr, enerd, force_vir, shake_vir, mu_tot,
-                            ir, ekind, constr, bStopCM ? vcm : NULL,
+                            ir, ekind, constr, bStopCM ? vcm : nullptr,
                             signalBuffer.size(), signalBuffer.data(),
                             totalNumberOfBondedInteractions,
                             *bSumEkinhOld, flags);
@@ -326,7 +239,7 @@ void compute_globals(FILE *fplog, gmx_global_stat *gstat, t_commrec *cr, t_input
     {
         correct_ekin(debug,
                      0, mdatoms->homenr,
-                     state->v, vcm->group_p[0],
+                     as_rvec_array(state->v.data()), vcm->group_p[0],
                      mdatoms->massT, mdatoms->tmass, ekind->ekin);
     }
 
@@ -334,8 +247,12 @@ void compute_globals(FILE *fplog, gmx_global_stat *gstat, t_commrec *cr, t_input
     if (bStopCM)
     {
         check_cm_grp(fplog, vcm, ir, 1);
-        do_stopcm_grp(0, mdatoms->homenr, mdatoms->cVCM,
-                      state->x, state->v, vcm);
+        /* Don't pass x with linear modes to avoid correction of the initial
+         * coordinates for the initial COM velocity.
+         */
+        do_stopcm_grp(mdatoms->homenr, mdatoms->cVCM,
+                      vcm->mode == ecmANGULAR ? as_rvec_array(state->x.data()) : nullptr,
+                      as_rvec_array(state->v.data()), *vcm);
         inc_nrnb(nrnb, eNR_STOPCM, mdatoms->homenr);
     }
 
@@ -400,107 +317,97 @@ void compute_globals(FILE *fplog, gmx_global_stat *gstat, t_commrec *cr, t_input
     }
 }
 
-void check_nst_param(FILE *fplog, t_commrec *cr,
-                     const char *desc_nst, int nst,
-                     const char *desc_p, int *p)
+/* check whether an 'nst'-style parameter p is a multiple of nst, and
+   set it to be one if not, with a warning. */
+static void check_nst_param(const gmx::MDLogger &mdlog,
+                            const char *desc_nst, int nst,
+                            const char *desc_p, int *p)
 {
     if (*p > 0 && *p % nst != 0)
     {
         /* Round up to the next multiple of nst */
         *p = ((*p)/nst + 1)*nst;
-        md_print_warn(cr, fplog,
-                      "NOTE: %s changes %s to %d\n", desc_nst, desc_p, *p);
+        GMX_LOG(mdlog.warning).asParagraph().appendTextFormatted(
+                "NOTE: %s changes %s to %d", desc_nst, desc_p, *p);
     }
 }
 
-void set_current_lambdas(gmx_int64_t step, t_lambda *fepvals, gmx_bool bRerunMD,
-                         t_trxframe *rerun_fr, t_state *state_global, t_state *state, double lam0[])
+void setCurrentLambdasRerun(gmx_int64_t step, const t_lambda *fepvals,
+                            const t_trxframe *rerun_fr, const double *lam0,
+                            t_state *globalState)
+{
+    GMX_RELEASE_ASSERT(globalState != nullptr, "setCurrentLambdasGlobalRerun should be called with a valid state object");
+
+    if (rerun_fr->bLambda)
+    {
+        if (fepvals->delta_lambda == 0)
+        {
+            globalState->lambda[efptFEP] = rerun_fr->lambda;
+        }
+        else
+        {
+            /* find out between which two value of lambda we should be */
+            real frac      = step*fepvals->delta_lambda;
+            int  fep_state = static_cast<int>(floor(frac*fepvals->n_lambda));
+            /* interpolate between this state and the next */
+            /* this assumes that the initial lambda corresponds to lambda==0, which is verified in grompp */
+            frac           = frac*fepvals->n_lambda - fep_state;
+            for (int i = 0; i < efptNR; i++)
+            {
+                globalState->lambda[i] = lam0[i] + (fepvals->all_lambda[i][fep_state]) +
+                    frac*(fepvals->all_lambda[i][fep_state+1] - fepvals->all_lambda[i][fep_state]);
+            }
+        }
+    }
+    else if (rerun_fr->bFepState)
+    {
+        globalState->fep_state = rerun_fr->fep_state;
+        for (int i = 0; i < efptNR; i++)
+        {
+            globalState->lambda[i] = fepvals->all_lambda[i][globalState->fep_state];
+        }
+    }
+}
+
+void setCurrentLambdasLocal(gmx_int64_t step, const t_lambda *fepvals,
+                            const double *lam0, t_state *state)
 /* find the current lambdas.  If rerunning, we either read in a state, or a lambda value,
    requiring different logic. */
 {
-    real frac;
-    int  i, fep_state = 0;
-    if (bRerunMD)
+    if (fepvals->delta_lambda != 0)
     {
-        if (rerun_fr->bLambda)
+        /* find out between which two value of lambda we should be */
+        real frac = step*fepvals->delta_lambda;
+        if (fepvals->n_lambda > 0)
         {
-            if (fepvals->delta_lambda == 0)
+            int fep_state = static_cast<int>(floor(frac*fepvals->n_lambda));
+            /* interpolate between this state and the next */
+            /* this assumes that the initial lambda corresponds to lambda==0, which is verified in grompp */
+            frac          = frac*fepvals->n_lambda - fep_state;
+            for (int i = 0; i < efptNR; i++)
             {
-                state_global->lambda[efptFEP] = rerun_fr->lambda;
-                for (i = 0; i < efptNR; i++)
-                {
-                    if (i != efptFEP)
-                    {
-                        state->lambda[i] = state_global->lambda[i];
-                    }
-                }
-            }
-            else
-            {
-                /* find out between which two value of lambda we should be */
-                frac      = (step*fepvals->delta_lambda);
-                fep_state = static_cast<int>(floor(frac*fepvals->n_lambda));
-                /* interpolate between this state and the next */
-                /* this assumes that the initial lambda corresponds to lambda==0, which is verified in grompp */
-                frac = (frac*fepvals->n_lambda)-fep_state;
-                for (i = 0; i < efptNR; i++)
-                {
-                    state_global->lambda[i] = lam0[i] + (fepvals->all_lambda[i][fep_state]) +
-                        frac*(fepvals->all_lambda[i][fep_state+1]-fepvals->all_lambda[i][fep_state]);
-                }
+                state->lambda[i] = lam0[i] + (fepvals->all_lambda[i][fep_state]) +
+                    frac*(fepvals->all_lambda[i][fep_state + 1] - fepvals->all_lambda[i][fep_state]);
             }
         }
-        else if (rerun_fr->bFepState)
+        else
         {
-            state_global->fep_state = rerun_fr->fep_state;
-            for (i = 0; i < efptNR; i++)
+            for (int i = 0; i < efptNR; i++)
             {
-                state_global->lambda[i] = fepvals->all_lambda[i][fep_state];
+                state->lambda[i] = lam0[i] + frac;
             }
         }
     }
     else
     {
-        if (fepvals->delta_lambda != 0)
+        /* if < 0, fep_state was never defined, and we should not set lambda from the state */
+        if (state->fep_state > -1)
         {
-            /* find out between which two value of lambda we should be */
-            frac = (step*fepvals->delta_lambda);
-            if (fepvals->n_lambda > 0)
+            for (int i = 0; i < efptNR; i++)
             {
-                fep_state = static_cast<int>(floor(frac*fepvals->n_lambda));
-                /* interpolate between this state and the next */
-                /* this assumes that the initial lambda corresponds to lambda==0, which is verified in grompp */
-                frac = (frac*fepvals->n_lambda)-fep_state;
-                for (i = 0; i < efptNR; i++)
-                {
-                    state_global->lambda[i] = lam0[i] + (fepvals->all_lambda[i][fep_state]) +
-                        frac*(fepvals->all_lambda[i][fep_state+1]-fepvals->all_lambda[i][fep_state]);
-                }
-            }
-            else
-            {
-                for (i = 0; i < efptNR; i++)
-                {
-                    state_global->lambda[i] = lam0[i] + frac;
-                }
+                state->lambda[i] = fepvals->all_lambda[i][state->fep_state];
             }
         }
-        else
-        {
-            /* if < 0, fep_state was never defined, and we should not set lambda from the state */
-            if (state_global->fep_state > -1)
-            {
-                state_global->fep_state = state->fep_state; /* state->fep_state is the one updated by bExpanded */
-                for (i = 0; i < efptNR; i++)
-                {
-                    state_global->lambda[i] = fepvals->all_lambda[i][state_global->fep_state];
-                }
-            }
-        }
-    }
-    for (i = 0; i < efptNR; i++)
-    {
-        state->lambda[i] = state_global->lambda[i];
     }
 }
 
@@ -537,8 +444,7 @@ static int lcd4(int i1, int i2, int i3, int i4)
     return nst;
 }
 
-int check_nstglobalcomm(FILE *fplog, t_commrec *cr,
-                        int nstglobalcomm, t_inputrec *ir)
+int check_nstglobalcomm(const gmx::MDLogger &mdlog, int nstglobalcomm, t_inputrec *ir)
 {
     if (!EI_DYNAMICS(ir->eI))
     {
@@ -586,51 +492,52 @@ int check_nstglobalcomm(FILE *fplog, t_commrec *cr,
             nstglobalcomm > ir->nstlist && nstglobalcomm % ir->nstlist != 0)
         {
             nstglobalcomm = (nstglobalcomm / ir->nstlist)*ir->nstlist;
-            md_print_warn(cr, fplog, "WARNING: nstglobalcomm is larger than nstlist, but not a multiple, setting it to %d\n", nstglobalcomm);
+            GMX_LOG(mdlog.warning).asParagraph().appendTextFormatted(
+                    "WARNING: nstglobalcomm is larger than nstlist, but not a multiple, setting it to %d",
+                    nstglobalcomm);
         }
         if (ir->nstcalcenergy > 0)
         {
-            check_nst_param(fplog, cr, "-gcom", nstglobalcomm,
+            check_nst_param(mdlog, "-gcom", nstglobalcomm,
                             "nstcalcenergy", &ir->nstcalcenergy);
         }
         if (ir->etc != etcNO && ir->nsttcouple > 0)
         {
-            check_nst_param(fplog, cr, "-gcom", nstglobalcomm,
+            check_nst_param(mdlog, "-gcom", nstglobalcomm,
                             "nsttcouple", &ir->nsttcouple);
         }
         if (ir->epc != epcNO && ir->nstpcouple > 0)
         {
-            check_nst_param(fplog, cr, "-gcom", nstglobalcomm,
+            check_nst_param(mdlog, "-gcom", nstglobalcomm,
                             "nstpcouple", &ir->nstpcouple);
         }
 
-        check_nst_param(fplog, cr, "-gcom", nstglobalcomm,
+        check_nst_param(mdlog, "-gcom", nstglobalcomm,
                         "nstenergy", &ir->nstenergy);
 
-        check_nst_param(fplog, cr, "-gcom", nstglobalcomm,
+        check_nst_param(mdlog, "-gcom", nstglobalcomm,
                         "nstlog", &ir->nstlog);
     }
 
     if (ir->comm_mode != ecmNO && ir->nstcomm < nstglobalcomm)
     {
-        md_print_warn(cr, fplog, "WARNING: Changing nstcomm from %d to %d\n",
-                      ir->nstcomm, nstglobalcomm);
+        GMX_LOG(mdlog.warning).asParagraph().appendTextFormatted(
+                "WARNING: Changing nstcomm from %d to %d",
+                ir->nstcomm, nstglobalcomm);
         ir->nstcomm = nstglobalcomm;
     }
 
-    if (fplog)
-    {
-        fprintf(fplog, "Intra-simulation communication will occur every %d steps.\n", nstglobalcomm);
-    }
+    GMX_LOG(mdlog.info).appendTextFormatted(
+            "Intra-simulation communication will occur every %d steps.\n", nstglobalcomm);
     return nstglobalcomm;
 }
 
 void rerun_parallel_comm(t_commrec *cr, t_trxframe *fr,
-                         gmx_bool *bNotLastFrame)
+                         gmx_bool *bLastStep)
 {
     rvec    *xp, *vp;
 
-    if (MASTER(cr) && !*bNotLastFrame)
+    if (MASTER(cr) && *bLastStep)
     {
         fr->natoms = -1;
     }
@@ -640,10 +547,11 @@ void rerun_parallel_comm(t_commrec *cr, t_trxframe *fr,
     fr->x = xp;
     fr->v = vp;
 
-    *bNotLastFrame = (fr->natoms >= 0);
+    *bLastStep = (fr->natoms < 0);
 
 }
 
+// TODO Most of this logic seems to belong in the respective modules
 void set_state_entries(t_state *state, const t_inputrec *ir)
 {
     /* The entries in the state in the tpx file might not correspond
@@ -656,33 +564,10 @@ void set_state_entries(t_state *state, const t_inputrec *ir)
         state->flags |= (1<<estFEPSTATE);
     }
     state->flags |= (1<<estX);
-    if (state->lambda == NULL)
-    {
-        snew(state->lambda, efptNR);
-    }
-    if (state->x == NULL)
-    {
-        /* We need to allocate one element extra, since we might use
-         * (unaligned) 4-wide SIMD loads to access rvec entries.
-         */
-        snew(state->x, state->nalloc + 1);
-    }
+    GMX_RELEASE_ASSERT(state->x.size() >= static_cast<unsigned int>(state->natoms), "We should start a run with an initialized state->x");
     if (EI_DYNAMICS(ir->eI))
     {
         state->flags |= (1<<estV);
-        if (state->v == NULL)
-        {
-            snew(state->v, state->nalloc + 1);
-        }
-    }
-    if (ir->eI == eiCG)
-    {
-        state->flags |= (1<<estCGP);
-        if (state->cg_p == NULL)
-        {
-            /* cg_p is not stored in the tpx file, so we need to allocate it */
-            snew(state->cg_p, state->nalloc + 1);
-        }
     }
 
     state->nnhpres = 0;
@@ -696,23 +581,21 @@ void set_state_entries(t_state *state, const t_inputrec *ir)
         if ((ir->epc == epcPARRINELLORAHMAN) || (ir->epc == epcMTTK))
         {
             state->flags |= (1<<estBOXV);
+            state->flags |= (1<<estPRES_PREV);
         }
-        if (ir->epc != epcNO)
+        if (inputrecNptTrotter(ir) || (inputrecNphTrotter(ir)))
         {
-            if (inputrecNptTrotter(ir) || (inputrecNphTrotter(ir)))
-            {
-                state->nnhpres = 1;
-                state->flags  |= (1<<estNHPRES_XI);
-                state->flags  |= (1<<estNHPRES_VXI);
-                state->flags  |= (1<<estSVIR_PREV);
-                state->flags  |= (1<<estFVIR_PREV);
-                state->flags  |= (1<<estVETA);
-                state->flags  |= (1<<estVOL0);
-            }
-            else
-            {
-                state->flags |= (1<<estPRES_PREV);
-            }
+            state->nnhpres = 1;
+            state->flags  |= (1<<estNHPRES_XI);
+            state->flags  |= (1<<estNHPRES_VXI);
+            state->flags  |= (1<<estSVIR_PREV);
+            state->flags  |= (1<<estFVIR_PREV);
+            state->flags  |= (1<<estVETA);
+            state->flags  |= (1<<estVOL0);
+        }
+        if (ir->epc == epcBERENDSEN)
+        {
+            state->flags  |= (1<<estBAROS_INT);
         }
     }
 
@@ -722,15 +605,17 @@ void set_state_entries(t_state *state, const t_inputrec *ir)
         state->flags |= (1<<estNH_VXI);
     }
 
-    if (ir->etc == etcVRESCALE)
+    if (ir->etc == etcVRESCALE || ir->etc == etcBERENDSEN)
     {
-        state->flags |= (1<<estTC_INT);
+        state->flags |= (1<<estTHERM_INT);
     }
 
     init_gtc_state(state, state->ngtc, state->nnhpres, ir->opts.nhchainlength); /* allocate the space for nose-hoover chains */
     init_ekinstate(&state->ekinstate, ir);
-    snew(state->enerhist, 1);
-    init_energyhistory(state->enerhist);
-    init_df_history(&state->dfhist, ir->fepvals->n_lambda);
-    state->swapstate.eSwapCoords = ir->eSwapCoords;
+
+    if (ir->bExpanded)
+    {
+        snew(state->dfhist, 1);
+        init_df_history(state->dfhist, ir->fepvals->n_lambda);
+    }
 }

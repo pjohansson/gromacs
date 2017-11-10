@@ -1,7 +1,7 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2009,2010,2011,2012,2013,2014,2015, by the GROMACS development team, led by
+ * Copyright (c) 2009,2010,2011,2012,2013,2014,2015,2017, by the GROMACS development team, led by
  * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
  * and including many others, as listed in the AUTHORS file in the
  * top-level source directory and at http://www.gromacs.org.
@@ -109,14 +109,14 @@ class AnalysisNeighborhoodPositions
          * to methods that accept positions.
          */
         AnalysisNeighborhoodPositions(const rvec &x)
-            : count_(1), index_(-1), x_(&x), exclusionIds_(NULL), indices_(NULL)
+            : count_(1), index_(-1), x_(&x), exclusionIds_(nullptr), indices_(nullptr)
         {
         }
         /*! \brief
          * Initializes positions from an array of position vectors.
          */
         AnalysisNeighborhoodPositions(const rvec x[], int count)
-            : count_(count), index_(-1), x_(x), exclusionIds_(NULL), indices_(NULL)
+            : count_(count), index_(-1), x_(x), exclusionIds_(nullptr), indices_(nullptr)
         {
         }
         /*! \brief
@@ -124,7 +124,7 @@ class AnalysisNeighborhoodPositions
          */
         AnalysisNeighborhoodPositions(const std::vector<RVec> &x)
             : count_(x.size()), index_(-1), x_(as_rvec_array(x.data())),
-              exclusionIds_(NULL), indices_(NULL)
+              exclusionIds_(nullptr), indices_(nullptr)
         {
         }
 
@@ -136,7 +136,7 @@ class AnalysisNeighborhoodPositions
          * AnalysisNeighborhood::setTopologyExclusions().
          */
         AnalysisNeighborhoodPositions &
-        exclusionIds(ConstArrayRef<int> ids)
+        exclusionIds(ArrayRef<const int> ids)
         {
             GMX_ASSERT(static_cast<int>(ids.size()) == count_,
                        "Exclusion id array should match the number of positions");
@@ -152,7 +152,7 @@ class AnalysisNeighborhoodPositions
          * indices to the \p indices array passed here.
          */
         AnalysisNeighborhoodPositions &
-        indexed(ConstArrayRef<int> indices)
+        indexed(ArrayRef<const int> indices)
         {
             count_   = indices.size();
             indices_ = indices.data();
@@ -415,8 +415,8 @@ class AnalysisNeighborhoodPair
  * variable (see sm_distance.cpp).
  *
  * \todo
- * Consider merging nearestPoint() and minimumDistance() by adding the distance
- * to AnalysisNeighborhoodPair.
+ * Consider removing minimumDistance(), as nearestPoint() already returns the
+ * distance.
  *
  * \inpublicapi
  * \ingroup module_selection
@@ -470,7 +470,7 @@ class AnalysisNeighborhoodSearch
         AnalysisNeighborhood::SearchMode mode() const;
 
         /*! \brief
-         * Check whether a point is within a neighborhood.
+         * Checks whether a point is within a neighborhood.
          *
          * \param[in] positions  Set of test positions to use.
          * \returns   true if any of the test positions is within the cutoff of
@@ -500,12 +500,33 @@ class AnalysisNeighborhoodSearch
         nearestPoint(const AnalysisNeighborhoodPositions &positions) const;
 
         /*! \brief
-         * Start a search to find reference positions within a cutoff.
+         * Starts a search to find all reference position pairs within a cutoff.
+         *
+         * \returns   Initialized search object to loop through all reference
+         *     position pairs within the configured cutoff.
+         * \throws    std::bad_alloc if out of memory.
+         *
+         * This works as if the reference positions were passed to
+         * startPairSearch(), except that it only returns each pair once,
+         * instead of returning both i-j and j-i pairs, as startPairSearch()
+         * does.  i-i pairs are not returned.  Note that the order of ref/test
+         * indices in the returned pairs is not predictable.  That is, one of
+         * i-j or j-i is always returned, but there is no control which one.
+         */
+        AnalysisNeighborhoodPairSearch
+        startSelfPairSearch() const;
+
+        /*! \brief
+         * Starts a search to find reference positions within a cutoff.
          *
          * \param[in] positions  Set of test positions to use.
          * \returns   Initialized search object to loop through all reference
          *     positions within the configured cutoff.
          * \throws    std::bad_alloc if out of memory.
+         *
+         * If you want to pass the same positions here as you used for the
+         * reference positions, consider using startSelfPairSearch().
+         * It can be up to 50% faster.
          */
         AnalysisNeighborhoodPairSearch
         startPairSearch(const AnalysisNeighborhoodPositions &positions) const;

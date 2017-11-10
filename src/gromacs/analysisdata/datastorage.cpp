@@ -1,7 +1,7 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2012,2013,2014,2015, by the GROMACS development team, led by
+ * Copyright (c) 2012,2013,2014,2015,2016,2017, by the GROMACS development team, led by
  * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
  * and including many others, as listed in the AUTHORS file in the
  * top-level source directory and at http://www.gromacs.org.
@@ -290,9 +290,6 @@ class AnalysisDataStorageImpl
 class AnalysisDataStorageFrameData
 {
     public:
-        //! Shorthand for a iterator into storage value containers.
-        typedef std::vector<AnalysisDataValue>::const_iterator ValueIterator;
-
         //! Indicates what operations have been performed on a frame.
         enum Status
         {
@@ -355,7 +352,7 @@ class AnalysisDataStorageFrameData
          * Adds a new point set to this frame.
          */
         void addPointSet(int dataSetIndex, int firstColumn,
-                         ValueIterator begin, ValueIterator end);
+                         ArrayRef<const AnalysisDataValue> v);
         /*! \brief
          * Finalizes the frame during AnalysisDataStorage::finishFrame().
          *
@@ -399,7 +396,7 @@ class AnalysisDataStorageFrameData
  */
 
 AnalysisDataStorageImpl::AnalysisDataStorageImpl()
-    : data_(NULL), modules_(NULL),
+    : data_(nullptr), modules_(nullptr),
       storageLimit_(0), pendingLimit_(1),
       firstFrameLocation_(0), firstUnnotifiedIndex_(0), nextIndex_(0)
 {
@@ -564,7 +561,7 @@ AnalysisDataStorageFrameData::AnalysisDataStorageFrameData(
         int                      index)
     : storageImpl_(*storageImpl), header_(index, 0.0, 0.0), status_(eMissing)
 {
-    GMX_RELEASE_ASSERT(storageImpl->data_ != NULL,
+    GMX_RELEASE_ASSERT(storageImpl->data_ != nullptr,
                        "Storage frame constructed before data started");
     // With non-multipoint data, the point set structure is static,
     // so initialize it only once here.
@@ -574,8 +571,7 @@ AnalysisDataStorageFrameData::AnalysisDataStorageFrameData(
         for (int i = 0; i < baseData().dataSetCount(); ++i)
         {
             int columnCount = baseData().columnCount(i);
-            pointSets_.push_back(
-                    AnalysisDataPointSetInfo(offset, columnCount, i, 0));
+            pointSets_.emplace_back(offset, columnCount, i, 0);
             offset += columnCount;
         }
     }
@@ -611,13 +607,12 @@ AnalysisDataStorageFrameData::startFrame(
 
 void
 AnalysisDataStorageFrameData::addPointSet(int dataSetIndex, int firstColumn,
-                                          ValueIterator begin, ValueIterator end)
+                                          ArrayRef<const AnalysisDataValue> v)
 {
-    const int                valueCount = end - begin;
+    const int                valueCount = v.size();
     AnalysisDataPointSetInfo pointSetInfo(0, valueCount,
                                           dataSetIndex, firstColumn);
-    AnalysisDataPointSetRef  pointSet(header(), pointSetInfo,
-                                      constArrayRefFromVector<AnalysisDataValue>(begin, end));
+    AnalysisDataPointSetRef  pointSet(header(), pointSetInfo, v);
     storageImpl().modules_->notifyParallelPointsAdd(pointSet);
     if (storageImpl().shouldNotifyImmediately())
     {
@@ -625,10 +620,9 @@ AnalysisDataStorageFrameData::addPointSet(int dataSetIndex, int firstColumn,
     }
     else if (storageImpl().needStorage())
     {
-        pointSets_.push_back(
-                AnalysisDataPointSetInfo(values_.size(), valueCount,
-                                         dataSetIndex, firstColumn));
-        std::copy(begin, end, std::back_inserter(values_));
+        pointSets_.emplace_back(values_.size(), valueCount,
+                                dataSetIndex, firstColumn);
+        std::copy(v.begin(), v.end(), std::back_inserter(values_));
     }
 }
 
@@ -665,8 +659,7 @@ AnalysisDataStorageFrameData::pointSet(int index) const
     GMX_ASSERT(index >= 0 && index < pointSetCount(),
                "Invalid point set index");
     return AnalysisDataPointSetRef(
-            header_, pointSets_[index],
-            constArrayRefFromVector<AnalysisDataValue>(values_.begin(), values_.end()));
+            header_, pointSets_[index], values_);
 }
 
 }   // namespace internal
@@ -677,7 +670,7 @@ AnalysisDataStorageFrameData::pointSet(int index) const
 
 AnalysisDataStorageFrame::AnalysisDataStorageFrame(
         const AbstractAnalysisData &data)
-    : data_(NULL), currentDataSet_(0), currentOffset_(0),
+    : data_(nullptr), currentDataSet_(0), currentOffset_(0),
       columnCount_(data.columnCount(0)), bPointSetInProgress_(false)
 {
     int totalColumnCount = 0;
@@ -712,7 +705,7 @@ AnalysisDataStorageFrame::clearValues()
 void
 AnalysisDataStorageFrame::selectDataSet(int index)
 {
-    GMX_RELEASE_ASSERT(data_ != NULL, "Invalid frame accessed");
+    GMX_RELEASE_ASSERT(data_ != nullptr, "Invalid frame accessed");
     const AbstractAnalysisData &baseData = data_->baseData();
     GMX_RELEASE_ASSERT(index >= 0 && index < baseData.dataSetCount(),
                        "Out of range data set index");
@@ -732,22 +725,20 @@ AnalysisDataStorageFrame::selectDataSet(int index)
 void
 AnalysisDataStorageFrame::finishPointSet()
 {
-    GMX_RELEASE_ASSERT(data_ != NULL, "Invalid frame accessed");
+    GMX_RELEASE_ASSERT(data_ != nullptr, "Invalid frame accessed");
     GMX_RELEASE_ASSERT(data_->baseData().isMultipoint(),
                        "Should not be called for non-multipoint data");
     if (bPointSetInProgress_)
     {
-        std::vector<AnalysisDataValue>::const_iterator begin
-            = values_.begin() + currentOffset_;
-        std::vector<AnalysisDataValue>::const_iterator end
-            = begin + columnCount_;
-        int firstColumn = 0;
-        while (begin != end && !begin->isSet())
+        size_t begin       = currentOffset_;
+        size_t end         = begin + columnCount_;
+        int    firstColumn = 0;
+        while (begin != end && !values_[begin].isSet())
         {
             ++begin;
             ++firstColumn;
         }
-        while (end != begin && !(end-1)->isSet())
+        while (end != begin && !values_[end-1].isSet())
         {
             --end;
         }
@@ -755,7 +746,9 @@ AnalysisDataStorageFrame::finishPointSet()
         {
             firstColumn = 0;
         }
-        data_->addPointSet(currentDataSet_, firstColumn, begin, end);
+        data_->addPointSet(currentDataSet_, firstColumn,
+                           makeConstArrayRef(values_).
+                               subArray(begin, end-begin));
     }
     clearValues();
 }
@@ -764,7 +757,7 @@ AnalysisDataStorageFrame::finishPointSet()
 void
 AnalysisDataStorageFrame::finishFrame()
 {
-    GMX_RELEASE_ASSERT(data_ != NULL, "Invalid frame accessed");
+    GMX_RELEASE_ASSERT(data_ != nullptr, "Invalid frame accessed");
     data_->storageImpl().finishFrame(data_->frameIndex());
 }
 

@@ -1,7 +1,7 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2015, by the GROMACS development team, led by
+ * Copyright (c) 2015,2016,2017, by the GROMACS development team, led by
  * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
  * and including many others, as listed in the AUTHORS file in the
  * top-level source directory and at http://www.gromacs.org.
@@ -66,8 +66,8 @@ class ReferenceDataEntry
         }
 
         ReferenceDataEntry(const char *type, const char *id)
-            : type_(type), id_(id != NULL ? id : ""), isTextBlock_(false),
-              correspondingOutputEntry_(NULL)
+            : type_(type), id_(id != nullptr ? id : ""), isTextBlock_(false),
+              hasBeenChecked_(false), correspondingOutputEntry_(nullptr)
         {
         }
 
@@ -84,7 +84,7 @@ class ReferenceDataEntry
 
         bool idMatches(const char *id) const
         {
-            return (id == NULL && id_.empty()) || (id != NULL && id_ == id);
+            return (id == nullptr && id_.empty()) || (id != nullptr && id_ == id);
         }
 
         ChildIterator findChild(const char *id, const ChildIterator &prev) const
@@ -97,7 +97,7 @@ class ReferenceDataEntry
             bool           wrappingSearch = true;
             if (child != children_.end())
             {
-                if (id == NULL && (*child)->id().empty())
+                if (id == nullptr && (*child)->id().empty())
                 {
                     wrappingSearch = false;
                     ++child;
@@ -132,6 +132,18 @@ class ReferenceDataEntry
             return prev != children_.end();
         }
 
+        bool hasBeenChecked() const { return hasBeenChecked_; }
+        void setChecked() { hasBeenChecked_ = true; }
+
+        void setCheckedIncludingChildren()
+        {
+            setChecked();
+            for (const auto &child : children_)
+            {
+                child->setCheckedIncludingChildren();
+            }
+        }
+
         EntryPointer cloneToOutputEntry()
         {
             EntryPointer entry(new ReferenceDataEntry(type_.c_str(), id_.c_str()));
@@ -162,7 +174,7 @@ class ReferenceDataEntry
         }
         void setCorrespondingOutputEntry(ReferenceDataEntry *entry)
         {
-            GMX_RELEASE_ASSERT(correspondingOutputEntry_ == NULL,
+            GMX_RELEASE_ASSERT(correspondingOutputEntry_ == nullptr,
                                "Output entry already exists");
             correspondingOutputEntry_ = entry;
         }
@@ -179,6 +191,7 @@ class ReferenceDataEntry
         std::string         value_;
         bool                isTextBlock_;
         ChildList           children_;
+        bool                hasBeenChecked_;
         ReferenceDataEntry *correspondingOutputEntry_;
 };
 

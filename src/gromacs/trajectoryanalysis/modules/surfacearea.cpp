@@ -3,7 +3,7 @@
  *
  * Copyright (c) 1991-2000, University of Groningen, The Netherlands.
  * Copyright (c) 2001-2007, The GROMACS development team.
- * Copyright (c) 2013,2014,2015, by the GROMACS development team, led by
+ * Copyright (c) 2013,2014,2015,2017, by the GROMACS development team, led by
  * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
  * and including many others, as listed in the AUTHORS file in the
  * top-level source directory and at http://www.gromacs.org.
@@ -38,10 +38,11 @@
 
 #include "surfacearea.h"
 
-#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+
+#include <cmath>
 
 #include <algorithm>
 #include <vector>
@@ -552,7 +553,7 @@ static std::vector<real> make_unsp(int densit, int cubus)
 }
 
 static void
-nsc_dclm_pbc(const rvec *coords, const ConstArrayRef<real> &radius, int nat,
+nsc_dclm_pbc(const rvec *coords, const ArrayRef<const real> &radius, int nat,
              const real *xus, int n_dot, int mode,
              real *value_of_area, real **at_area,
              real *value_of_vol,
@@ -574,7 +575,7 @@ nsc_dclm_pbc(const rvec *coords, const ConstArrayRef<real> &radius, int nat,
         return;
     }
     real        area = 0.0, vol = 0.0;
-    real       *dots = NULL, *atom_area = NULL;
+    real       *dots = nullptr, *atom_area = nullptr;
     int         lfnr = 0, maxdots = 0;
     if (mode & FLAG_VOLUME)
     {
@@ -734,7 +735,7 @@ class SurfaceAreaCalculator::Impl
         }
 
         std::vector<real>             unitSphereDots_;
-        ConstArrayRef<real>           radius_;
+        ArrayRef<const real>          radius_;
         int                           flags_;
         mutable AnalysisNeighborhood  nb_;
 };
@@ -753,7 +754,7 @@ void SurfaceAreaCalculator::setDotCount(int dotCount)
     impl_->unitSphereDots_ = make_unsp(dotCount, 4);
 }
 
-void SurfaceAreaCalculator::setRadii(const ConstArrayRef<real> &radius)
+void SurfaceAreaCalculator::setRadii(const ArrayRef<const real> &radius)
 {
     impl_->radius_ = radius;
     if (!radius.empty())
@@ -806,7 +807,7 @@ void SurfaceAreaCalculator::calculate(
 {
     flags |= impl_->flags_;
     *area  = 0;
-    if (volume == NULL)
+    if (volume == nullptr)
     {
         flags &= ~FLAG_VOLUME;
     }
@@ -814,23 +815,23 @@ void SurfaceAreaCalculator::calculate(
     {
         *volume = 0;
     }
-    if (at_area == NULL)
+    if (at_area == nullptr)
     {
         flags &= ~FLAG_ATOM_AREA;
     }
     else
     {
-        *at_area = NULL;
+        *at_area = nullptr;
     }
-    if (lidots == NULL)
+    if (lidots == nullptr)
     {
         flags &= ~FLAG_DOTS;
     }
     else
     {
-        *lidots = NULL;
+        *lidots = nullptr;
     }
-    if (n_dots == NULL)
+    if (n_dots == nullptr)
     {
         flags &= ~FLAG_DOTS;
     }

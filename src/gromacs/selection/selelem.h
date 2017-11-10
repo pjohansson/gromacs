@@ -1,7 +1,7 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2009,2010,2011,2012,2013,2014,2015, by the GROMACS development team, led by
+ * Copyright (c) 2009,2010,2011,2012,2013,2014,2015,2016,2017, by the GROMACS development team, led by
  * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
  * and including many others, as listed in the AUTHORS file in the
  * top-level source directory and at http://www.gromacs.org.
@@ -70,6 +70,7 @@ struct t_compiler_data;
 namespace gmx
 {
 class SelectionTreeElement;
+struct SelectionTopologyProperties;
 
 //! Smart pointer type for selection tree element pointers.
 typedef std::shared_ptr<SelectionTreeElement> SelectionTreeElementPointer;
@@ -340,7 +341,7 @@ class SelectionTreeElement
          * \param[in] name  Name to set (can be NULL).
          * \throws    std::bad_alloc if out of memory.
          */
-        void setName(const char *name) { name_ = (name != NULL ? name : ""); }
+        void setName(const char *name) { name_ = (name != nullptr ? name : ""); }
         //! \copydoc setName(const char *)
         void setName(const std::string &name) { name_ = name; }
         /*! \brief
@@ -356,6 +357,13 @@ class SelectionTreeElement
          */
         void fillNameIfMissing(const char *selectionText);
 
+        /*! \brief
+         * Returns which topology properties the selection element subtree requires
+         * for evaluation.
+         *
+         * \returns   List of topology properties required for evaluation.
+         */
+        SelectionTopologyProperties requiredTopologyProperties() const;
         /*! \brief
          * Checks that this element and its children do not contain unsupported
          * elements with unsorted atoms.
@@ -535,10 +543,6 @@ _gmx_selelem_print_tree(FILE *fp, const gmx::SelectionTreeElement &sel,
 void
 _gmx_selelem_print_compiler_info(FILE *fp, const gmx::SelectionTreeElement &sel,
                                  int level);
-
-/** Returns true if the selection element subtree requires topology information for evaluation. */
-bool
-_gmx_selelem_requires_top(const gmx::SelectionTreeElement &root);
 
 /* In sm_insolidangle.c */
 /** Returns true if the covered fraction of the selection can be calculated. */

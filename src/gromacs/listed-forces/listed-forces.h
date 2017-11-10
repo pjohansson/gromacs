@@ -1,7 +1,7 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2014,2015,2016, by the GROMACS development team, led by
+ * Copyright (c) 2014,2015,2016,2017, by the GROMACS development team, led by
  * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
  * and including many others, as listed in the AUTHORS file in the
  * top-level source directory and at http://www.gromacs.org.
@@ -71,7 +71,7 @@
 
 struct gmx_enerdata_t;
 struct gmx_grppairener_t;
-struct history_t;
+class history_t;
 struct t_commrec;
 struct t_fcdata;
 struct t_forcerec;
@@ -80,11 +80,12 @@ struct t_inputrec;
 struct t_lambda;
 struct t_mdatoms;
 struct t_nrnb;
-struct t_state;
+class t_state;
 
-#ifdef __cplusplus
-extern "C" {
-#endif
+namespace gmx
+{
+class ForceWithVirial;
+}
 
 /*! \brief Return whether this is an interaction that actually
  * calculates a potential and works on multiple atoms (not e.g. a
@@ -103,10 +104,12 @@ void calc_listed(const t_commrec *cr,
                  struct gmx_wallcycle *wcycle,
                  const t_idef *idef,
                  const rvec x[], history_t *hist,
-                 rvec f[], t_forcerec *fr,
+                 rvec f[],
+                 gmx::ForceWithVirial *forceWithVirial,
+                 const t_forcerec *fr,
                  const struct t_pbc *pbc, const struct t_pbc *pbc_full,
                  const struct t_graph *g,
-                 gmx_enerdata_t *enerd, t_nrnb *nrnb, real *lambda,
+                 gmx_enerdata_t *enerd, t_nrnb *nrnb, const real *lambda,
                  const t_mdatoms *md,
                  struct t_fcdata *fcd, int *ddgatindex,
                  int force_flags);
@@ -117,10 +120,10 @@ void calc_listed(const t_commrec *cr,
  * The shift forces in fr are not affected. */
 void calc_listed_lambda(const t_idef *idef,
                         const rvec x[],
-                        t_forcerec *fr,
+                        const t_forcerec *fr,
                         const struct t_pbc *pbc, const struct t_graph *g,
                         gmx_grppairener_t *grpp, real *epot, t_nrnb *nrnb,
-                        real *lambda,
+                        const real *lambda,
                         const t_mdatoms *md,
                         struct t_fcdata *fcd, int *global_atom_index);
 
@@ -134,20 +137,17 @@ do_force_listed(struct gmx_wallcycle           *wcycle,
                 const t_idef                   *idef,
                 const rvec                      x[],
                 history_t                      *hist,
-                rvec                            f[],
-                t_forcerec                     *fr,
+                rvec                           *forceForUseWithShiftForces,
+                gmx::ForceWithVirial           *forceWithVirial,
+                const t_forcerec               *fr,
                 const struct t_pbc             *pbc,
                 const struct t_graph           *graph,
                 gmx_enerdata_t                 *enerd,
                 t_nrnb                         *nrnb,
-                real                           *lambda,
+                const real                     *lambda,
                 const t_mdatoms                *md,
                 struct t_fcdata                *fcd,
                 int                            *global_atom_index,
                 int                             flags);
-
-#ifdef __cplusplus
-}
-#endif
 
 #endif

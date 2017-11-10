@@ -1,7 +1,7 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2012,2013,2014,2015,2016, by the GROMACS development team, led by
+ * Copyright (c) 2012,2013,2014,2015,2016,2017, by the GROMACS development team, led by
  * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
  * and including many others, as listed in the AUTHORS file in the
  * top-level source directory and at http://www.gromacs.org.
@@ -148,12 +148,12 @@ gmx_neutron_atomic_structurefactors_t *gmx_neutronstructurefactors_init(const ch
 
     fclose(fp);
 
-    return (gmx_neutron_atomic_structurefactors_t *) gnsf;
+    return gnsf;
 }
 
 gmx_sans_t *gmx_sans_init (const t_topology *top, gmx_neutron_atomic_structurefactors_t *gnsf)
 {
-    gmx_sans_t    *gsans = NULL;
+    gmx_sans_t    *gsans = nullptr;
     int            i, j;
     /* Try to assing scattering length from nsfactor.dat */
     snew(gsans, 1);
@@ -186,7 +186,7 @@ gmx_sans_t *gmx_sans_init (const t_topology *top, gmx_neutron_atomic_structurefa
         }
     }
 
-    return (gmx_sans_t *) gsans;
+    return gsans;
 }
 
 gmx_radial_distribution_histogram_t *calc_radial_distribution_histogram (
@@ -201,7 +201,7 @@ gmx_radial_distribution_histogram_t *calc_radial_distribution_histogram (
         real         mcover,
         unsigned int seed)
 {
-    gmx_radial_distribution_histogram_t    *pr = NULL;
+    gmx_radial_distribution_histogram_t    *pr = nullptr;
     rvec                                    dist;
     double                                  rmax;
     int                                     i, j;
@@ -209,7 +209,7 @@ gmx_radial_distribution_histogram_t *calc_radial_distribution_histogram (
     double                                **tgr;
     int                                     tid;
     int                                     nthreads;
-    gmx::DefaultRandomEngine               *trng = NULL;
+    gmx::DefaultRandomEngine               *trng = nullptr;
 #endif
     gmx_int64_t                             mc  = 0, mc_max;
     gmx::DefaultRandomEngine                rng(seed);
@@ -364,12 +364,12 @@ gmx_radial_distribution_histogram_t *calc_radial_distribution_histogram (
         pr->r[i] = (pr->binwidth*i+pr->binwidth*0.5);
     }
 
-    return (gmx_radial_distribution_histogram_t *) pr;
+    return pr;
 }
 
 gmx_static_structurefactor_t *convert_histogram_to_intensity_curve (gmx_radial_distribution_histogram_t *pr, double start_q, double end_q, double q_step)
 {
-    gmx_static_structurefactor_t    *sq = NULL;
+    gmx_static_structurefactor_t    *sq = nullptr;
     int         i, j;
     /* init data */
     snew(sq, 1);
@@ -405,5 +405,5 @@ gmx_static_structurefactor_t *convert_histogram_to_intensity_curve (gmx_radial_d
         }
     }
 
-    return (gmx_static_structurefactor_t *) sq;
+    return sq;
 }

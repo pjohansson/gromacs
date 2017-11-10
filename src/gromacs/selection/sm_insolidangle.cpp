@@ -1,7 +1,7 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2009,2010,2011,2012,2013,2014,2015,2016, by the GROMACS development team, led by
+ * Copyright (c) 2009,2010,2011,2012,2013,2014,2015,2016,2017, by the GROMACS development team, led by
  * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
  * and including many others, as listed in the AUTHORS file in the
  * top-level source directory and at http://www.gromacs.org.
@@ -257,29 +257,27 @@ init_data_insolidangle(int npar, gmx_ana_selparam_t *param);
  * and allocates memory for the bins used during the evaluation.
  */
 static void
-init_insolidangle(t_topology * top, int npar, gmx_ana_selparam_t * param, void *data);
+init_insolidangle(const gmx_mtop_t *top, int npar, gmx_ana_selparam_t * param, void *data);
 /** Frees the data allocated for the \p insolidangle selection method. */
 static void
 free_data_insolidangle(void *data);
 /*! \brief
  * Initializes the evaluation of the \p insolidangle selection method for a frame.
  *
- * \param[in]  top  Not used.
- * \param[in]  fr   Not used.
- * \param[in]  pbc  PBC structure.
- * \param      data Should point to a \ref t_methoddata_insolidangle.
+ * \param[in]  context Evaluation context.
+ * \param      data    Should point to a \ref t_methoddata_insolidangle.
  *
  * Creates a lookup structure that enables fast queries of whether a point
  * is within the solid angle or not.
  */
 static void
-init_frame_insolidangle(t_topology * top, t_trxframe * fr, t_pbc *pbc, void *data);
+init_frame_insolidangle(const gmx::SelMethodEvalContext &context, void *data);
 /** Internal helper function for evaluate_insolidangle(). */
 static bool
-accept_insolidangle(rvec x, t_pbc *pbc, void *data);
+accept_insolidangle(rvec x, const t_pbc *pbc, void *data);
 /** Evaluates the \p insolidangle selection method. */
 static void
-evaluate_insolidangle(t_topology * /* top */, t_trxframe * /* fr */, t_pbc *pbc,
+evaluate_insolidangle(const gmx::SelMethodEvalContext &context,
                       gmx_ana_pos_t *pos, gmx_ana_selvalue_t *out, void *data);
 
 /** Calculates the distance between unit vectors. */
@@ -329,9 +327,9 @@ is_surface_covered(t_methoddata_insolidangle *surf, rvec x);
 
 /** Parameters for the \p insolidangle selection method. */
 static gmx_ana_selparam_t smparams_insolidangle[] = {
-    {"center", {POS_VALUE,   1, {NULL}}, NULL, SPAR_DYNAMIC},
-    {"span",   {POS_VALUE,  -1, {NULL}}, NULL, SPAR_DYNAMIC | SPAR_VARNUM},
-    {"cutoff", {REAL_VALUE,  1, {NULL}}, NULL, SPAR_OPTIONAL},
+    {"center", {POS_VALUE,   1, {nullptr}}, nullptr, SPAR_DYNAMIC},
+    {"span",   {POS_VALUE,  -1, {nullptr}}, nullptr, SPAR_DYNAMIC | SPAR_VARNUM},
+    {"cutoff", {REAL_VALUE,  1, {nullptr}}, nullptr, SPAR_OPTIONAL},
 };
 
 /** Help text for the \p insolidangle selection method. */
@@ -358,12 +356,12 @@ gmx_ana_selmethod_t sm_insolidangle = {
     "insolidangle", GROUP_VALUE, SMETH_DYNAMIC,
     asize(smparams_insolidangle), smparams_insolidangle,
     &init_data_insolidangle,
-    NULL,
+    nullptr,
     &init_insolidangle,
-    NULL,
+    nullptr,
     &free_data_insolidangle,
     &init_frame_insolidangle,
-    NULL,
+    nullptr,
     &evaluate_insolidangle,
     {"insolidangle center POS span POS_EXPR [cutoff REAL]",
      "Selecting atoms in a solid angle",
@@ -389,13 +387,13 @@ init_data_insolidangle(int /* npar */, gmx_ana_selparam_t *param)
     // cppcheck-suppress uninitdata
     data->tbinsize      = 0.0;
     // cppcheck-suppress uninitdata
-    data->tbin          = NULL;
+    data->tbin          = nullptr;
     // cppcheck-suppress uninitdata
     data->maxbins       = 0;
     // cppcheck-suppress uninitdata
     data->nbins         = 0;
     // cppcheck-suppress uninitdata
-    data->bin           = NULL;
+    data->bin           = nullptr;
 
     param[0].val.u.p = &data->center;
     param[1].val.u.p = &data->span;
@@ -404,7 +402,7 @@ init_data_insolidangle(int /* npar */, gmx_ana_selparam_t *param)
 }
 
 static void
-init_insolidangle(t_topology * /* top */, int /* npar */, gmx_ana_selparam_t * /* param */, void *data)
+init_insolidangle(const gmx_mtop_t * /* top */, int /* npar */, gmx_ana_selparam_t * /* param */, void *data)
 {
     t_methoddata_insolidangle *surf = (t_methoddata_insolidangle *)data;
     int                        i, c;
@@ -462,7 +460,7 @@ free_data_insolidangle(void *data)
 }
 
 static void
-init_frame_insolidangle(t_topology * /* top */, t_trxframe * /* fr */, t_pbc *pbc, void *data)
+init_frame_insolidangle(const gmx::SelMethodEvalContext &context, void *data)
 {
     t_methoddata_insolidangle *d = (t_methoddata_insolidangle *)data;
     rvec                       dx;
@@ -472,9 +470,9 @@ init_frame_insolidangle(t_topology * /* top */, t_trxframe * /* fr */, t_pbc *pb
     clear_surface_points(d);
     for (i = 0; i < d->span.count(); ++i)
     {
-        if (pbc)
+        if (context.pbc)
         {
-            pbc_dx(pbc, d->span.x[i], d->center.x[0], dx);
+            pbc_dx(context.pbc, d->span.x[i], d->center.x[0], dx);
         }
         else
         {
@@ -494,7 +492,7 @@ init_frame_insolidangle(t_topology * /* top */, t_trxframe * /* fr */, t_pbc *pb
  * \returns   true if \p x is within the solid angle, false otherwise.
  */
 static bool
-accept_insolidangle(rvec x, t_pbc *pbc, void *data)
+accept_insolidangle(rvec x, const t_pbc *pbc, void *data)
 {
     t_methoddata_insolidangle *d = (t_methoddata_insolidangle *)data;
     rvec                       dx;
@@ -520,13 +518,13 @@ accept_insolidangle(rvec x, t_pbc *pbc, void *data)
  * \c t_methoddata_insolidangle::center, and stores the result in \p out->u.g.
  */
 static void
-evaluate_insolidangle(t_topology * /* top */, t_trxframe * /* fr */, t_pbc *pbc,
+evaluate_insolidangle(const gmx::SelMethodEvalContext &context,
                       gmx_ana_pos_t *pos, gmx_ana_selvalue_t *out, void *data)
 {
     out->u.g->isize = 0;
     for (int b = 0; b < pos->count(); ++b)
     {
-        if (accept_insolidangle(pos->x[b], pbc, data))
+        if (accept_insolidangle(pos->x[b], context.pbc, data))
         {
             gmx_ana_pos_add_to_group(out->u.g, pos, b);
         }
@@ -748,7 +746,7 @@ free_surface_points(t_methoddata_insolidangle *surf)
             sfree(surf->bin[i].x);
         }
         surf->bin[i].n_alloc = 0;
-        surf->bin[i].x       = NULL;
+        surf->bin[i].x       = nullptr;
     }
 }
 

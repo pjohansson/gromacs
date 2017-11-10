@@ -1,7 +1,7 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2009,2010,2011,2012,2013,2014,2015, by the GROMACS development team, led by
+ * Copyright (c) 2009,2010,2011,2012,2013,2014,2015,2016,2017, by the GROMACS development team, led by
  * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
  * and including many others, as listed in the AUTHORS file in the
  * top-level source directory and at http://www.gromacs.org.
@@ -87,7 +87,7 @@ init_data_permute(int npar, gmx_ana_selparam_t *param);
  * \returns   0 if the input permutation is valid, -1 on error.
  */
 static void
-init_permute(t_topology *top, int npar, gmx_ana_selparam_t *param, void *data);
+init_permute(const gmx_mtop_t *top, int npar, gmx_ana_selparam_t *param, void *data);
 /*! \brief
  * Initializes output for the \p permute selection modifier.
  *
@@ -96,32 +96,29 @@ init_permute(t_topology *top, int npar, gmx_ana_selparam_t *param, void *data);
  * \param[in,out] data  Should point to \c t_methoddata_permute.
  */
 static void
-init_output_permute(t_topology *top, gmx_ana_selvalue_t *out, void *data);
+init_output_permute(const gmx_mtop_t *top, gmx_ana_selvalue_t *out, void *data);
 /** Frees the memory allocated for the \p permute selection modifier. */
 static void
 free_data_permute(void *data);
-static void
 /*! \brief
  * Evaluates the \p permute selection modifier.
  *
- * \param[in]  top   Not used.
- * \param[in]  fr    Not used.
- * \param[in]  pbc   Not used.
+ * \param[in]  context Not used.
  * \param[in]  p     Positions to permute (should point to \p data->p).
  * \param[out] out   Output data structure (\p out->u.p is used).
  * \param[in]  data  Should point to a \p t_methoddata_permute.
- * \returns    0 if \p p could be permuted, -1 on error.
  *
- * Returns -1 if the size of \p p is not divisible by the number of
+ * Throws if the size of \p p is not divisible by the number of
  * elements in the permutation.
  */
-evaluate_permute(t_topology *top, t_trxframe *fr, t_pbc *pbc,
+static void
+evaluate_permute(const gmx::SelMethodEvalContext &context,
                  gmx_ana_pos_t *p, gmx_ana_selvalue_t *out, void *data);
 
 /** Parameters for the \p permute selection modifier. */
 static gmx_ana_selparam_t smparams_permute[] = {
-    {NULL,       {POS_VALUE, -1, {NULL}}, NULL, SPAR_DYNAMIC | SPAR_VARNUM},
-    {NULL,       {INT_VALUE, -1, {NULL}}, NULL, SPAR_VARNUM},
+    {nullptr,       {POS_VALUE, -1, {nullptr}}, nullptr, SPAR_DYNAMIC | SPAR_VARNUM},
+    {nullptr,       {INT_VALUE, -1, {nullptr}}, nullptr, SPAR_VARNUM},
 };
 
 /** Help text for the \p permute selection modifier. */
@@ -148,12 +145,12 @@ gmx_ana_selmethod_t sm_permute = {
     "permute", POS_VALUE, SMETH_MODIFIER,
     asize(smparams_permute), smparams_permute,
     &init_data_permute,
-    NULL,
+    nullptr,
     &init_permute,
     &init_output_permute,
     &free_data_permute,
-    NULL,
-    NULL,
+    nullptr,
+    nullptr,
     &evaluate_permute,
     {"POSEXPR permute P1 ... PN",
      "Permuting selections", asize(help_permute), help_permute},
@@ -164,14 +161,14 @@ init_data_permute(int /* npar */, gmx_ana_selparam_t *param)
 {
     t_methoddata_permute *data = new t_methoddata_permute();
     data->n          = 0;
-    data->perm       = NULL;
-    data->rperm      = NULL;
+    data->perm       = nullptr;
+    data->rperm      = nullptr;
     param[0].val.u.p = &data->p;
     return data;
 }
 
 static void
-init_permute(t_topology * /* top */, int /* npar */, gmx_ana_selparam_t *param, void *data)
+init_permute(const gmx_mtop_t * /* top */, int /* npar */, gmx_ana_selparam_t *param, void *data)
 {
     t_methoddata_permute *d = (t_methoddata_permute *)data;
     int                   i;
@@ -204,14 +201,14 @@ init_permute(t_topology * /* top */, int /* npar */, gmx_ana_selparam_t *param, 
 }
 
 static void
-init_output_permute(t_topology * /* top */, gmx_ana_selvalue_t *out, void *data)
+init_output_permute(const gmx_mtop_t * /* top */, gmx_ana_selvalue_t *out, void *data)
 {
     t_methoddata_permute *d = (t_methoddata_permute *)data;
     int                   i, j, b;
 
     out->u.p->m.type = d->p.m.type;
     gmx_ana_pos_reserve_for_append(out->u.p, d->p.count(), d->p.m.b.nra,
-                                   d->p.v != NULL, d->p.f != NULL);
+                                   d->p.v != nullptr, d->p.f != nullptr);
     gmx_ana_pos_empty_init(out->u.p);
     for (i = 0; i < d->p.count(); i += d->n)
     {
@@ -238,7 +235,7 @@ free_data_permute(void *data)
 }
 
 static void
-evaluate_permute(t_topology * /* top */, t_trxframe * /* fr */, t_pbc * /* pbc */,
+evaluate_permute(const gmx::SelMethodEvalContext & /*context*/,
                  gmx_ana_pos_t * /*p*/, gmx_ana_selvalue_t *out, void *data)
 {
     t_methoddata_permute *d = (t_methoddata_permute *)data;

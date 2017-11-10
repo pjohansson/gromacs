@@ -3,7 +3,7 @@
  *
  * Copyright (c) 1991-2000, University of Groningen, The Netherlands.
  * Copyright (c) 2001-2004, The GROMACS development team.
- * Copyright (c) 2013,2014,2015,2016, by the GROMACS development team, led by
+ * Copyright (c) 2013,2014,2015,2016,2017, by the GROMACS development team, led by
  * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
  * and including many others, as listed in the AUTHORS file in the
  * top-level source directory and at http://www.gromacs.org.
@@ -37,8 +37,9 @@
 #include "gmxpre.h"
 
 #include <assert.h>
-#include <math.h>
 #include <stdio.h>
+
+#include <cmath>
 
 #include <algorithm>
 
@@ -94,44 +95,43 @@ typedef struct gmx_settledata
 } t_gmx_settledata;
 
 
-static void init_proj_matrix(settleparam_t *p,
-                             real invmO, real invmH, real dOH, real dHH)
+static void init_proj_matrix(real invmO, real invmH, real dOH, real dHH,
+                             matrix inverseCouplingMatrix)
 {
-    real   imOn, imHn;
-    matrix mat;
-
-    p->imO = invmO;
-    p->imH = invmH;
-    /* We normalize the inverse masses with imO for the matrix inversion.
+    /* We normalize the inverse masses with invmO for the matrix inversion.
      * so we can keep using masses of almost zero for frozen particles,
      * without running out of the float range in invertMatrix.
      */
-    imOn = 1;
-    imHn = p->imH/p->imO;
+    double invmORelative = 1.0;
+    double invmHRelative = invmH/static_cast<double>(invmO);
+    double distanceRatio = dHH/static_cast<double>(dOH);
 
     /* Construct the constraint coupling matrix */
-    mat[0][0] = imOn + imHn;
-    mat[0][1] = imOn*(1 - 0.5*dHH*dHH/(dOH*dOH));
-    mat[0][2] = imHn*0.5*dHH/dOH;
+    matrix mat;
+    mat[0][0] = invmORelative + invmHRelative;
+    mat[0][1] = invmORelative*(1.0 - 0.5*gmx::square(distanceRatio));
+    mat[0][2] = invmHRelative*0.5*distanceRatio;
     mat[1][1] = mat[0][0];
     mat[1][2] = mat[0][2];
-    mat[2][2] = imHn + imHn;
+    mat[2][2] = invmHRelative + invmHRelative;
     mat[1][0] = mat[0][1];
     mat[2][0] = mat[0][2];
     mat[2][1] = mat[1][2];
 
-    gmx::invertMatrix(mat, p->invmat);
+    invertMatrix(mat, inverseCouplingMatrix);
 
-    msmul(p->invmat, 1/p->imO, p->invmat);
-
-    p->invdOH = 1/dOH;
-    p->invdHH = 1/dHH;
+    msmul(inverseCouplingMatrix, 1/invmO, inverseCouplingMatrix);
 }
 
 static void settleparam_init(settleparam_t *p,
                              real mO, real mH, real invmO, real invmH,
                              real dOH, real dHH)
 {
+    /* We calculate parameters in double precision to minimize errors.
+     * The velocity correction applied during SETTLE coordinate constraining
+     * introduces a systematic error of approximately 1 bit per atom,
+     * depending on what the compiler does with the code.
+     */
     double wohh;
 
     p->mO     = mO;
@@ -140,13 +140,21 @@ static void settleparam_init(settleparam_t *p,
     p->wh     = mH/wohh;
     p->dOH    = dOH;
     p->dHH    = dHH;
-    p->rc     = dHH/2.0;
-    p->ra     = 2.0*mH*sqrt(dOH*dOH - p->rc*p->rc)/wohh;
-    p->rb     = sqrt(dOH*dOH - p->rc*p->rc) - p->ra;
+    double rc = dHH/2.0;
+    double ra = 2.0*mH*std::sqrt(dOH*dOH - rc*rc)/wohh;
+    p->rb     = std::sqrt(dOH*dOH - rc*rc) - ra;
+    p->rc     = rc;
+    p->ra     = ra;
     p->irc2   = 1.0/dHH;
 
-    /* For projection: connection matrix inversion */
-    init_proj_matrix(p, invmO, invmH, dOH, dHH);
+    /* For projection: inverse masses and coupling matrix inversion */
+    p->imO    = invmO;
+    p->imH    = invmH;
+
+    p->invdOH = 1.0/dOH;
+    p->invdHH = 1.0/dHH;
+
+    init_proj_matrix(invmO, invmH, dOH, dHH, p->invmat);
 
     if (debug)
     {
@@ -201,16 +209,25 @@ gmx_settledata_t settle_init(const gmx_mtop_t *mtop)
     real dHH = mtop->ffparams.iparams[settle_type].settle.dhh;
     settleparam_init(&settled->mass1, 1.0, 1.0, 1.0, 1.0, dOH, dHH);
 
-    settled->ow1    = NULL;
-    settled->hw2    = NULL;
-    settled->hw3    = NULL;
-    settled->virfac = NULL;
+    settled->ow1    = nullptr;
+    settled->hw2    = nullptr;
+    settled->hw3    = nullptr;
+    settled->virfac = nullptr;
     settled->nalloc = 0;
 
     /* Without SIMD configured, this bool is not used */
-    settled->bUseSimd = (getenv("GMX_DISABLE_SIMD_KERNELS") == NULL);
+    settled->bUseSimd = (getenv("GMX_DISABLE_SIMD_KERNELS") == nullptr);
 
     return settled;
+}
+
+void settle_free(gmx_settledata_t settled)
+{
+    sfree_aligned(settled->ow1);
+    sfree_aligned(settled->hw2);
+    sfree_aligned(settled->hw3);
+    sfree_aligned(settled->virfac);
+    sfree(settled);
 }
 
 void settle_set_constraints(gmx_settledata_t  settled,
@@ -332,7 +349,7 @@ void settle_proj(gmx_settledata_t settled, int econq,
         hw2 = iatoms[i*nral1 + 2];
         hw3 = iatoms[i*nral1 + 3];
 
-        if (pbc == NULL)
+        if (pbc == nullptr)
         {
             rvec_sub(x[ow1], x[hw2], roh2);
             rvec_sub(x[ow1], x[hw3], roh3);
@@ -701,7 +718,7 @@ static void settleTemplate(const gmx_settledata_t settled,
             if (bCalcVirial)
             {
                 /* Filter out the non-local settles */
-                T filter = load(settled->virfac + i);
+                T filter = load<T>(settled->virfac + i);
                 T mOf    = filter*mO;
                 T mHf    = filter*mH;
 
@@ -761,7 +778,7 @@ static void settleTemplateWrapper(gmx_settledata_t settled,
     int settleStart    = ((numSettlePacks* thread      + nthread - 1)/nthread)*packSize;
     int settleEnd      = ((numSettlePacks*(thread + 1) + nthread - 1)/nthread)*packSize;
 
-    if (v != NULL)
+    if (v != nullptr)
     {
         if (!bCalcVirial)
         {
@@ -773,7 +790,7 @@ static void settleTemplateWrapper(gmx_settledata_t settled,
                 pbc,
                 x, xprime,
                 invdt, v,
-                NULL,
+                nullptr,
                 bErrorHasOccurred);
         }
         else
@@ -802,7 +819,7 @@ static void settleTemplateWrapper(gmx_settledata_t settled,
                 pbc,
                 x, xprime,
                 invdt, v,
-                NULL,
+                nullptr,
                 bErrorHasOccurred);
         }
         else
@@ -853,13 +870,13 @@ void csettle(gmx_settledata_t settled,
         t_pbc        pbcNo;
         const t_pbc *pbcNonNull;
 
-        if (pbc != NULL)
+        if (pbc != nullptr)
         {
             pbcNonNull = pbc;
         }
         else
         {
-            set_pbc(&pbcNo, epbcNONE, NULL);
+            set_pbc(&pbcNo, epbcNONE, nullptr);
             pbcNonNull = &pbcNo;
         }
 

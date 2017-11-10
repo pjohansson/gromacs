@@ -1,7 +1,7 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2014,2015, by the GROMACS development team, led by
+ * Copyright (c) 2014,2015,2017, by the GROMACS development team, led by
  * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
  * and including many others, as listed in the AUTHORS file in the
  * top-level source directory and at http://www.gromacs.org.
@@ -33,13 +33,15 @@
  * the research papers on the package. Check out http://www.gromacs.org.
  */
 /*! \internal \file
- *  \brief Stub functions for non-GPU builds
+ *  \brief Function definitions for non-GPU builds
  *
  *  \author Mark Abraham <mark.j.abraham@gmail.com>
  */
 #include "gmxpre.h"
 
 #include "gpu_utils.h"
+
+#include "gromacs/hardware/gpu_hw_info.h"
 
 /*! \brief Set allocation functions used by the GPU host
  *
@@ -49,6 +51,19 @@ void gpu_set_host_malloc_and_free(bool,
                                   gmx_host_alloc_t **nb_alloc,
                                   gmx_host_free_t  **nb_free)
 {
-    *nb_alloc = NULL;
-    *nb_free  = NULL;
+    *nb_alloc = nullptr;
+    *nb_free  = nullptr;
+}
+
+//! This function is documented in the header file
+std::vector<int> getCompatibleGpus(const gmx_gpu_info_t & /*gpu_info*/)
+{
+    // There can't be any compatible GPUs
+    return std::vector<int>();
+}
+
+const char *getGpuCompatibilityDescription(const gmx_gpu_info_t & /*gpu_info*/,
+                                           int                    /*index*/)
+{
+    return gpu_detect_res_str[egpuNonexistent];
 }

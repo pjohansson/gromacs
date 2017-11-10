@@ -3,7 +3,7 @@
  *
  * Copyright (c) 1991-2000, University of Groningen, The Netherlands.
  * Copyright (c) 2001-2004, The GROMACS development team.
- * Copyright (c) 2013,2014,2015,2016, by the GROMACS development team, led by
+ * Copyright (c) 2013,2014,2015,2016,2017, by the GROMACS development team, led by
  * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
  * and including many others, as listed in the AUTHORS file in the
  * top-level source directory and at http://www.gromacs.org.
@@ -75,7 +75,7 @@ static int ce = 0, cb = 0;
 
 /* this routine integrates the array data and returns the resulting array */
 /* routine uses simple trapezoid rule                                     */
-void p_integrate(double *result, double data[], int ndata, double slWidth)
+static void p_integrate(double *result, double data[], int ndata, double slWidth)
 {
     int    i, slice;
     double sum;
@@ -100,13 +100,13 @@ void p_integrate(double *result, double data[], int ndata, double slWidth)
     return;
 }
 
-void calc_potential(const char *fn, int **index, int gnx[],
-                    double ***slPotential, double ***slCharge,
-                    double ***slField, int *nslices,
-                    const t_topology *top, int ePBC,
-                    int axis, int nr_grps, double *slWidth,
-                    double fudge_z, gmx_bool bSpherical, gmx_bool bCorrect,
-                    const gmx_output_env_t *oenv)
+static void calc_potential(const char *fn, int **index, int gnx[],
+                           double ***slPotential, double ***slCharge,
+                           double ***slField, int *nslices,
+                           const t_topology *top, int ePBC,
+                           int axis, int nr_grps, double *slWidth,
+                           double fudge_z, gmx_bool bSpherical, gmx_bool bCorrect,
+                           const gmx_output_env_t *oenv)
 {
     rvec        *x0;     /* coordinates without pbc */
     matrix       box;    /* box (3x3) */
@@ -122,7 +122,7 @@ void calc_potential(const char *fn, int **index, int gnx[],
     real         t;
     double       z;
     rvec         xcm;
-    gmx_rmpbc_t  gpbc = NULL;
+    gmx_rmpbc_t  gpbc = nullptr;
 
     switch (axis)
     {
@@ -228,7 +228,7 @@ void calc_potential(const char *fn, int **index, int gnx[],
     gmx_rmpbc_done(gpbc);
 
     /*********** done with status file **********/
-    close_trj(status);
+    close_trx(status);
 
     /* slCharge now contains the total charge per slice, summed over all
        frames. Now divide by nr_frames and integrate twice
@@ -360,10 +360,10 @@ void calc_potential(const char *fn, int **index, int gnx[],
     sfree(x0); /* free memory used by coordinate array */
 }
 
-void plot_potential(double *potential[], double *charge[], double *field[],
-                    const char *afile, const char *bfile, const char *cfile,
-                    int nslices, int nr_grps, const char *grpname[], double slWidth,
-                    const gmx_output_env_t *oenv)
+static void plot_potential(double *potential[], double *charge[], double *field[],
+                           const char *afile, const char *bfile, const char *cfile,
+                           int nslices, int nr_grps, const char *grpname[], double slWidth,
+                           const gmx_output_env_t *oenv)
 {
     FILE       *pot,     /* xvgr file with potential */
     *cha,                /* xvgr file with charges   */
@@ -457,9 +457,9 @@ int gmx_potential(int argc, char *argv[])
     int         ePBC;
     int       **index;                         /* indices for all groups     */
     t_filenm    fnm[] = {                      /* files for g_order       */
-        { efTRX, "-f", NULL,  ffREAD },        /* trajectory file             */
-        { efNDX, NULL, NULL,  ffREAD },        /* index file          */
-        { efTPR, NULL, NULL,  ffREAD },        /* topology file               */
+        { efTRX, "-f", nullptr,  ffREAD },     /* trajectory file             */
+        { efNDX, nullptr, nullptr,  ffREAD },  /* index file          */
+        { efTPR, nullptr, nullptr,  ffREAD },  /* topology file               */
         { efXVG, "-o", "potential", ffWRITE }, /* xvgr output file    */
         { efXVG, "-oc", "charge", ffWRITE },   /* xvgr output file    */
         { efXVG, "-of", "field", ffWRITE },    /* xvgr output file    */
@@ -495,9 +495,9 @@ int gmx_potential(int argc, char *argv[])
                    opt2fn("-oc", NFILE, fnm), opt2fn("-of", NFILE, fnm),
                    nslices, ngrps, (const char**)grpname, slWidth, oenv);
 
-    do_view(oenv, opt2fn("-o", NFILE, fnm), NULL);  /* view xvgr file */
-    do_view(oenv, opt2fn("-oc", NFILE, fnm), NULL); /* view xvgr file */
-    do_view(oenv, opt2fn("-of", NFILE, fnm), NULL); /* view xvgr file */
+    do_view(oenv, opt2fn("-o", NFILE, fnm), nullptr);  /* view xvgr file */
+    do_view(oenv, opt2fn("-oc", NFILE, fnm), nullptr); /* view xvgr file */
+    do_view(oenv, opt2fn("-of", NFILE, fnm), nullptr); /* view xvgr file */
 
     return 0;
 }

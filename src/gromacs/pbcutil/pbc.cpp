@@ -3,7 +3,7 @@
  *
  * Copyright (c) 1991-2000, University of Groningen, The Netherlands.
  * Copyright (c) 2001-2004, The GROMACS development team.
- * Copyright (c) 2013,2014,2015,2016, by the GROMACS development team, led by
+ * Copyright (c) 2013,2014,2015,2016,2017, by the GROMACS development team, led by
  * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
  * and including many others, as listed in the AUTHORS file in the
  * top-level source directory and at http://www.gromacs.org.
@@ -54,7 +54,6 @@
 #include "gromacs/math/utilities.h"
 #include "gromacs/math/vec.h"
 #include "gromacs/math/vecdump.h"
-#include "gromacs/mdtypes/inputrec.h"
 #include "gromacs/pbcutil/ishift.h"
 #include "gromacs/pbcutil/mshift.h"
 #include "gromacs/utility/exceptions.h"
@@ -64,7 +63,7 @@
 
 const char *epbc_names[epbcNR+1] =
 {
-    "xyz", "no", "xy", "screw", NULL
+    "xyz", "no", "xy", "screw", nullptr
 };
 
 /* Skip 0 so we have more chance of detecting if we forgot to call set_pbc. */
@@ -95,18 +94,6 @@ int ePBC2npbcdim(int ePBC)
     }
 
     return npbcdim;
-}
-
-int inputrec2nboundeddim(const t_inputrec *ir)
-{
-    if (ir->nwall == 2 && ir->ePBC == epbcXY)
-    {
-        return 3;
-    }
-    else
-    {
-        return ePBC2npbcdim(ir->ePBC);
-    }
 }
 
 void dump_pbc(FILE *fp, t_pbc *pbc)
@@ -140,7 +127,7 @@ const char *check_box(int ePBC, const matrix box)
 
     if (ePBC == epbcNONE)
     {
-        return NULL;
+        return nullptr;
     }
 
     if ((box[XX][YY] != 0) || (box[XX][ZZ] != 0) || (box[YY][ZZ] != 0))
@@ -160,7 +147,7 @@ const char *check_box(int ePBC, const matrix box)
     }
     else
     {
-        ptr = NULL;
+        ptr = nullptr;
     }
 
     return ptr;
@@ -327,29 +314,6 @@ gmx_bool correct_box(FILE *fplog, int step, tensor box, t_graph *graph)
     return bCorrected;
 }
 
-int ndof_com(t_inputrec *ir)
-{
-    int n = 0;
-
-    switch (ir->ePBC)
-    {
-        case epbcXYZ:
-        case epbcNONE:
-            n = 3;
-            break;
-        case epbcXY:
-            n = (ir->nwall == 0 ? 3 : 2);
-            break;
-        case epbcSCREW:
-            n = 1;
-            break;
-        default:
-            gmx_incons("Unknown pbc in calc_nrdf");
-    }
-
-    return n;
-}
-
 //! Do the real arithmetic for filling the pbc struct
 static void low_set_pbc(t_pbc *pbc, int ePBC,
                         const ivec dd_pbc, const matrix box)
@@ -390,7 +354,7 @@ static void low_set_pbc(t_pbc *pbc, int ePBC,
     }
     else
     {
-        if (ePBC == epbcSCREW && NULL != dd_pbc)
+        if (ePBC == epbcSCREW && nullptr != dd_pbc)
         {
             /* This combinated should never appear here */
             gmx_incons("low_set_pbc called with screw pbc and dd_nc != NULL");
@@ -612,7 +576,7 @@ void set_pbc(t_pbc *pbc, int ePBC, const matrix box)
         ePBC = guess_ePBC(box);
     }
 
-    low_set_pbc(pbc, ePBC, NULL, box);
+    low_set_pbc(pbc, ePBC, nullptr, box);
 }
 
 t_pbc *set_pbc_dd(t_pbc *pbc, int ePBC,
@@ -623,12 +587,12 @@ t_pbc *set_pbc_dd(t_pbc *pbc, int ePBC,
     {
         pbc->ePBC = ePBC;
 
-        return NULL;
+        return nullptr;
     }
 
     if (nullptr == domdecCells)
     {
-        low_set_pbc(pbc, ePBC, NULL, box);
+        low_set_pbc(pbc, ePBC, nullptr, box);
     }
     else
     {
@@ -661,7 +625,7 @@ t_pbc *set_pbc_dd(t_pbc *pbc, int ePBC,
         }
     }
 
-    return (pbc->ePBC != epbcNONE ? pbc : NULL);
+    return (pbc->ePBC != epbcNONE ? pbc : nullptr);
 }
 
 void pbc_dx(const t_pbc *pbc, const rvec x1, const rvec x2, rvec dx)
@@ -1232,92 +1196,6 @@ void pbc_dx_d(const t_pbc *pbc, const dvec x1, const dvec x2, dvec dx)
             gmx_fatal(FARGS, "Internal error in pbc_dx, set_pbc has not been called");
             break;
     }
-}
-
-//! Compute the box image corresponding to input vectors
-gmx_bool image_rect(ivec xi, ivec xj, ivec box_size, real rlong2, int *shift, real *r2)
-{
-    int     m, t;
-    int     dx, b, b_2;
-    real    dxr, rij2;
-
-    rij2 = 0.0;
-    t    = 0;
-    for (m = 0; (m < DIM); m++)
-    {
-        dx  = xi[m]-xj[m];
-        t  *= DIM;
-        b   = box_size[m];
-        b_2 = b/2;
-        if (dx < -b_2)
-        {
-            t  += 2;
-            dx += b;
-        }
-        else if (dx > b_2)
-        {
-            dx -= b;
-        }
-        else
-        {
-            t += 1;
-        }
-        dxr   = dx;
-        rij2 += dxr*dxr;
-        if (rij2 >= rlong2)
-        {
-            return FALSE;
-        }
-    }
-
-    *shift = t;
-    *r2    = rij2;
-    return TRUE;
-}
-
-gmx_bool image_cylindric(ivec xi, ivec xj, ivec box_size, real rlong2,
-                         int *shift, real *r2)
-{
-    int     m, t;
-    int     dx, b, b_2;
-    real    dxr, rij2;
-
-    rij2 = 0.0;
-    t    = 0;
-    for (m = 0; (m < DIM); m++)
-    {
-        dx  = xi[m]-xj[m];
-        t  *= DIM;
-        b   = box_size[m];
-        b_2 = b/2;
-        if (dx < -b_2)
-        {
-            t  += 2;
-            dx += b;
-        }
-        else if (dx > b_2)
-        {
-            dx -= b;
-        }
-        else
-        {
-            t += 1;
-        }
-
-        dxr   = dx;
-        rij2 += dxr*dxr;
-        if (m < ZZ)
-        {
-            if (rij2 >= rlong2)
-            {
-                return FALSE;
-            }
-        }
-    }
-
-    *shift = t;
-    *r2    = rij2;
-    return TRUE;
 }
 
 void calc_shifts(const matrix box, rvec shift_vec[])

@@ -1,7 +1,7 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2013,2014,2015,2016, by the GROMACS development team, led by
+ * Copyright (c) 2013,2014,2015,2016,2017, by the GROMACS development team, led by
  * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
  * and including many others, as listed in the AUTHORS file in the
  * top-level source directory and at http://www.gromacs.org.
@@ -246,9 +246,9 @@ FreeVolume::initAnalysis(const TrajectoryAnalysisSettings &settings,
     nmol_ = top.topology()->mols.nr;
 
     // Loop over atoms in the selection using an iterator
-    const int          maxnovdw = 10;
-    ConstArrayRef<int> atomind  = sel_.atomIndices();
-    for (ConstArrayRef<int>::iterator ai = atomind.begin(); (ai < atomind.end()); ++ai)
+    const int           maxnovdw = 10;
+    ArrayRef<const int> atomind  = sel_.atomIndices();
+    for (ArrayRef<const int>::iterator ai = atomind.begin(); (ai < atomind.end()); ++ai)
     {
         // Dereference the iterator to obtain an atom number
         int  i = *ai;
@@ -317,7 +317,7 @@ FreeVolume::analyzeFrame(int frnr, const t_trxframe &fr, t_pbc *pbc,
     const Selection                     &sel  = pdata->parallelSelection(sel_);
     gmx::UniformRealDistribution<real>   dist;
 
-    GMX_RELEASE_ASSERT(NULL != pbc, "You have no periodic boundary conditions");
+    GMX_RELEASE_ASSERT(nullptr != pbc, "You have no periodic boundary conditions");
 
     // Analysis framework magic
     dh.startFrame(frnr, fr.time);

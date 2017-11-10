@@ -1,7 +1,7 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2012,2013,2014,2015,2016, by the GROMACS development team, led by
+ * Copyright (c) 2012,2013,2014,2015,2016,2017, by the GROMACS development team, led by
  * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
  * and including many others, as listed in the AUTHORS file in the
  * top-level source directory and at http://www.gromacs.org.
@@ -58,10 +58,10 @@
 #include "gromacs/utility/gmxassert.h"
 #include "gromacs/utility/path.h"
 #include "gromacs/utility/programcontext.h"
-#include "gromacs/utility/scoped_cptr.h"
 #include "gromacs/utility/smalloc.h"
 #include "gromacs/utility/stringutil.h"
 #include "gromacs/utility/textreader.h"
+#include "gromacs/utility/unique_cptr.h"
 
 #include "ocl_caching.h"
 
@@ -120,7 +120,7 @@ writeOclBuildLog(FILE              *fplog,
     }
 
     char             *buildLog = nullptr;
-    scoped_cptr<char> buildLogGuard;
+    unique_cptr<char> buildLogGuard;
     if (buildLogSize != 0)
     {
         /* Allocate memory to fit the build log,
@@ -174,7 +174,8 @@ selectCompilerOptions(ocl_vendor_id_t deviceVendorId)
         compilerOptions += " -cl-opt-disable";
     }
 
-    if (getenv("GMX_OCL_FASTMATH") )
+    /* Fastmath imprves performance on all supported arch */
+    if (getenv("GMX_OCL_DISABLE_FASTMATH") == NULL)
     {
         compilerOptions += " -cl-fast-relaxed-math";
     }
@@ -365,7 +366,7 @@ static std::string makeKernelIncludePathOption(const std::string &unescapedKerne
 /*! \brief Builds a string with build options for the OpenCL kernels
  *
  * \throws std::bad_alloc  if out of memory. */
-std::string
+static std::string
 makePreprocessorOptions(const std::string   &kernelRootPath,
                         size_t               warpSize,
                         ocl_vendor_id_t      deviceVendorId,

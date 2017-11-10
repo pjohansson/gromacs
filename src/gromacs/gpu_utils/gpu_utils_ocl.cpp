@@ -1,7 +1,7 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2012,2013,2014,2015,2016, by the GROMACS development team, led by
+ * Copyright (c) 2012,2013,2014,2015,2016,2017, by the GROMACS development team, led by
  * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
  * and including many others, as listed in the AUTHORS file in the
  * top-level source directory and at http://www.gromacs.org.
@@ -74,16 +74,6 @@
 }
 
 
-/*! \brief Helper function that checks whether a given GPU status indicates compatible GPU.
- *
- * \param[in] stat  GPU status.
- * \returns         true if the provided status is egpuCompatible, otherwise false.
- */
-static bool is_compatible_gpu(int stat)
-{
-    return (stat == egpuCompatible);
-}
-
 /*! \brief Return true if executing on compatible OS for AMD OpenCL.
  *
  * This is assumed to be true for OS X version of at least 10.10.4 and
@@ -124,6 +114,11 @@ runningOnCompatibleOSForAmd()
  */
 static int is_gmx_supported_gpu_id(struct gmx_device_info_t *ocl_gpu_device)
 {
+    if ((getenv("GMX_OCL_DISABLE_COMPATIBILITY_CHECK")) != NULL)
+    {
+        return egpuCompatible;
+    }
+
     /* Only AMD and NVIDIA GPUs are supported for now */
     switch (ocl_gpu_device->vendor_e)
     {
@@ -348,84 +343,42 @@ void free_gpu_info(const gmx_gpu_info_t gmx_unused *gpu_info)
 }
 
 //! This function is documented in the header file
-void pick_compatible_gpus(const gmx_gpu_info_t *gpu_info,
-                          gmx_gpu_opt_t        *gpu_opt)
+std::vector<int> getCompatibleGpus(const gmx_gpu_info_t &gpu_info)
 {
-    int  i, ncompat;
-    int *compat;
-
-    assert(gpu_info);
-    /* gpu_dev/n_dev have to be either NULL/0 or not (NULL/0) */
-    assert((gpu_info->n_dev != 0 ? 0 : 1) ^ (gpu_info->gpu_dev == NULL ? 0 : 1));
-
-    snew(compat, gpu_info->n_dev);
-    ncompat = 0;
-    for (i = 0; i < gpu_info->n_dev; i++)
+    // Possible minor over-allocation here, but not important for anything
+    std::vector<int> compatibleGpus;
+    compatibleGpus.reserve(gpu_info.n_dev);
+    for (int i = 0; i < gpu_info.n_dev; i++)
     {
-        if (is_compatible_gpu(gpu_info->gpu_dev[i].stat))
+        assert(gpu_info.gpu_dev);
+        if (gpu_info.gpu_dev[i].stat == egpuCompatible)
         {
-            ncompat++;
-            compat[ncompat - 1] = i;
+            compatibleGpus.push_back(i);
         }
     }
-
-    gpu_opt->n_dev_compatible = ncompat;
-    snew(gpu_opt->dev_compatible, ncompat);
-    memcpy(gpu_opt->dev_compatible, compat, ncompat*sizeof(*compat));
-    sfree(compat);
+    return compatibleGpus;
 }
 
 //! This function is documented in the header file
-gmx_bool check_selected_gpus(int                  *checkres,
-                             const gmx_gpu_info_t *gpu_info,
-                             gmx_gpu_opt_t        *gpu_opt)
+const char *getGpuCompatibilityDescription(const gmx_gpu_info_t &gpu_info,
+                                           int                   index)
 {
-    int  i, id;
-    bool bAllOk;
-
-    assert(checkres);
-    assert(gpu_info);
-    assert(gpu_opt->n_dev_use >= 0);
-
-    if (gpu_opt->n_dev_use == 0)
-    {
-        return TRUE;
-    }
-
-    assert(gpu_opt->dev_use);
-
-    /* we will assume that all GPUs requested are valid IDs,
-       otherwise we'll bail anyways */
-
-    bAllOk = true;
-    for (i = 0; i < gpu_opt->n_dev_use; i++)
-    {
-        id = gpu_opt->dev_use[i];
-
-        /* devices are stored in increasing order of IDs in gpu_dev */
-        gpu_opt->dev_use[i] = id;
-
-        checkres[i] = (id >= gpu_info->n_dev) ?
-            egpuNonexistent : gpu_info->gpu_dev[id].stat;
-
-        bAllOk = bAllOk && is_compatible_gpu(checkres[i]);
-    }
-
-    return bAllOk;
+    return (index >= gpu_info.n_dev ?
+            gpu_detect_res_str[egpuNonexistent] :
+            gpu_detect_res_str[gpu_info.gpu_dev[index].stat]);
 }
 
 //! This function is documented in the header file
-void get_gpu_device_info_string(char gmx_unused *s, const gmx_gpu_info_t gmx_unused *gpu_info, int gmx_unused index)
+void get_gpu_device_info_string(char *s, const gmx_gpu_info_t &gpu_info, int index)
 {
     assert(s);
-    assert(gpu_info);
 
-    if (index < 0 && index >= gpu_info->n_dev)
+    if (index < 0 && index >= gpu_info.n_dev)
     {
         return;
     }
 
-    gmx_device_info_t  *dinfo = &gpu_info->gpu_dev[index];
+    gmx_device_info_t  *dinfo = &gpu_info.gpu_dev[index];
 
     bool                bGpuExists =
         dinfo->stat == egpuCompatible ||
@@ -447,32 +400,18 @@ void get_gpu_device_info_string(char gmx_unused *s, const gmx_gpu_info_t gmx_unu
 }
 
 //! This function is documented in the header file
-gmx_bool init_gpu(FILE gmx_unused                 *fplog,
-                  int                              mygpu,
-                  char                            *result_str,
-                  const gmx_gpu_info_t gmx_unused *gpu_info,
-                  const gmx_gpu_opt_t             *gpu_opt
-                  )
+void init_gpu(const gmx::MDLogger               & /*mdlog*/,
+              int                               /* rank */,
+              gmx_device_info_t                *deviceInfo)
 {
-    assert(result_str);
-
-    result_str[0] = 0;
-
-    if (mygpu < 0 || mygpu >= gpu_opt->n_dev_use)
-    {
-        char        sbuf[STRLEN];
-        sprintf(sbuf, "Trying to initialize an inexistent GPU: "
-                "there are %d %s-selected GPU(s), but #%d was requested.",
-                gpu_opt->n_dev_use, gpu_opt->bUserSet ? "user" : "auto", mygpu);
-        gmx_incons(sbuf);
-    }
+    assert(deviceInfo);
 
     // If the device is NVIDIA, for safety reasons we disable the JIT
     // caching as this is known to be broken at least until driver 364.19;
     // the cache does not always get regenerated when the source code changes,
     // e.g. if the path to the kernel sources remains the same
 
-    if (gpu_info->gpu_dev[mygpu].vendor_e == OCL_VENDOR_NVIDIA)
+    if (deviceInfo->vendor_e == OCL_VENDOR_NVIDIA)
     {
         // Ignore return values, failing to set the variable does not mean
         // that something will go wrong later.
@@ -483,81 +422,23 @@ gmx_bool init_gpu(FILE gmx_unused                 *fplog,
         setenv("CUDA_CACHE_DISABLE", "1", 0);
 #endif
     }
-
-    return TRUE;
 }
 
 //! This function is documented in the header file
-int get_gpu_device_id(const gmx_gpu_info_t  *,
-                      const gmx_gpu_opt_t  *gpu_opt,
-                      int                   idx)
+gmx_device_info_t *getDeviceInfo(const gmx_gpu_info_t &gpu_info,
+                                 int                   deviceId)
 {
-    assert(gpu_opt);
-    assert(idx >= 0 && idx < gpu_opt->n_dev_use);
-
-    return gpu_opt->dev_use[idx];
-}
-
-//! This function is documented in the header file
-char* get_ocl_gpu_device_name(const gmx_gpu_info_t *gpu_info,
-                              const gmx_gpu_opt_t  *gpu_opt,
-                              int                   idx)
-{
-    assert(gpu_info);
-    assert(gpu_opt);
-    assert(idx >= 0 && idx < gpu_opt->n_dev_use);
-
-    return gpu_info->gpu_dev[gpu_opt->dev_use[idx]].device_name;
+    if (deviceId < 0 || deviceId >= gpu_info.n_dev)
+    {
+        gmx_incons("Invalid GPU deviceId requested");
+    }
+    return &gpu_info.gpu_dev[deviceId];
 }
 
 //! This function is documented in the header file
 size_t sizeof_gpu_dev_info(void)
 {
     return sizeof(gmx_device_info_t);
-}
-
-/*! \brief Prints the name of a kernel function pointer.
- *
- * \param[in]    kernel   OpenCL kernel
- * \returns               CL_SUCCESS if the operation was successful, an OpenCL error otherwise.
- */
-cl_int dbg_ocl_kernel_name(const cl_kernel kernel)
-{
-    cl_int cl_error;
-    char   kernel_name[256];
-    cl_error = clGetKernelInfo(kernel, CL_KERNEL_FUNCTION_NAME,
-                               sizeof(kernel_name), &kernel_name, NULL);
-    if (cl_error)
-    {
-        printf("No kernel found!\n");
-    }
-    else
-    {
-        printf("%s\n", kernel_name);
-    }
-    return cl_error;
-}
-
-/*! \brief Prints the name of a kernel function pointer.
- *
- * \param[in]    kernel   OpenCL kernel
- * \returns               CL_SUCCESS if the operation was successful, an OpenCL error otherwise.
- */
-cl_int dbg_ocl_kernel_name_address(void* kernel)
-{
-    cl_int cl_error;
-    char   kernel_name[256];
-    cl_error = clGetKernelInfo((cl_kernel)kernel, CL_KERNEL_FUNCTION_NAME,
-                               sizeof(kernel_name), &kernel_name, NULL);
-    if (cl_error)
-    {
-        printf("No kernel found!\n");
-    }
-    else
-    {
-        printf("%s\n", kernel_name);
-    }
-    return cl_error;
 }
 
 void gpu_set_host_malloc_and_free(bool               bUseGpuKernels,

@@ -1,7 +1,7 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2014,2015,2016, by the GROMACS development team, led by
+ * Copyright (c) 2014,2015,2016,2017, by the GROMACS development team, led by
  * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
  * and including many others, as listed in the AUTHORS file in the
  * top-level source directory and at http://www.gromacs.org.
@@ -144,7 +144,7 @@ gatherLoadTranspose(const float *        base,
                     SimdFloat *          v2,
                     SimdFloat *          v3)
 {
-    gatherLoadBySimdIntTranspose<align>(base, simdLoadFI(offset), v0, v1, v2, v3);
+    gatherLoadBySimdIntTranspose<align>(base, simdLoad(offset, SimdFInt32Tag()), v0, v1, v2, v3);
 }
 
 template <int align>
@@ -154,7 +154,7 @@ gatherLoadTranspose(const float *        base,
                     SimdFloat *          v0,
                     SimdFloat *          v1)
 {
-    gatherLoadBySimdIntTranspose<align>(base, simdLoadFI(offset), v0, v1);
+    gatherLoadBySimdIntTranspose<align>(base, simdLoad(offset, SimdFInt32Tag()), v0, v1);
 }
 
 static const int c_simdBestPairAlignmentFloat = 2;
@@ -171,7 +171,7 @@ gatherLoadUTranspose(const float *        base,
 
     assert(std::size_t(offset) % 64 == 0);
 
-    simdoffset = simdLoadFI(offset);
+    simdoffset = simdLoad(offset, SimdFInt32Tag());
 
     // All instructions might be latency ~4 on MIC, so we use shifts where we
     // only need a single instruction (since the shift parameter is an immediate),
@@ -205,9 +205,9 @@ transposeScatterStoreU(float *              base,
 {
     SimdFInt32 simdoffset;
 
-    assert(sdt::size_t(offset) % 64 == 0);
+    assert(std::size_t(offset) % 64 == 0);
 
-    simdoffset = simdLoadFI(offset);
+    simdoffset = simdLoad(offset, SimdFInt32Tag());
 
     // All instructions might be latency ~4 on MIC, so we use shifts where we
     // only need a single instruction (since the shift parameter is an immediate),
@@ -347,7 +347,7 @@ loadDuplicateHsimd(const float * m)
 }
 
 static inline SimdFloat gmx_simdcall
-load1DualHsimd(const float * m)
+loadU1DualHsimd(const float * m)
 {
     return _mm512_mask_extload_ps(_mm512_extload_ps(m, _MM_UPCONV_PS_NONE, _MM_BROADCAST_1X16, _MM_HINT_NONE), _mm512_int2mask(0xFF00),
                                   m+1, _MM_UPCONV_PS_NONE, _MM_BROADCAST_1X16, _MM_HINT_NONE);

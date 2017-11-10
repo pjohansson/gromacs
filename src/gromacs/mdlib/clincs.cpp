@@ -3,7 +3,7 @@
  *
  * Copyright (c) 1991-2000, University of Groningen, The Netherlands.
  * Copyright (c) 2001-2004, The GROMACS development team.
- * Copyright (c) 2013,2014,2015,2016, by the GROMACS development team, led by
+ * Copyright (c) 2013,2014,2015,2016,2017, by the GROMACS development team, led by
  * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
  * and including many others, as listed in the AUTHORS file in the
  * top-level source directory and at http://www.gromacs.org.
@@ -293,7 +293,7 @@ static void lincs_update_atoms_noind(int ncons, const int *bla,
     int  b, i, j;
     real mvb, im1, im2, tmp0, tmp1, tmp2;
 
-    if (invmass != NULL)
+    if (invmass != nullptr)
     {
         for (b = 0; b < ncons; b++)
         {
@@ -342,7 +342,7 @@ static void lincs_update_atoms_ind(int ncons, const int *ind, const int *bla,
     int  bi, b, i, j;
     real mvb, im1, im2, tmp0, tmp1, tmp2;
 
-    if (invmass != NULL)
+    if (invmass != nullptr)
     {
         for (bi = 0; bi < ncons; bi++)
         {
@@ -488,7 +488,7 @@ calc_dr_x_f_simd(int                       b0,
 
         ip_S  = iprod(rx_S, ry_S, rz_S, fx_S, fy_S, fz_S);
 
-        rhs_S = load(blc + bs) * ip_S;
+        rhs_S = load<SimdReal>(blc + bs) * ip_S;
 
         store(rhs + bs, rhs_S);
         store(sol + bs, rhs_S);
@@ -637,7 +637,7 @@ static void do_lincsp(rvec *x, rvec *f, rvec *fp, t_pbc *pbc,
      * so we pass invmass=NULL, which results in the use of 1 for all atoms.
      */
     lincs_update_atoms(lincsd, th, 1.0, sol, r,
-                       (econq != econqForce) ? invmass : NULL, fp);
+                       (econq != econqForce) ? invmass : nullptr, fp);
 
     if (bCalcDHDL)
     {
@@ -744,7 +744,7 @@ calc_dr_x_xp_simd(int                       b0,
 
         ip_S  = iprod(rx_S, ry_S, rz_S, rxp_S, ryp_S, rzp_S);
 
-        rhs_S = load(blc + bs) * (ip_S - load(bllen + bs));
+        rhs_S = load<SimdReal>(blc + bs) * (ip_S - load<SimdReal>(bllen + bs));
 
         store(rhs + bs, rhs_S);
         store(sol + bs, rhs_S);
@@ -753,17 +753,18 @@ calc_dr_x_xp_simd(int                       b0,
 #endif // GMX_SIMD_HAVE_REAL
 
 /* Determine the distances and right-hand side for the next iteration */
-static void calc_dist_iter(int                       b0,
-                           int                       b1,
-                           const int *               bla,
-                           const rvec * gmx_restrict xp,
-                           const real * gmx_restrict bllen,
-                           const real * gmx_restrict blc,
-                           const t_pbc *             pbc,
-                           real                      wfac,
-                           real * gmx_restrict       rhs,
-                           real * gmx_restrict       sol,
-                           gmx_bool *                bWarn)
+gmx_unused static void calc_dist_iter(
+        int                       b0,
+        int                       b1,
+        const int *               bla,
+        const rvec * gmx_restrict xp,
+        const real * gmx_restrict bllen,
+        const real * gmx_restrict blc,
+        const t_pbc *             pbc,
+        real                      wfac,
+        real * gmx_restrict       rhs,
+        real * gmx_restrict       sol,
+        gmx_bool *                bWarn)
 {
     int b;
 
@@ -853,7 +854,7 @@ calc_dist_iter_simd(int                       b0,
 
         n2_S    = norm2(rx_S, ry_S, rz_S);
 
-        len_S   = load(bllen + bs);
+        len_S   = load<SimdReal>(bllen + bs);
         len2_S  = len_S * len_S;
 
         dlen2_S = fms(two_S, len2_S, n2_S);
@@ -868,7 +869,7 @@ calc_dist_iter_simd(int                       b0,
 
         lc_S    = fnma(dlen2_S, invsqrt(dlen2_S), len_S);
 
-        blc_S   = load(blc + bs);
+        blc_S   = load<SimdReal>(blc + bs);
 
         lc_S    = blc_S * lc_S;
 
@@ -1009,8 +1010,8 @@ static void do_lincs(rvec *x, rvec *xp, matrix box, t_pbc *pbc,
 #if GMX_SIMD_HAVE_REAL
     for (b = b0; b < b1; b += GMX_SIMD_REAL_WIDTH)
     {
-        SimdReal t1 = load(blc + b);
-        SimdReal t2 = load(sol + b);
+        SimdReal t1 = load<SimdReal>(blc + b);
+        SimdReal t2 = load<SimdReal>(sol + b);
         store(mlambda + b, t1 * t2);
     }
 #else
@@ -1042,7 +1043,7 @@ static void do_lincs(rvec *x, rvec *xp, matrix box, t_pbc *pbc,
                 /* Communicate the corrected non-local coordinates */
                 if (DOMAINDECOMP(cr))
                 {
-                    dd_move_x_constraints(cr->dd, box, xp, NULL, FALSE);
+                    dd_move_x_constraints(cr->dd, box, xp, nullptr, FALSE);
                 }
             }
 #pragma omp barrier
@@ -1067,11 +1068,11 @@ static void do_lincs(rvec *x, rvec *xp, matrix box, t_pbc *pbc,
 #if GMX_SIMD_HAVE_REAL
         for (b = b0; b < b1; b += GMX_SIMD_REAL_WIDTH)
         {
-            SimdReal t1  = load(blc + b);
-            SimdReal t2  = load(sol + b);
+            SimdReal t1  = load<SimdReal>(blc + b);
+            SimdReal t2  = load<SimdReal>(sol + b);
             SimdReal mvb = t1 * t2;
             store(blc_sol + b, mvb);
-            store(mlambda + b, load(mlambda + b) + mvb);
+            store(mlambda + b, load<SimdReal>(mlambda + b) + mvb);
         }
 #else
         for (b = b0; b < b1; b++)
@@ -1089,14 +1090,14 @@ static void do_lincs(rvec *x, rvec *xp, matrix box, t_pbc *pbc,
     }
     /* nit*ncons*(37+9*nrec) flops */
 
-    if (v != NULL)
+    if (v != nullptr)
     {
         /* Update the velocities */
         lincs_update_atoms(lincsd, th, invdt, mlambda, r, invmass, v);
         /* 16 ncons flops */
     }
 
-    if (nlocat != NULL && (bCalcDHDL || bCalcVir))
+    if (nlocat != nullptr && (bCalcDHDL || bCalcVir))
     {
         if (lincsd->bTaskDep)
         {
@@ -1253,7 +1254,7 @@ static void set_lincs_matrix_task(struct gmx_lincsdata *li,
 }
 
 /* Sets the elements in the LINCS matrix */
-void set_lincs_matrix(struct gmx_lincsdata *li, real *invmass, real lambda)
+static void set_lincs_matrix(struct gmx_lincsdata *li, real *invmass, real lambda)
 {
     int        i;
     const real invsqrt2 = 0.7071067811865475244;
@@ -2153,7 +2154,7 @@ void set_lincs(const t_idef         *idef,
 
     done_blocka(&at2con);
 
-    if (cr->dd == NULL)
+    if (cr->dd == nullptr)
     {
         /* Since the matrix is static, we should free some memory */
         li->ncc_alloc = li->ncc;
@@ -2167,7 +2168,7 @@ void set_lincs(const t_idef         *idef,
         srenew(li->tmpncc, li->ncc_alloc);
     }
 
-    if (DOMAINDECOMP(cr) && dd_constraints_nlocalatoms(cr->dd) != NULL)
+    if (DOMAINDECOMP(cr) && dd_constraints_nlocalatoms(cr->dd) != nullptr)
     {
         int *nlocat_dd;
 
@@ -2181,7 +2182,7 @@ void set_lincs(const t_idef         *idef,
     }
     else
     {
-        li->nlocat = NULL;
+        li->nlocat = nullptr;
     }
 
     if (debug)
@@ -2297,12 +2298,12 @@ static void cconerr(const struct gmx_lincsdata *lincsd,
             r2  = norm2(dx);
             len = r2*gmx::invsqrt(r2);
             d   = std::abs(len/bllen[b]-1);
-            if (d > ma && (nlocat == NULL || nlocat[b]))
+            if (d > ma && (nlocat == nullptr || nlocat[b]))
             {
                 ma = d;
                 im = b;
             }
-            if (nlocat == NULL)
+            if (nlocat == nullptr)
             {
                 ssd2 += d*d;
                 count++;
@@ -2348,9 +2349,9 @@ gmx_bool constrain_lincs(FILE *fplog, gmx_bool bLog, gmx_bool bEner,
      * We can also easily check if any constraint length is changed,
      * if not dH/dlambda=0 and we can also set the boolean to FALSE.
      */
-    bCalcDHDL = (ir->efep != efepNO && dvdlambda != NULL);
+    bCalcDHDL = (ir->efep != efepNO && dvdlambda != nullptr);
 
-    if (lincsd->nc == 0 && cr->dd == NULL)
+    if (lincsd->nc == 0 && cr->dd == nullptr)
     {
         if (bLog || bEner)
         {
@@ -2382,7 +2383,7 @@ gmx_bool constrain_lincs(FILE *fplog, gmx_bool bLog, gmx_bool bEner,
         if (lincsd->ncg_flex)
         {
             /* Set the flexible constraint lengths to the old lengths */
-            if (pbc != NULL)
+            if (pbc != nullptr)
             {
                 for (i = 0; i < lincsd->nc; i++)
                 {
@@ -2470,7 +2471,7 @@ gmx_bool constrain_lincs(FILE *fplog, gmx_bool bLog, gmx_bool bEner,
 
         if (bWarn)
         {
-            if (maxwarn >= 0)
+            if (maxwarn < INT_MAX)
             {
                 cconerr(lincsd, xprime, pbc,
                         &ncons_loc, &p_ssd, &p_max, &p_imax);

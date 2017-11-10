@@ -1,7 +1,7 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2010,2011,2012,2013,2014,2015, by the GROMACS development team, led by
+ * Copyright (c) 2010,2011,2012,2013,2014,2015,2016,2017, by the GROMACS development team, led by
  * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
  * and including many others, as listed in the AUTHORS file in the
  * top-level source directory and at http://www.gromacs.org.
@@ -40,8 +40,8 @@
 #include <stdlib.h>
 
 #include "gromacs/commandline/filenm.h"
-#include "gromacs/essentialdynamics/edsam.h"
 #include "gromacs/fileio/readinp.h"
+#include "gromacs/fileio/warninp.h"
 #include "gromacs/gmxlib/network.h"
 #include "gromacs/math/vec.h"
 #include "gromacs/mdtypes/commrec.h"
@@ -50,10 +50,13 @@
 #include "gromacs/mdtypes/state.h"
 #include "gromacs/pbcutil/pbc.h"
 #include "gromacs/topology/index.h"
+#include "gromacs/topology/mtop_lookup.h"
 #include "gromacs/topology/mtop_util.h"
 #include "gromacs/topology/topology.h"
 #include "gromacs/utility/cstringutil.h"
+#include "gromacs/utility/exceptions.h"
 #include "gromacs/utility/fatalerror.h"
+#include "gromacs/utility/filestream.h"
 #include "gromacs/utility/futil.h"
 #include "gromacs/utility/smalloc.h"
 
@@ -106,17 +109,14 @@ static int get_mol_id(int at, gmx_mtop_t  *mtop, int *type, int *block)
     int                   mol_id = 0;
     int                   i;
     int                   atnr_mol;
-    gmx_mtop_atomlookup_t alook;
 
-    alook = gmx_mtop_atomlookup_settle_init(mtop);
-    gmx_mtop_atomnr_to_molblock_ind(alook, at, block, &mol_id, &atnr_mol);
+    *block = 0;
+    mtopGetMolblockIndex(mtop, at, block, &mol_id, &atnr_mol);
     for (i = 0; i < *block; i++)
     {
         mol_id += mtop->molblock[i].nmol;
     }
     *type = mtop->molblock[*block].type;
-
-    gmx_mtop_atomlookup_destroy(alook);
 
     return mol_id;
 }
@@ -222,7 +222,11 @@ static void get_input(const char *membed_input, real *xy_fac, real *xy_max, real
 
     wi = init_warning(TRUE, 0);
 
-    inp = read_inpfile(membed_input, &ninp, wi);
+    {
+        gmx::TextInputFile stream(membed_input);
+        inp = read_inpfile(&stream, membed_input, &ninp, wi);
+        stream.close();
+    }
     ITYPE ("nxy", *it_xy, 1000);
     ITYPE ("nz", *it_z, 0);
     RTYPE ("xyinit", *xy_fac, 0.5);
@@ -235,7 +239,13 @@ static void get_input(const char *membed_input, real *xy_fac, real *xy_max, real
     ITYPE ("pieces", *pieces, 1);
     EETYPE("asymmetry", *bALLOW_ASYMMETRY, yesno_names);
 
-    write_inpfile(membed_input, ninp, inp, FALSE, wi);
+    check_warning_error(wi, FARGS);
+    {
+        gmx::TextOutputFile stream(membed_input);
+        write_inpfile(&stream, membed_input, ninp, inp, FALSE, WriteMdpHeader::yes, wi);
+        stream.close();
+    }
+    done_warning(wi, FARGS);
 }
 
 /* Obtain the maximum and minimum coordinates of the group to be embedded */
@@ -721,13 +731,12 @@ static void rm_group(gmx_groups_t *groups, gmx_mtop_t *mtop, rm_t *rm_p, t_state
     mtop->mols.index = new_mols;
     mtop->natoms    -= n;
     state->natoms   -= n;
-    state->nalloc    = state->natoms;
-    snew(x_tmp, state->nalloc);
-    snew(v_tmp, state->nalloc);
+    snew(x_tmp, state->natoms);
+    snew(v_tmp, state->natoms);
 
     for (i = 0; i < egcNR; i++)
     {
-        if (groups->grpnr[i] != NULL)
+        if (groups->grpnr[i] != nullptr)
         {
             groups->ngrpnr[i] = state->natoms;
             snew(new_egrp[i], state->natoms);
@@ -751,7 +760,7 @@ static void rm_group(gmx_groups_t *groups, gmx_mtop_t *mtop, rm_t *rm_p, t_state
         {
             for (j = 0; j < egcNR; j++)
             {
-                if (groups->grpnr[j] != NULL)
+                if (groups->grpnr[j] != nullptr)
                 {
                     new_egrp[j][i-rm] = groups->grpnr[j][i];
                 }
@@ -778,14 +787,20 @@ static void rm_group(gmx_groups_t *groups, gmx_mtop_t *mtop, rm_t *rm_p, t_state
             }
         }
     }
-    sfree(state->x);
-    state->x = x_tmp;
-    sfree(state->v);
-    state->v = v_tmp;
+    for (int i = 0; i < state->natoms; i++)
+    {
+        copy_rvec(x_tmp[i], state->x[i]);
+    }
+    sfree(x_tmp);
+    for (int i = 0; i < state->natoms; i++)
+    {
+        copy_rvec(v_tmp[i], state->v[i]);
+    }
+    sfree(v_tmp);
 
     for (i = 0; i < egcNR; i++)
     {
-        if (groups->grpnr[i] != NULL)
+        if (groups->grpnr[i] != nullptr)
         {
             sfree(groups->grpnr[i]);
             groups->grpnr[i] = new_egrp[i];
@@ -809,7 +824,7 @@ static void rm_group(gmx_groups_t *groups, gmx_mtop_t *mtop, rm_t *rm_p, t_state
 }
 
 /* remove al bonded interactions from mtop for the molecule to be embedded */
-int rm_bonded(t_block *ins_at, gmx_mtop_t *mtop)
+static int rm_bonded(t_block *ins_at, gmx_mtop_t *mtop)
 {
     int       i, j, m;
     int       type, natom, nmol, at, atom1 = 0, rm_at = 0;
@@ -903,7 +918,7 @@ static void top_update(const char *topfile, rm_t *rm_p, gmx_mtop_t *mtop)
         if (buf[0] != ';')
         {
             strcpy(buf2, buf);
-            if ((temp = strchr(buf2, '\n')) != NULL)
+            if ((temp = strchr(buf2, '\n')) != nullptr)
             {
                 temp[0] = '\0';
             }
@@ -911,7 +926,7 @@ static void top_update(const char *topfile, rm_t *rm_p, gmx_mtop_t *mtop)
             if (buf2[0] == '[')
             {
                 buf2[0] = ' ';
-                if ((temp = strchr(buf2, '\n')) != NULL)
+                if ((temp = strchr(buf2, '\n')) != nullptr)
                 {
                     temp[0] = '\0';
                 }
@@ -1008,7 +1023,7 @@ gmx_membed_t *init_membed(FILE *fplog, int nfile, const t_filenm fnm[], gmx_mtop
     int                       i, rm_bonded_at, fr_id, fr_i = 0, tmp_id, warn = 0;
     int                       ng, j, max_lip_rm, ins_grp_id, ntype, lip_rm;
     real                      prot_area;
-    rvec                     *r_ins = NULL;
+    rvec                     *r_ins = nullptr;
     t_block                  *ins_at, *rest_at;
     pos_ins_t                *pos_ins;
     mem_t                    *mem_p;
@@ -1017,11 +1032,10 @@ gmx_membed_t *init_membed(FILE *fplog, int nfile, const t_filenm fnm[], gmx_mtop
     gmx_bool                  bExcl = FALSE;
     t_atoms                   atoms;
     t_pbc                    *pbc;
-    char                    **piecename = NULL;
-    gmx_membed_t             *membed    = NULL;
+    char                    **piecename = nullptr;
+    gmx_membed_t             *membed    = nullptr;
 
     /* input variables */
-    const char *membed_input;
     real        xy_fac           = 0.5;
     real        xy_max           = 1.0;
     real        z_fac            = 1.0;
@@ -1050,9 +1064,13 @@ gmx_membed_t *init_membed(FILE *fplog, int nfile, const t_filenm fnm[], gmx_mtop
     if (MASTER(cr))
     {
         /* get input data out membed file */
-        membed_input = opt2fn("-membed", nfile, fnm);
-        get_input(membed_input, &xy_fac, &xy_max, &z_fac, &z_max, &it_xy, &it_z, &probe_rad, &low_up_rm,
-                  &maxwarn, &pieces, &bALLOW_ASYMMETRY);
+        try
+        {
+            get_input(opt2fn("-membed", nfile, fnm),
+                      &xy_fac, &xy_max, &z_fac, &z_max, &it_xy, &it_z, &probe_rad, &low_up_rm,
+                      &maxwarn, &pieces, &bALLOW_ASYMMETRY);
+        }
+        GMX_CATCH_ALL_AND_EXIT_WITH_FATAL_ERROR;
 
         if (!EI_DYNAMICS(inputrec->eI) )
         {
@@ -1113,7 +1131,7 @@ gmx_membed_t *init_membed(FILE *fplog, int nfile, const t_filenm fnm[], gmx_mtop
         if (xy_fac < min_xy_init)
         {
             warn++;
-            fprintf(stderr, "\nWarning %d:\nThe initial size of %s is probably too smal.\n\n", warn, ins);
+            fprintf(stderr, "\nWarning %d:\nThe initial size of %s is probably too small.\n\n", warn, ins);
         }
 
         if (it_xy < min_it_xy)
@@ -1203,9 +1221,9 @@ gmx_membed_t *init_membed(FILE *fplog, int nfile, const t_filenm fnm[], gmx_mtop
         /* Check that moleculetypes in insertion group are not part of the rest of the system */
         check_types(ins_at, rest_at, mtop);
 
-        init_mem_at(mem_p, mtop, state->x, state->box, pos_ins);
+        init_mem_at(mem_p, mtop, as_rvec_array(state->x.data()), state->box, pos_ins);
 
-        prot_area = est_prot_area(pos_ins, state->x, ins_at, mem_p);
+        prot_area = est_prot_area(pos_ins, as_rvec_array(state->x.data()), ins_at, mem_p);
         if ( (prot_area > prot_vs_box) && ( (state->box[XX][XX]*state->box[YY][YY]-state->box[XX][YY]*state->box[YY][XX]) < box_vs_prot) )
         {
             warn++;
@@ -1235,14 +1253,14 @@ gmx_membed_t *init_membed(FILE *fplog, int nfile, const t_filenm fnm[], gmx_mtop
 
         /* resize the protein by xy and by z if necessary*/
         snew(r_ins, ins_at->nr);
-        init_resize(ins_at, r_ins, pos_ins, mem_p, state->x, bALLOW_ASYMMETRY);
+        init_resize(ins_at, r_ins, pos_ins, mem_p, as_rvec_array(state->x.data()), bALLOW_ASYMMETRY);
         membed->fac[0] = membed->fac[1] = xy_fac;
         membed->fac[2] = z_fac;
 
         membed->xy_step = (xy_max-xy_fac)/(double)(it_xy);
         membed->z_step  = (z_max-z_fac)/(double)(it_z-1);
 
-        resize(r_ins, state->x, pos_ins, membed->fac);
+        resize(r_ins, as_rvec_array(state->x.data()), pos_ins, membed->fac);
 
         /* remove overlapping lipids and water from the membrane box*/
         /*mark molecules to be removed*/
@@ -1250,7 +1268,7 @@ gmx_membed_t *init_membed(FILE *fplog, int nfile, const t_filenm fnm[], gmx_mtop
         set_pbc(pbc, inputrec->ePBC, state->box);
 
         snew(rm_p, 1);
-        lip_rm = gen_rm_list(rm_p, ins_at, rest_at, pbc, mtop, state->x, mem_p, pos_ins,
+        lip_rm = gen_rm_list(rm_p, ins_at, rest_at, pbc, mtop, as_rvec_array(state->x.data()), mem_p, pos_ins,
                              probe_rad, low_up_rm, bALLOW_ASYMMETRY);
         lip_rm -= low_up_rm;
 

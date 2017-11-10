@@ -3,7 +3,7 @@
  *
  * Copyright (c) 1991-2000, University of Groningen, The Netherlands.
  * Copyright (c) 2001-2004, The GROMACS development team.
- * Copyright (c) 2013,2014,2015, by the GROMACS development team, led by
+ * Copyright (c) 2013,2014,2015,2016,2017, by the GROMACS development team, led by
  * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
  * and including many others, as listed in the AUTHORS file in the
  * top-level source directory and at http://www.gromacs.org.
@@ -149,10 +149,10 @@ const char *opt2parg_str(const char *option, int nparg, t_pargs pa[])
 
     gmx_fatal(FARGS, "No string option %s in pargs", option);
 
-    return NULL;
+    return nullptr;
 }
 
-gmx_bool opt2parg_bSet(const char *option, int nparg, t_pargs pa[])
+gmx_bool opt2parg_bSet(const char *option, int nparg, const t_pargs *pa)
 {
     int i;
 
@@ -183,7 +183,7 @@ const char *opt2parg_enum(const char *option, int nparg, t_pargs pa[])
 
     gmx_fatal(FARGS, "No such option %s in pargs", option);
 
-    return NULL;
+    return nullptr;
 }
 
 /********************************************************************
@@ -201,16 +201,16 @@ namespace
  *
  * \ingroup module_commandline
  */
-int getDefaultXvgFormat(gmx::ConstArrayRef<const char *> xvgFormats)
+int getDefaultXvgFormat(gmx::ArrayRef<const char *const> xvgFormats)
 {
     const char *const select = getenv("GMX_VIEW_XVG");
-    if (select != NULL)
+    if (select != nullptr)
     {
-        ConstArrayRef<const char *>::const_iterator i =
+        ArrayRef<const char *const>::const_iterator i =
             std::find(xvgFormats.begin(), xvgFormats.end(), std::string(select));
         if (i != xvgFormats.end())
         {
-            return i - xvgFormats.begin();
+            return std::distance(xvgFormats.begin(), i);
         }
         else
         {
@@ -272,7 +272,7 @@ class OptionsAdapter
         struct FileNameData
         {
             //! Creates a conversion helper for a given `t_filenm` struct.
-            explicit FileNameData(t_filenm *fnm) : fnm(fnm), optionInfo(NULL)
+            explicit FileNameData(t_filenm *fnm) : fnm(fnm), optionInfo(nullptr)
             {
             }
 
@@ -287,7 +287,7 @@ class OptionsAdapter
         {
             //! Creates a conversion helper for a given `t_pargs` struct.
             explicit ProgramArgData(t_pargs *pa)
-                : pa(pa), optionInfo(NULL), enumIndex(0), boolValue(false)
+                : pa(pa), optionInfo(nullptr), enumIndex(0), boolValue(false)
             {
             }
 
@@ -316,7 +316,7 @@ class OptionsAdapter
 
 void OptionsAdapter::filenmToOptions(Options *options, t_filenm *fnm)
 {
-    if (fnm->opt == NULL)
+    if (fnm->opt == nullptr)
     {
         // Existing code may use opt2fn() instead of ftp2fn() for
         // options that use the default option name, so we need to
@@ -334,7 +334,7 @@ void OptionsAdapter::filenmToOptions(Options *options, t_filenm *fnm)
     const char *const name      = &fnm->opt[1];
     const char *      defName   = fnm->fn;
     int               defType   = -1;
-    if (defName == NULL)
+    if (defName == nullptr)
     {
         defName = ftp2defnm(fnm->ftp);
     }
@@ -344,7 +344,7 @@ void OptionsAdapter::filenmToOptions(Options *options, t_filenm *fnm)
         GMX_RELEASE_ASSERT(defType != efNR,
                            "File name option specifies an invalid extension");
     }
-    fileNameOptions_.push_back(FileNameData(fnm));
+    fileNameOptions_.emplace_back(fnm);
     FileNameData &data = fileNameOptions_.back();
     data.optionInfo = options->addOption(
                 FileNameOption(name).storeVector(&data.values)
@@ -361,7 +361,7 @@ void OptionsAdapter::pargsToOptions(Options *options, t_pargs *pa)
     const bool        bHidden = startsWith(pa->desc, "HIDDEN");
     const char *const name    = &pa->option[1];
     const char *const desc    = (bHidden ? &pa->desc[6] : pa->desc);
-    programArgs_.push_back(ProgramArgData(pa));
+    programArgs_.emplace_back(pa);
     ProgramArgData   &data = programArgs_.back();
     switch (pa->type)
     {
@@ -387,7 +387,7 @@ void OptionsAdapter::pargsToOptions(Options *options, t_pargs *pa)
             return;
         case etSTR:
         {
-            const char *const defValue = (*pa->u.c != NULL ? *pa->u.c : "");
+            const char *const defValue = (*pa->u.c != nullptr ? *pa->u.c : "");
             data.optionInfo = options->addOption(
                         StringOption(name).store(&data.stringValue)
                             .defaultValue(defValue)
@@ -407,7 +407,7 @@ void OptionsAdapter::pargsToOptions(Options *options, t_pargs *pa)
             return;
         case etENUM:
         {
-            const int defaultIndex = (pa->u.c[0] != NULL ? nenum(pa->u.c) - 1 : 0);
+            const int defaultIndex = (pa->u.c[0] != nullptr ? nenum(pa->u.c) - 1 : 0);
             data.optionInfo = options->addOption(
                         EnumIntOption(name).store(&data.enumIndex)
                             .defaultValue(defaultIndex)
@@ -483,9 +483,10 @@ gmx_bool parse_common_args(int *argc, char *argv[], unsigned long Flags,
     /* This array should match the order of the enum in oenv.h */
     const char *const xvg_formats[] = { "xmgrace", "xmgr", "none" };
 
-    // Handle the flags argument, which is a bit field
-    // The FF macro returns whether or not the bit is set
-#define FF(arg) ((Flags & arg) == arg)
+    // Lambda function to test the (local) Flags parameter against a bit mask.
+    auto isFlagSet = [Flags](unsigned long bits) {
+            return (Flags & bits) == bits;
+        };
 
     try
     {
@@ -494,33 +495,33 @@ gmx_bool parse_common_args(int *argc, char *argv[], unsigned long Flags,
         bool                            bView         = false;
         int                             xvgFormat     = 0;
         gmx::OptionsAdapter             adapter(*argc, argv);
-        gmx::Options                    options(NULL, NULL);
+        gmx::Options                    options;
         gmx::OptionsBehaviorCollection  behaviors(&options);
         gmx::FileNameOptionManager      fileOptManager;
 
         fileOptManager.disableInputOptionChecking(
-                FF(PCA_NOT_READ_NODE) || FF(PCA_DISABLE_INPUT_FILE_CHECKING));
+                isFlagSet(PCA_NOT_READ_NODE) || isFlagSet(PCA_DISABLE_INPUT_FILE_CHECKING));
         options.addManager(&fileOptManager);
 
-        if (FF(PCA_CAN_SET_DEFFNM))
+        if (isFlagSet(PCA_CAN_SET_DEFFNM))
         {
             fileOptManager.addDefaultFileNameOption(&options, "deffnm");
         }
-        if (FF(PCA_CAN_BEGIN))
+        if (isFlagSet(PCA_CAN_BEGIN))
         {
             options.addOption(
                     gmx::DoubleOption("b")
                         .store(&tbegin).storeIsSet(&bBeginTimeSet).timeValue()
                         .description("First frame (%t) to read from trajectory"));
         }
-        if (FF(PCA_CAN_END))
+        if (isFlagSet(PCA_CAN_END))
         {
             options.addOption(
                     gmx::DoubleOption("e")
                         .store(&tend).storeIsSet(&bEndTimeSet).timeValue()
                         .description("Last frame (%t) to read from trajectory"));
         }
-        if (FF(PCA_CAN_DT))
+        if (isFlagSet(PCA_CAN_DT))
         {
             options.addOption(
                     gmx::DoubleOption("dt")
@@ -528,7 +529,7 @@ gmx_bool parse_common_args(int *argc, char *argv[], unsigned long Flags,
                         .description("Only use frame when t MOD dt = first time (%t)"));
         }
         gmx::TimeUnit  timeUnit = gmx::TimeUnit_Default;
-        if (FF(PCA_TIME_UNIT))
+        if (isFlagSet(PCA_TIME_UNIT))
         {
             std::shared_ptr<gmx::TimeUnitBehavior> timeUnitBehavior(
                     new gmx::TimeUnitBehavior());
@@ -537,7 +538,7 @@ gmx_bool parse_common_args(int *argc, char *argv[], unsigned long Flags,
             timeUnitBehavior->addTimeUnitOption(&options, "tu");
             behaviors.addBehavior(timeUnitBehavior);
         }
-        if (FF(PCA_CAN_VIEW))
+        if (isFlagSet(PCA_CAN_VIEW))
         {
             options.addOption(
                     gmx::BooleanOption("w").store(&bView)
@@ -571,7 +572,7 @@ gmx_bool parse_common_args(int *argc, char *argv[], unsigned long Flags,
 
         const gmx::CommandLineHelpContext *context =
             gmx::GlobalCommandLineHelpContext::get();
-        if (context != NULL)
+        if (context != nullptr)
         {
             GMX_RELEASE_ASSERT(gmx_node_rank() == 0,
                                "Help output should be handled higher up and "
@@ -584,7 +585,7 @@ gmx_bool parse_common_args(int *argc, char *argv[], unsigned long Flags,
         }
 
         /* Now parse all the command-line options */
-        gmx::CommandLineParser(&options).skipUnknown(FF(PCA_NOEXIT_ON_ARGS))
+        gmx::CommandLineParser(&options).skipUnknown(isFlagSet(PCA_NOEXIT_ON_ARGS))
             .parse(argc, argv);
         behaviors.optionsFinishing();
         options.finish();
@@ -608,10 +609,9 @@ gmx_bool parse_common_args(int *argc, char *argv[], unsigned long Flags,
             setTimeValue(TDELTA, tdelta);
         }
 
-        adapter.copyValues(!FF(PCA_NOT_READ_NODE));
+        adapter.copyValues(!isFlagSet(PCA_NOT_READ_NODE));
 
         return TRUE;
     }
     GMX_CATCH_ALL_AND_EXIT_WITH_FATAL_ERROR;
-#undef FF
 }

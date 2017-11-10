@@ -1,7 +1,7 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2012,2013,2014,2015, by the GROMACS development team, led by
+ * Copyright (c) 2012,2013,2014,2015,2016,2017, by the GROMACS development team, led by
  * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
  * and including many others, as listed in the AUTHORS file in the
  * top-level source directory and at http://www.gromacs.org.
@@ -141,7 +141,7 @@ class FileTypeHandler
 };
 
 FileTypeHandler::FileTypeHandler(int fileType)
-    : fileType_(fileType), extensionCount_(0), genericTypes_(NULL)
+    : fileType_(fileType), extensionCount_(0), genericTypes_(nullptr)
 {
     if (fileType_ >= 0)
     {
@@ -166,7 +166,7 @@ int FileTypeHandler::extensionCount() const
 const char *FileTypeHandler::extension(int i) const
 {
     GMX_ASSERT(i >= 0 && i < extensionCount_, "Invalid extension index");
-    if (genericTypes_ != NULL)
+    if (genericTypes_ != nullptr)
     {
         return ftp2ext_with_dot(genericTypes_[i]);
     }
@@ -176,7 +176,7 @@ const char *FileTypeHandler::extension(int i) const
 bool
 FileTypeHandler::isValidType(int fileType) const
 {
-    if (genericTypes_ != NULL)
+    if (genericTypes_ != nullptr)
     {
         for (int i = 0; i < extensionCount(); ++i)
         {
@@ -215,8 +215,8 @@ FileNameOptionStorage::FileNameOptionStorage(const FileNameOption  &settings,
     }
     else
     {
-        ConstArrayRef<FileTypeMapping>                 map(c_fileTypeMapping);
-        ConstArrayRef<FileTypeMapping>::const_iterator i;
+        ArrayRef<const FileTypeMapping>                 map(c_fileTypeMapping);
+        ArrayRef<const FileTypeMapping>::const_iterator i;
         for (i = map.begin(); i != map.end(); ++i)
         {
             if (i->optionType == settings.optionType_)
@@ -240,7 +240,7 @@ FileNameOptionStorage::FileNameOptionStorage(const FileNameOption  &settings,
     {
         defaultExtension_ = typeHandler.extension(0);
     }
-    if (settings.defaultBasename_ != NULL)
+    if (settings.defaultBasename_ != nullptr)
     {
         std::string defaultValue(settings.defaultBasename_);
         int         type = fn2ftp(settings.defaultBasename_);
@@ -313,9 +313,13 @@ std::string FileNameOptionStorage::formatSingleValue(const std::string &value) c
     return value;
 }
 
-void FileNameOptionStorage::convertValue(const std::string &value)
+void FileNameOptionStorage::initConverter(ConverterType * /*converter*/)
 {
-    if (manager_ != NULL)
+}
+
+std::string FileNameOptionStorage::processValue(const std::string &value) const
+{
+    if (manager_ != nullptr)
     {
         std::string processedValue = manager_->completeFileName(value, info_);
         if (!processedValue.empty())
@@ -340,8 +344,7 @@ void FileNameOptionStorage::convertValue(const std::string &value)
                                "Manager returned an invalid file name");
                 }
             }
-            addValue(processedValue);
-            return;
+            return processedValue;
         }
     }
     // Currently, directory options are simple, and don't need any
@@ -349,8 +352,7 @@ void FileNameOptionStorage::convertValue(const std::string &value)
     // TODO: Consider splitting them into a separate DirectoryOption.
     if (isDirectoryOption())
     {
-        addValue(value);
-        return;
+        return value;
     }
     const int fileType = fn2ftp(value.c_str());
     if (fileType == efNR)
@@ -370,14 +372,14 @@ void FileNameOptionStorage::convertValue(const std::string &value)
                            value.c_str(), joinStrings(extensions(), ", ").c_str());
         GMX_THROW(InvalidInputError(message));
     }
-    addValue(value);
+    return value;
 }
 
 void FileNameOptionStorage::processAll()
 {
-    if (manager_ != NULL && hasFlag(efOption_HasDefaultValue))
+    if (manager_ != nullptr && hasFlag(efOption_HasDefaultValue))
     {
-        ValueList &valueList = values();
+        ArrayRef<std::string> valueList = values();
         GMX_RELEASE_ASSERT(valueList.size() == 1,
                            "There should be only one default value");
         if (!valueList[0].empty())
@@ -394,7 +396,6 @@ void FileNameOptionStorage::processAll()
                 GMX_ASSERT(isValidType(fn2ftp(newValue.c_str())),
                            "Manager returned an invalid default value");
                 valueList[0] = newValue;
-                refreshValues();
             }
         }
     }
@@ -433,11 +434,11 @@ bool FileNameOptionStorage::isValidType(int fileType) const
     return typeHandler.isValidType(fileType);
 }
 
-ConstArrayRef<int> FileNameOptionStorage::fileTypes() const
+ArrayRef<const int> FileNameOptionStorage::fileTypes() const
 {
     if (fileType_ < 0)
     {
-        return ConstArrayRef<int>();
+        return ArrayRef<const int>();
     }
     const int genericTypeCount = ftp2generic_count(fileType_);
     if (genericTypeCount > 0)
@@ -511,7 +512,7 @@ bool FileNameOptionInfo::isValidType(int fileType) const
     return option().isValidType(fileType);
 }
 
-ConstArrayRef<int> FileNameOptionInfo::fileTypes() const
+ArrayRef<const int> FileNameOptionInfo::fileTypes() const
 {
     return option().fileTypes();
 }

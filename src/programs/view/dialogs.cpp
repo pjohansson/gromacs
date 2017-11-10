@@ -3,7 +3,7 @@
  *
  * Copyright (c) 1991-2000, University of Groningen, The Netherlands.
  * Copyright (c) 2001-2013, The GROMACS development team.
- * Copyright (c) 2013,2014,2015, by the GROMACS development team, led by
+ * Copyright (c) 2013,2014,2015,2016,2017, by the GROMACS development team, led by
  * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
  * and including many others, as listed in the AUTHORS file in the
  * top-level source directory and at http://www.gromacs.org.
@@ -129,7 +129,7 @@ static void MBCallback(t_x11 * /*x11*/, int dlg_mess, int /*item_id*/,
 {
     t_gmx *gmx;
 
-    gmx = (t_gmx *)data;
+    gmx = static_cast<t_gmx *>(data);
     if (dlg_mess == DLG_EXIT)
     {
         hide_mb(gmx);
@@ -155,7 +155,7 @@ static void QuitCB(t_x11 *x11, int dlg_mess, int /*item_id*/,
                    char *set, void *data)
 {
     t_gmx  *gmx;
-    gmx = (t_gmx *)data;
+    gmx = static_cast<t_gmx *>(data);
 
     hide_mb(gmx);
     if (dlg_mess == DLG_EXIT)
@@ -215,7 +215,7 @@ static void ExportCB(t_x11 *x11, int dlg_mess, int item_id,
     t_gmx     *gmx;
     t_dlg     *dlg;
 
-    gmx = (t_gmx *)data;
+    gmx = static_cast<t_gmx *>(data);
     dlg = gmx->dlgs[edExport];
     switch (dlg_mess)
     {
@@ -253,17 +253,6 @@ enum {
     eg0, egTOPOL, egCONFIN, egPARAM, eg1, eg1PROC, eg32PROC
 };
 
-static void Extract(t_dlg *dlg, int ID, char *buf)
-{
-    char *et;
-
-    et = EditText(dlg, ID);
-    if (et)
-    {
-        std::strcpy(buf, et);
-    }
-}
-
 enum bond_set {
     ebShowH = 11, ebDPlus, ebRMPBC, ebCue, ebSkip, ebWait
 };
@@ -278,7 +267,7 @@ static void BondsCB(t_x11 *x11, int dlg_mess, int item_id,
     t_gmx     *gmx;
     char      *endptr;
 
-    gmx = (t_gmx *)data;
+    gmx = static_cast<t_gmx *>(data);
     if (ebond == -1)
     {
         ebond = gmx->man->molw->bond_type;
@@ -412,19 +401,6 @@ static void BondsCB(t_x11 *x11, int dlg_mess, int item_id,
 enum {
     esFUNCT = 1, esBSHOW, esINFIL, esINDEXFIL, esLSQ, esSHOW, esPLOTFIL
 };
-
-static bool in_set(int i, int n, int set[])
-{
-    int j;
-    for (j = 0; (j < n); j++)
-    {
-        if (set[j] == i)
-        {
-            return true;
-        }
-    }
-    return false;
-}
 
 typedef t_dlg *t_mmb (t_x11 *x11, t_gmx *gmx);
 

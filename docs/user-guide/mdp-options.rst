@@ -209,15 +209,34 @@ Run control
         the step number of the restart frame. :ref:`gmx convert-tpr`
         does this automatically.
 
+.. mdp:: simulation-part
+
+         (0)
+         A simulation can consist of multiple parts, each of which has
+         a part number. This option specifies what that number will
+         be, which helps keep track of parts that are logically the
+         same simulation. This option is generally useful to set only
+         when coping with a crashed simulation where files were lost.
+
 .. mdp:: comm-mode
 
    .. mdp-value:: Linear
 
-      Remove center of mass translation
+      Remove center of mass translational velocity
 
    .. mdp-value:: Angular
 
-      Remove center of mass translation and rotation around the center of mass
+      Remove center of mass translational and rotational velocity around
+      the center of mass
+
+   .. mdp-value:: Linear-acceleration-correction
+
+      Remove center of mass translational velocity. Correct the center of
+      mass position assuming linear acceleration over :mdp:`nstcomm` steps.
+      This is useful for cases where an acceleration is expected on the
+      center of mass which is nearly constant over mdp:`nstcomm` steps.
+      This can occur for example when pulling on a group using an absolute
+      reference.
 
    .. mdp-value:: None
 
@@ -403,14 +422,14 @@ Neighbor searching
       case :mdp:`rcoulomb` > :mdp:`rvdw` is allowed. Currently only
       cut-off, reaction-field, PME or Ewald electrostatics and plain
       LJ are supported. Some :ref:`gmx mdrun` functionality is not yet
-      supported with the :mdp:`Verlet` scheme, but :ref:`gmx grompp`
+      supported with the :mdp-value:`cutoff-scheme=Verlet` scheme, but :ref:`gmx grompp`
       checks for this. Native GPU acceleration is only supported with
-      :mdp:`Verlet`. With GPU-accelerated PME or with separate PME
+      :mdp-value:`cutoff-scheme=Verlet`. With GPU-accelerated PME or with separate PME
       ranks, :ref:`gmx mdrun` will automatically tune the CPU/GPU load
       balance by scaling :mdp:`rcoulomb` and the grid spacing. This
-      can be turned off with ``mdrun -notunepme``. :mdp:`Verlet` is
-      faster than :mdp:`group` when there is no water, or if
-      :mdp:`group` would use a pair-list buffer to conserve energy.
+      can be turned off with ``mdrun -notunepme``. :mdp-value:`cutoff-scheme=Verlet` is
+      faster than :mdp-value:`cutoff-scheme=group` when there is no water, or if
+      :mdp-value:`cutoff-scheme=group` would use a pair-list buffer to conserve energy.
 
    .. mdp-value:: group
 
@@ -431,12 +450,12 @@ Neighbor searching
       Frequency to update the neighbor list. When this is 0, the
       neighbor list is made only once. With energy minimization the
       neighborlist will be updated for every energy evaluation when
-      :mdp:`nstlist` is greater than 0. With :mdp:`Verlet` and
+      :mdp:`nstlist` is greater than 0. With :mdp-value:`cutoff-scheme=Verlet` and
       :mdp:`verlet-buffer-tolerance` set, :mdp:`nstlist` is actually
       a minimum value and :ref:`gmx mdrun` might increase it, unless
       it is set to 1. With parallel simulations and/or non-bonded
       force calculation on the GPU, a value of 20 or 40 often gives
-      the best performance. With :mdp:`group` and non-exact
+      the best performance. With :mdp-value:`cutoff-scheme=group` and non-exact
       cut-off's, :mdp:`nstlist` will affect the accuracy of your
       simulation and it can not be chosen freely.
 
@@ -462,7 +481,7 @@ Neighbor searching
    .. mdp-value:: simple
 
       Check every atom in the box when constructing a new neighbor
-      list every :mdp:`nstlist` steps (only with :mdp:`group`
+      list every :mdp:`nstlist` steps (only with :mdp-value:`cutoff-scheme=group`
       cut-off scheme).
 
 .. mdp:: pbc
@@ -503,7 +522,7 @@ Neighbor searching
 
    (0.005) \[kJ/mol/ps\]
 
-   Useful only with the :mdp:`Verlet` :mdp:`cutoff-scheme`. This sets
+   Useful only with the :mdp-value:`cutoff-scheme=Verlet` :mdp:`cutoff-scheme`. This sets
    the maximum allowed error for pair interactions per particle caused
    by the Verlet buffer, which indirectly sets :mdp:`rlist`. As both
    :mdp:`nstlist` and the Verlet buffer size are fixed (for
@@ -534,7 +553,7 @@ Neighbor searching
 
    (1) \[nm\]
    Cut-off distance for the short-range neighbor list. With the
-   :mdp:`Verlet` :mdp:`cutoff-scheme`, this is by default set by the
+   :mdp-value:`cutoff-scheme=Verlet` :mdp:`cutoff-scheme`, this is by default set by the
    :mdp:`verlet-buffer-tolerance` option and the value of
    :mdp:`rlist` is ignored.
 
@@ -605,8 +624,8 @@ Electrostatics
    .. mdp-value:: Reaction-Field-zero
 
       In |Gromacs|, normal reaction-field electrostatics with
-      :mdp:`cutoff-scheme` = :mdp:`group` leads to bad energy
-      conservation. :mdp:`Reaction-Field-zero` solves this by making
+      :mdp:`cutoff-scheme` = :mdp-value:`cutoff-scheme=group` leads to bad energy
+      conservation. :mdp-value:`coulombtype=Reaction-Field-zero` solves this by making
       the potential zero beyond the cut-off. It can only be used with
       an infinite dielectric constant (:mdp:`epsilon-rf` =0), because
       only for that value the force vanishes at the
@@ -614,13 +633,13 @@ Electrostatics
       :mdp:`rcoulomb` to accommodate for the size of charge groups
       and diffusion between neighbor list updates. This, and the fact
       that table lookups are used instead of analytical functions make
-      :mdp:`Reaction-Field-zero` computationally more expensive than
+      :mdp-value:`coulombtype=Reaction-Field-zero` computationally more expensive than
       normal reaction-field.
 
    .. mdp-value:: Shift
 
       Analogous to :mdp-value:`vdwtype=Shift` for :mdp:`vdwtype`. You
-      might want to use :mdp:`Reaction-Field-zero` instead, which has
+      might want to use :mdp-value:`coulombtype=Reaction-Field-zero` instead, which has
       a similar potential shape, but has a physical interpretation and
       has better energies due to the exclusion correction terms.
 
@@ -633,7 +652,7 @@ Electrostatics
 
       Analogous to :mdp-value:`vdwtype=Switch` for
       :mdp:`vdwtype`. Switching the Coulomb potential can lead to
-      serious artifacts, advice: use :mdp:`Reaction-Field-zero`
+      serious artifacts, advice: use :mdp-value:`coulombtype=Reaction-Field-zero`
       instead.
 
    .. mdp-value:: User
@@ -664,7 +683,7 @@ Electrostatics
       A combination of PME and a switch function for the direct-space
       part (see above). :mdp:`rcoulomb` is allowed to be smaller than
       :mdp:`rlist`. This is mainly useful constant energy simulations
-      (note that using PME with :mdp:`cutoff-scheme` = :mdp:`Verlet`
+      (note that using PME with :mdp:`cutoff-scheme` = :mdp-value:`cutoff-scheme=Verlet`
       will be more efficient).
 
    .. mdp-value:: PME-User
@@ -1096,7 +1115,7 @@ Pressure coupling
    .. mdp-value:: MTTK
 
       Martyna-Tuckerman-Tobias-Klein implementation, only useable with
-      :mdp-value:`md-vv` or :mdp-value:`md-vv-avek`, very similar to
+      :mdp-value:`integrator=md-vv` or :mdp-value:`integrator=md-vv-avek`, very similar to
       Parrinello-Rahman. As for Nose-Hoover temperature coupling the
       time constant :mdp:`tau-p` is the period of pressure
       fluctuations at equilibrium. This is probably a better method
@@ -1108,19 +1127,23 @@ Pressure coupling
 
 .. mdp:: pcoupltype
 
+   Specifies the kind of isotropy of the pressure coupling used. Each
+   kind takes one or more values for :mdp:`compressibility` and
+   :mdp:`ref-p`. Only a single value is permitted for :mdp:`tau-p`.
+
    .. mdp-value:: isotropic
 
       Isotropic pressure coupling with time constant
-      :mdp:`tau-p`. The compressibility and reference pressure are
-      set with :mdp:`compressibility` and :mdp:`ref-p`, one value is
-      needed.
+      :mdp:`tau-p`. One value each for :mdp:`compressibility` and
+      :mdp:`ref-p` is required.
 
    .. mdp-value:: semiisotropic
 
       Pressure coupling which is isotropic in the ``x`` and ``y``
       direction, but different in the ``z`` direction. This can be
-      useful for membrane simulations. 2 values are needed for ``x/y``
-      and ``z`` directions respectively.
+      useful for membrane simulations. Two values each for
+      :mdp:`compressibility` and :mdp:`ref-p` are required, for
+      ``x/y`` and ``z`` directions respectively.
 
    .. mdp-value:: anisotropic
 
@@ -1156,18 +1179,21 @@ Pressure coupling
 .. mdp:: tau-p
 
    (1) \[ps\]
-   time constant for coupling
+   The time constant for pressure coupling (one value for all
+   directions).
 
 .. mdp:: compressibility
 
    \[bar^-1\]
-   compressibility (NOTE: this is now really in bar-1) For water at 1
-   atm and 300 K the compressibility is 4.5e-5 bar^-1.
+   The compressibility (NOTE: this is now really in bar^-1) For water at 1
+   atm and 300 K the compressibility is 4.5e-5 bar^-1. The number of
+   required values is implied by :mdp:`pcoupltype`.
 
 .. mdp:: ref-p
 
    \[bar\]
-   reference pressure for coupling
+   The reference pressure for coupling. The number of required values
+   is implied by :mdp:`pcoupltype`.
 
 .. mdp:: refcoord-scaling
 
@@ -1520,7 +1546,7 @@ applicable pulling coordinate.
 
    (1.5) \[nm\]
    the radius of the cylinder for
-   :mdp:`pull-coord1-geometry` = :mdp-value:`cylinder`
+   :mdp:`pull-coord1-geometry` = :mdp-value:`pull-coord1-geometry=cylinder`
 
 .. mdp:: pull-constr-tol
 
@@ -1608,7 +1634,7 @@ applicable pulling coordinate.
    their periodic image which is closest to
    :mdp:`pull-group1-pbcatom`. A value of 0 means that the middle
    atom (number wise) is used. This parameter is not used with
-   :mdp:`pull-group1-geometry` cylinder. A value of -1 turns on cosine
+   :mdp:`pull-coord1-geometry` cylinder. A value of -1 turns on cosine
    weighting, which is useful for a group of molecules in a periodic
    system, *e.g.* a water slab (see Engin et al. J. Chem. Phys. B
    2010).
@@ -1667,14 +1693,14 @@ applicable pulling coordinate.
 
    .. mdp-value:: direction-periodic
 
-      As :mdp-value:`direction`, but allows the distance to be larger
+      As :mdp-value:`pull-coord1-geometry=direction`, but allows the distance to be larger
       than half the box size. With this geometry the box should not be
       dynamic (*e.g.* no pressure scaling) in the pull dimensions and
       the pull force is not added to virial.
 
    .. mdp-value:: direction-relative
 
-      As :mdp-value:`direction`, but the pull vector is the vector
+      As :mdp-value:`pull-coord1-geometry=direction`, but the pull vector is the vector
       that points from the COM of a third to the COM of a fourth pull
       group. This means that 4 groups need to be supplied in
       :mdp:`pull-coord1-groups`. Note that the pull force will give
@@ -1713,7 +1739,7 @@ applicable pulling coordinate.
 
    .. mdp-value:: angle-axis
 
-      As :mdp-value:`angle` but the second vector is given by :mdp:`pull-coord1-vec`.
+      As :mdp-value:`pull-coord1-geometry=angle` but the second vector is given by :mdp:`pull-coord1-vec`.
       Thus, only the two groups that define the first vector need to be given.
 
    .. mdp-value:: dihedral
@@ -1741,8 +1767,8 @@ applicable pulling coordinate.
    (Y Y Y)
    Selects the dimensions that this pull coordinate acts on and that
    are printed to the output files when
-   :mdp:`pull-print-components` = :mdp-value:`yes`. With
-   :mdp:`pull-coord1-geometry` = :mdp-value:`distance`, only Cartesian
+   :mdp:`pull-print-components` = :mdp-value:`pull-coord1-start=yes`. With
+   :mdp:`pull-coord1-geometry` = :mdp-value:`pull-coord1-geometry=distance`, only Cartesian
    components set to Y contribute to the distance. Thus setting this
    to Y Y N results in a distance in the x/y plane. With other
    geometries all dimensions with non-zero entries in
@@ -1796,6 +1822,112 @@ applicable pulling coordinate.
    As :mdp:`pull-coord1-k`, but for state B. This is only used when
    :mdp:`free-energy` is turned on. The force constant is then (1 -
    lambda) * :mdp:`pull-coord1-k` + lambda * :mdp:`pull-coord1-kB`.
+
+
+Enforced rotation
+^^^^^^^^^^^^^^^^^
+
+These :ref:`mdp` parameters can be used enforce the rotation of a group of atoms,
+e.g. a protein subunit. The `reference manual`_ describes in detail 13 different potentials
+that can be used to achieve such a rotation.
+
+.. mdp:: rotation
+
+   .. mdp-value:: no
+
+      No enforced rotation will be applied. All enforced rotation options will
+      be ignored (and if present in the :ref:`mdp` file, they unfortunately
+      generate warnings).
+
+   .. mdp-value:: yes
+
+      Apply the rotation potential specified by :mdp:`rot-type0` to the group of atoms given
+      under the :mdp:`rot-group0` option.
+
+.. mdp:: rot-ngroups
+
+   (1)
+   Number of rotation groups.
+
+.. mdp:: rot-group0
+
+   Name of rotation group 0 in the index file.
+
+.. mdp:: rot-type0
+
+   (iso)
+   Type of rotation potential that is applied to rotation group 0. Can be of of the following:
+   ``iso``, ``iso-pf``, ``pm``, ``pm-pf``, ``rm``, ``rm-pf``, ``rm2``, ``rm2-pf``,
+   ``flex``, ``flex-t``, ``flex2``, or ``flex2-t``.
+
+.. mdp:: rot-massw0
+
+   (no)
+   Use mass weighted rotation group positions.
+
+.. mdp:: rot-vec0
+
+   (1.0 0.0 0.0)
+   Rotation vector, will get normalized.
+
+.. mdp:: rot-pivot0
+
+   (0.0 0.0 0.0)
+   Pivot point (nm) for the potentials ``iso``, ``pm``, ``rm``, and ``rm2``.
+
+.. mdp:: rot-rate0
+
+   (0)
+   Reference rotation rate (degree/ps) of group 0.
+
+.. mdp:: rot-k0
+
+   (0)
+   Force constant (kJ/(mol*nm^2)) for group 0.
+
+.. mdp:: rot-slab-dist0
+
+   (1.5)
+   Slab distance (nm), if a flexible axis rotation type was chosen.
+
+.. mdp:: rot-min-gauss0
+
+   (0.001)
+   Minimum value (cutoff) of Gaussian function for the force to be evaluated
+   (for the flexible axis potentials).
+
+.. mdp:: rot-eps0
+
+   (0.0001)
+   Value of additive constant epsilon' (nm^2) for ``rm2*`` and ``flex2*`` potentials.
+
+.. mdp:: rot-fit-method0
+
+   (rmsd)
+   Fitting method when determining the actual angle of a rotation group
+   (can be one of ``rmsd``, ``norm``, or ``potential``).
+
+.. mdp:: rot-potfit-nsteps0
+
+   (21)
+   For fit type ``potential``, the number of angular positions around the reference angle for which the
+   rotation potential is evaluated.
+
+.. mdp:: rot-potfit-step0
+
+   (0.25)
+   For fit type ``potential``, the distance in degrees between two angular positions.
+
+.. mdp:: rot-nstrout
+
+   (100)
+   Output frequency (in steps) for the angle of the rotation group, as well as for the torque
+   and the rotation potential energy.
+
+.. mdp:: rot-nstsout
+
+   (1000)
+   Output frequency for per-slab data of the flexible axis potentials, i.e. angles, torques and slab centers.
 
 
 NMR refinement
@@ -2555,33 +2687,23 @@ Non-equilibrium MD
 
 
 Electric fields
-^^^^^^^^^^^^^^^
+.. mdp:: electric-field-x ; electric-field-y ; electric-field-z
 
-.. mdp:: E-x ; E-y ; E-z
-
-   If you want to use an electric field in a direction, enter 3
-   numbers after the appropriate E-direction, the first number: the
-   number of cosines, only 1 is implemented (with frequency 0) so
-   enter 1, the second number: the strength of the electric field in V
-   nm^-1, the third number: the phase of the cosine, you can enter any
-   number here since a cosine of frequency zero has no phase.
-
-.. mdp:: E-xt; E-yt; E-zt
-
-   Here you can specify a pulsed alternating electric field. The field
+   Here you can specify an electric field that optionally can be
+   alternating and pulsed. The general expression for the field
    has the form of a gaussian laser pulse:
 
    E(t) = E0 exp ( -(t-t0)^2/(2 sigma^2) ) cos(omega (t-t0))
 
    For example, the four parameters for direction x are set in the
-   three fields of :mdp:`E-x` and :mdp:`E-xt` like
+   three fields of :mdp:`electric-field-x` (and similar for y and z) 
+   like
 
-   E-x  = 1 E0 0
-
-   E-xt = omega t0 sigma
+   electric-field-x  = E0 omega t0 sigma
 
    In the special case that sigma = 0, the exponential term is omitted
-   and only the cosine term is used.
+   and only the cosine term is used. If also omega = 0 a static
+   electric field is applied.
 
    More details in Carl Caleman and David van der Spoel: Picosecond
    Melting of Ice by an Infrared Laser Pulse - A Simulation Study

@@ -3,7 +3,7 @@
  *
  * Copyright (c) 1991-2000, University of Groningen, The Netherlands.
  * Copyright (c) 2001-2013, The GROMACS development team.
- * Copyright (c) 2013,2014,2015, by the GROMACS development team, led by
+ * Copyright (c) 2013,2014,2015,2017, by the GROMACS development team, led by
  * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
  * and including many others, as listed in the AUTHORS file in the
  * top-level source directory and at http://www.gromacs.org.
@@ -68,13 +68,13 @@ static t_atomcolor ac[] = {
 };
 #define NAC asize(ac)
 
-int search_ac(const char *type)
+static int search_ac(const char *type)
 {
     unsigned int i, nb, mij, best, besti;
 
     best  = 0;
     besti = 0;
-    if (NULL != type)
+    if (nullptr != type)
     {
         for (i = 0; (i < NAC); i++)
         {
@@ -114,7 +114,7 @@ t_rgb *Type2RGB(const char *type)
     return &(ac[i].rgb);
 }
 
-void DrawLegend(t_x11 *x11, t_windata *Win)
+static void DrawLegend(t_x11 *x11, t_windata *Win)
 {
 #define NLAB 6
 #define COLS 3

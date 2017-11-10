@@ -3,7 +3,7 @@
  *
  * Copyright (c) 1991-2000, University of Groningen, The Netherlands.
  * Copyright (c) 2001-2004, The GROMACS development team.
- * Copyright (c) 2013,2014,2015,2016, by the GROMACS development team, led by
+ * Copyright (c) 2013,2014,2015,2016,2017, by the GROMACS development team, led by
  * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
  * and including many others, as listed in the AUTHORS file in the
  * top-level source directory and at http://www.gromacs.org.
@@ -51,14 +51,13 @@ struct t_forcerec;
 struct t_grpopts;
 struct t_lambda;
 struct t_nrnb;
-struct t_state;
+class t_state;
 struct t_trxframe;
 
 namespace gmx
 {
-
+class MDLogger;
 class SimulationSignaller;
-
 }
 
 /* Define a number of flags to better control the information
@@ -92,16 +91,9 @@ class SimulationSignaller;
 /*! \brief Return the number of steps that will take place between
  * intra-simulation communications, given the constraints of the
  * inputrec and the value of mdrun -gcom. */
-int check_nstglobalcomm(FILE       *fplog,
-                        t_commrec  *cr,
-                        int         nstglobalcomm,
-                        t_inputrec *ir);
-
-/* check whether an 'nst'-style parameter p is a multiple of nst, and
-   set it to be one if not, with a warning. */
-void check_nst_param(FILE *fplog, t_commrec *cr,
-                     const char *desc_nst, int nst,
-                     const char *desc_p, int *p);
+int check_nstglobalcomm(const gmx::MDLogger &mdlog,
+                        int                  nstglobalcomm,
+                        t_inputrec          *ir);
 
 /*! \brief Return true if the \p value is equal across the set of multi-simulations
  *
@@ -110,22 +102,19 @@ bool multisim_int_all_are_equal(const gmx_multisim_t *ms,
                                 gmx_int64_t           value);
 
 void rerun_parallel_comm(t_commrec *cr, t_trxframe *fr,
-                         gmx_bool *bNotLastFrame);
+                         gmx_bool *bLastStep);
 
-/* get the conserved energy associated with the ensemble type*/
-real compute_conserved_from_auxiliary(t_inputrec *ir, t_state *state,
-                                      t_extmass *MassQ);
+/* Set the lambda values in the global state from a frame read with rerun */
+void setCurrentLambdasRerun(gmx_int64_t step, const t_lambda *fepvals,
+                            const t_trxframe *rerun_fr, const double *lam0,
+                            t_state *globalState);
 
-/* set the lambda values at each step of mdrun when they change */
-void set_current_lambdas(gmx_int64_t step, t_lambda *fepvals, gmx_bool bRerunMD,
-                         t_trxframe *rerun_fr, t_state *state_global, t_state *state, double lam0[]);
+/* Set the lambda values at each step of mdrun when they change */
+void setCurrentLambdasLocal(gmx_int64_t step, const t_lambda *fepvals,
+                            const double *lam0, t_state *state);
 
 int multisim_min(const gmx_multisim_t *ms, int nmin, int n);
 /* Set an appropriate value for n across the whole multi-simulation */
-
-void copy_coupling_state(t_state *statea, t_state *stateb,
-                         gmx_ekindata_t *ekinda, gmx_ekindata_t *ekindb, t_grpopts* opts);
-/* Copy stuff from state A to state B */
 
 void compute_globals(FILE *fplog, gmx_global_stat *gstat, t_commrec *cr, t_inputrec *ir,
                      t_forcerec *fr, gmx_ekindata_t *ekind,

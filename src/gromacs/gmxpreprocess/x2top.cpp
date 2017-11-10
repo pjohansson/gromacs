@@ -3,7 +3,7 @@
  *
  * Copyright (c) 1991-2000, University of Groningen, The Netherlands.
  * Copyright (c) 2001-2008, The GROMACS development team.
- * Copyright (c) 2013,2014,2015,2016, by the GROMACS development team, led by
+ * Copyright (c) 2013,2014,2015,2016,2017, by the GROMACS development team, led by
  * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
  * and including many others, as listed in the AUTHORS file in the
  * top-level source directory and at http://www.gromacs.org.
@@ -39,11 +39,11 @@
 #include "x2top.h"
 
 #include <cmath>
+#include <cstring>
 
 #include "gromacs/commandline/pargs.h"
 #include "gromacs/fileio/confio.h"
 #include "gromacs/fileio/gmxfio.h"
-#include "gromacs/fileio/readinp.h"
 #include "gromacs/gmxpreprocess/gen_ad.h"
 #include "gromacs/gmxpreprocess/gpp_nextnb.h"
 #include "gromacs/gmxpreprocess/hackblock.h"
@@ -101,9 +101,9 @@ static gmx_bool is_bond(int nnm, t_nm2type nmt[], char *ai, char *aj, real blen)
     return FALSE;
 }
 
-void mk_bonds(int nnm, t_nm2type nmt[],
-              t_atoms *atoms, const rvec x[], t_params *bond, int nbond[],
-              gmx_bool bPBC, matrix box)
+static void mk_bonds(int nnm, t_nm2type nmt[],
+                     t_atoms *atoms, const rvec x[], t_params *bond, int nbond[],
+                     gmx_bool bPBC, matrix box)
 {
     t_param b;
     int     i, j;
@@ -164,7 +164,7 @@ void mk_bonds(int nnm, t_nm2type nmt[],
     fflush(stderr);
 }
 
-int *set_cgnr(t_atoms *atoms, gmx_bool bUsePDBcharge, real *qtot, real *mtot)
+static int *set_cgnr(t_atoms *atoms, gmx_bool bUsePDBcharge, real *qtot, real *mtot)
 {
     int     i, n = 1;
     int    *cgnr;
@@ -191,8 +191,8 @@ int *set_cgnr(t_atoms *atoms, gmx_bool bUsePDBcharge, real *qtot, real *mtot)
     return cgnr;
 }
 
-gpp_atomtype_t set_atom_type(t_symtab *tab, t_atoms *atoms, t_params *bonds,
-                             int *nbonds, int nnm, t_nm2type nm2t[])
+static gpp_atomtype_t set_atom_type(t_symtab *tab, t_atoms *atoms, t_params *bonds,
+                                    int *nbonds, int nnm, t_nm2type nm2t[])
 {
     gpp_atomtype_t atype;
     int            nresolved;
@@ -212,8 +212,8 @@ gpp_atomtype_t set_atom_type(t_symtab *tab, t_atoms *atoms, t_params *bonds,
     return atype;
 }
 
-void lo_set_force_const(t_params *plist, real c[], int nrfp, gmx_bool bRound,
-                        gmx_bool bDih, gmx_bool bParam)
+static void lo_set_force_const(t_params *plist, real c[], int nrfp, gmx_bool bRound,
+                               gmx_bool bDih, gmx_bool bParam)
 {
     int    i, j;
     double cc;
@@ -262,8 +262,8 @@ void lo_set_force_const(t_params *plist, real c[], int nrfp, gmx_bool bRound,
     }
 }
 
-void set_force_const(t_params plist[], real kb, real kt, real kp, gmx_bool bRound,
-                     gmx_bool bParam)
+static void set_force_const(t_params plist[], real kb, real kt, real kp, gmx_bool bRound,
+                            gmx_bool bParam)
 {
     real c[MAXFORCEPARAM];
 
@@ -277,12 +277,12 @@ void set_force_const(t_params plist[], real kb, real kt, real kp, gmx_bool bRoun
     lo_set_force_const(&plist[F_PDIHS], c, 3, bRound, TRUE, bParam);
 }
 
-void calc_angles_dihs(t_params *ang, t_params *dih, const rvec x[], gmx_bool bPBC,
-                      matrix box)
+static void calc_angles_dihs(t_params *ang, t_params *dih, const rvec x[], gmx_bool bPBC,
+                             matrix box)
 {
     int    i, ai, aj, ak, al, t1, t2, t3;
     rvec   r_ij, r_kj, r_kl, m, n;
-    real   sign, th, costh, ph;
+    real   th, costh, ph;
     t_pbc  pbc;
 
     if (bPBC)
@@ -298,7 +298,7 @@ void calc_angles_dihs(t_params *ang, t_params *dih, const rvec x[], gmx_bool bPB
         ai = ang->param[i].ai();
         aj = ang->param[i].aj();
         ak = ang->param[i].ak();
-        th = RAD2DEG*bond_angle(x[ai], x[aj], x[ak], bPBC ? &pbc : NULL,
+        th = RAD2DEG*bond_angle(x[ai], x[aj], x[ak], bPBC ? &pbc : nullptr,
                                 r_ij, r_kj, &costh, &t1, &t2);
         if (debug)
         {
@@ -313,8 +313,8 @@ void calc_angles_dihs(t_params *ang, t_params *dih, const rvec x[], gmx_bool bPB
         aj = dih->param[i].aj();
         ak = dih->param[i].ak();
         al = dih->param[i].al();
-        ph = RAD2DEG*dih_angle(x[ai], x[aj], x[ak], x[al], bPBC ? &pbc : NULL,
-                               r_ij, r_kj, r_kl, m, n, &sign, &t1, &t2, &t3);
+        ph = RAD2DEG*dih_angle(x[ai], x[aj], x[ak], x[al], bPBC ? &pbc : nullptr,
+                               r_ij, r_kj, r_kl, m, n, &t1, &t2, &t3);
         if (debug)
         {
             fprintf(debug, "X2TOP: ai=%3d aj=%3d ak=%3d al=%3d r_ij=%8.3f r_kj=%8.3f r_kl=%8.3f ph=%8.3f\n",
@@ -379,7 +379,7 @@ static void print_rtp(const char *filenm, const char *title, t_atoms *atoms,
     for (i = 0; (i < atoms->nr); i++)
     {
         tp = atoms->atom[i].type;
-        if ((tpnm = get_atomtype_name(tp, atype)) == NULL)
+        if ((tpnm = get_atomtype_name(tp, atype)) == nullptr)
         {
             gmx_fatal(FARGS, "tp = %d, i = %d in print_rtp", tp, i);
         }
@@ -451,17 +451,17 @@ int gmx_x2top(int argc, char *argv[])
         { efRTP, "-r", "out",  ffOPTWR }
     };
 #define NFILE asize(fnm)
-    static real        kb = 4e5, kt = 400, kp = 5;
-    static t_restp     rtp_header_settings;
-    static gmx_bool    bRemoveDihedralIfWithImproper = FALSE;
-    static gmx_bool    bGenerateHH14Interactions     = TRUE;
-    static gmx_bool    bKeepAllGeneratedDihedrals    = FALSE;
-    static int         nrexcl                        = 3;
-    static gmx_bool    bParam                        = TRUE, bRound = TRUE;
-    static gmx_bool    bPairs                        = TRUE, bPBC = TRUE;
-    static gmx_bool    bUsePDBcharge                 = FALSE, bVerbose = FALSE;
-    static const char *molnm                         = "ICE";
-    static const char *ff                            = "oplsaa";
+    real               kb                            = 4e5, kt = 400, kp = 5;
+    t_restp            rtp_header_settings           = { 0 };
+    gmx_bool           bRemoveDihedralIfWithImproper = FALSE;
+    gmx_bool           bGenerateHH14Interactions     = TRUE;
+    gmx_bool           bKeepAllGeneratedDihedrals    = FALSE;
+    int                nrexcl                        = 3;
+    gmx_bool           bParam                        = TRUE, bRound = TRUE;
+    gmx_bool           bPairs                        = TRUE, bPBC = TRUE;
+    gmx_bool           bUsePDBcharge                 = FALSE, bVerbose = FALSE;
+    const char        *molnm                         = "ICE";
+    const char        *ff                            = "oplsaa";
     t_pargs            pa[]                          = {
         { "-ff",     FALSE, etSTR, {&ff},
           "Force field for your simulation. Type \"select\" for interactive selection." },
@@ -515,7 +515,7 @@ int gmx_x2top(int argc, char *argv[])
     }
 
     /* Force field selection, interactive or direct */
-    choose_ff(strcmp(ff, "select") == 0 ? NULL : ff,
+    choose_ff(strcmp(ff, "select") == 0 ? nullptr : ff,
               forcefield, sizeof(forcefield),
               ffdir, sizeof(ffdir));
 
@@ -531,10 +531,10 @@ int gmx_x2top(int argc, char *argv[])
     /* Read coordinates */
     t_topology *top;
     snew(top, 1);
-    read_tps_conf(opt2fn("-f", NFILE, fnm), top, &epbc, &x, NULL, box, FALSE);
+    read_tps_conf(opt2fn("-f", NFILE, fnm), top, &epbc, &x, nullptr, box, FALSE);
     t_atoms  *atoms = &top->atoms;
     natoms = atoms->nr;
-    if (atoms->pdbinfo == NULL)
+    if (atoms->pdbinfo == nullptr)
     {
         snew(atoms->pdbinfo, natoms);
     }
@@ -567,7 +567,7 @@ int gmx_x2top(int argc, char *argv[])
     init_nnb(&nnb, atoms->nr, 4);
     gen_nnb(&nnb, plist);
     print_nnb(&nnb, "NNB");
-    gen_pad(&nnb, atoms, &rtp_header_settings, plist, excls, NULL, TRUE);
+    gen_pad(&nnb, atoms, &rtp_header_settings, plist, excls, nullptr, TRUE);
     done_nnb(&nnb);
 
     if (!bPairs)
@@ -599,9 +599,9 @@ int gmx_x2top(int argc, char *argv[])
         fp = ftp2FILE(efTOP, NFILE, fnm, "w");
         print_top_header(fp, ftp2fn(efTOP, NFILE, fnm), TRUE, ffdir, 1.0);
 
-        write_top(fp, NULL, mymol.name, atoms, FALSE, bts, plist, excls, atype,
+        write_top(fp, nullptr, mymol.name, atoms, FALSE, bts, plist, excls, atype,
                   cgnr, rtp_header_settings.nrexcl);
-        print_top_mols(fp, mymol.name, ffdir, NULL, 0, NULL, 1, &mymol);
+        print_top_mols(fp, mymol.name, ffdir, nullptr, 0, nullptr, 1, &mymol);
 
         gmx_ffclose(fp);
     }

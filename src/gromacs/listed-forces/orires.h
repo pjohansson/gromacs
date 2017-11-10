@@ -3,7 +3,7 @@
  *
  * Copyright (c) 1991-2000, University of Groningen, The Netherlands.
  * Copyright (c) 2001-2004, The GROMACS development team.
- * Copyright (c) 2010,2014,2015, by the GROMACS development team, led by
+ * Copyright (c) 2010,2014,2015,2017, by the GROMACS development team, led by
  * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
  * and including many others, as listed in the AUTHORS file in the
  * top-level source directory and at http://www.gromacs.org.
@@ -50,24 +50,28 @@
 
 struct gmx_mtop_t;
 struct gmx_multisim_t;
-struct history_t;
+class history_t;
 struct t_inputrec;
 struct t_pbc;
 struct t_commrec;
 struct t_fcdata;
 struct t_oriresdata;
-struct t_state;
+class t_state;
 
 /*! \brief
  * Decides whether orientation restraints can work, and initializes
  * all the orientation restraint stuff in *od (and assumes *od is
  * already allocated.
+ * If orientation restraint are used, globalState is read and modified
+ * on the master rank (which is the only rank, since orientation
+ * restraints can not run in parallel).
  */
-void init_orires(FILE *fplog, const gmx_mtop_t *mtop,
-                 rvec x[],
+void init_orires(FILE             *fplog,
+                 const gmx_mtop_t *mtop,
                  const t_inputrec *ir,
-                 const t_commrec *cr, t_oriresdata *od,
-                 t_state *state);
+                 const t_commrec  *cr,
+                 t_state          *globalState,
+                 t_oriresdata     *od);
 
 /*! \brief
  * Calculates the time averaged D matrices, the S matrix for each experiment.

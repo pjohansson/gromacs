@@ -1,7 +1,7 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2012,2013,2014,2015,2016, by the GROMACS development team, led by
+ * Copyright (c) 2012,2013,2014,2015,2016,2017, by the GROMACS development team, led by
  * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
  * and including many others, as listed in the AUTHORS file in the
  * top-level source directory and at http://www.gromacs.org.
@@ -43,7 +43,7 @@
 
 #include <algorithm>
 
-#include "gromacs/math/calculate-ewald-splitting-coefficient.h"
+#include "gromacs/ewald/ewald-utils.h"
 #include "gromacs/math/functions.h"
 #include "gromacs/math/units.h"
 #include "gromacs/math/vec.h"
@@ -95,20 +95,6 @@
  */
 typedef struct
 {
-    real     mass;     /* mass */
-    int      type;     /* type (used for LJ parameters) */
-    real     q;        /* charge */
-    gmx_bool bConstr;  /* constrained, if TRUE, use #DOF=2 iso 3 */
-    real     con_mass; /* mass of heaviest atom connected by constraints */
-    real     con_len;  /* constraint length to the heaviest atom */
-} atom_nonbonded_kinetic_prop_t;
-
-/* Struct for unique atom type for calculating the energy drift.
- * The atom displacement depends on mass and constraints.
- * The energy jump for given distance depend on LJ type and q.
- */
-typedef struct
-{
     atom_nonbonded_kinetic_prop_t prop; /* non-bonded and kinetic atom prop. */
     int                           n;    /* #atoms of this type in the system */
 } verletbuf_atomtype_t;
@@ -121,8 +107,8 @@ typedef struct
     real  md3; // -V''' at the cutoff
 } pot_derivatives_t;
 
-void verletbuf_get_list_setup(gmx_bool gmx_unused     bSIMD,
-                              gmx_bool                bGPU,
+void verletbuf_get_list_setup(bool                    makeSimdPairList,
+                              bool                    makeGpuPairList,
                               verletbuf_list_setup_t *list_setup)
 {
     /* When calling this function we often don't know which kernel type we
@@ -133,9 +119,9 @@ void verletbuf_get_list_setup(gmx_bool gmx_unused     bSIMD,
      * of size 1, 2 or 4, so for 4x8 or 8x8 we use the estimate for 4x4.
      */
 
-    if (bGPU)
+    if (makeGpuPairList)
     {
-        /* The CUDA kernels split the j-clusters in two halves */
+        /* The GPU kernels split the j-clusters in two halves */
         list_setup->cluster_size_i = nbnxn_kernel_to_cluster_i_size(nbnxnk8x8x8_GPU);
         list_setup->cluster_size_j = nbnxn_kernel_to_cluster_j_size(nbnxnk8x8x8_GPU)/2;
     }
@@ -145,8 +131,7 @@ void verletbuf_get_list_setup(gmx_bool gmx_unused     bSIMD,
 
         kernel_type = nbnxnk4x4_PlainC;
 
-#if GMX_SIMD
-        if (bSIMD)
+        if (GMX_SIMD && makeSimdPairList)
         {
 #ifdef GMX_NBNXN_SIMD_2XNN
             /* We use the smallest cluster size to be on the safe side */
@@ -155,7 +140,6 @@ void verletbuf_get_list_setup(gmx_bool gmx_unused     bSIMD,
             kernel_type = nbnxnk4xN_SIMD_4xN;
 #endif
         }
-#endif
 
         list_setup->cluster_size_i = nbnxn_kernel_to_cluster_i_size(kernel_type);
         list_setup->cluster_size_j = nbnxn_kernel_to_cluster_j_size(kernel_type);
@@ -351,10 +335,10 @@ static void get_verlet_buffer_atomtypes(const gmx_mtop_t      *mtop,
     real                          *vsite_m;
     int                            n_nonlin_vsite_mol;
 
-    att  = NULL;
+    att  = nullptr;
     natt = 0;
 
-    if (n_nonlin_vsite != NULL)
+    if (n_nonlin_vsite != nullptr)
     {
         *n_nonlin_vsite = 0;
     }
@@ -420,7 +404,7 @@ static void get_verlet_buffer_atomtypes(const gmx_mtop_t      *mtop,
                          &mtop->ffparams,
                          vsite_m,
                          &n_nonlin_vsite_mol);
-        if (n_nonlin_vsite != NULL)
+        if (n_nonlin_vsite != nullptr)
         {
             *n_nonlin_vsite += nmol*n_nonlin_vsite_mol;
         }
@@ -479,69 +463,60 @@ static void get_verlet_buffer_atomtypes(const gmx_mtop_t      *mtop,
  * into account. If an atom has multiple constraints, this will result in
  * an overestimate of the displacement, which gives a larger drift and buffer.
  */
-static void constrained_atom_sigma2(real                                 kT_fac,
-                                    const atom_nonbonded_kinetic_prop_t *prop,
-                                    real                                *sigma2_2d,
-                                    real                                *sigma2_3d)
+void constrained_atom_sigma2(real                                 kT_fac,
+                             const atom_nonbonded_kinetic_prop_t *prop,
+                             real                                *sigma2_2d,
+                             real                                *sigma2_3d)
 {
-    real sigma2_rot;
-    real com_dist;
-    real sigma2_rel;
-    real scale;
-
     /* Here we decompose the motion of a constrained atom into two
      * components: rotation around the COM and translation of the COM.
      */
 
-    /* Determine the variance for the displacement of the rotational mode */
-    sigma2_rot = kT_fac/(prop->mass*(prop->mass + prop->con_mass)/prop->con_mass);
+    /* Determine the variance of the arc length for the two rotational DOFs */
+    real massFraction = prop->con_mass/(prop->mass + prop->con_mass);
+    real sigma2_rot   = kT_fac*massFraction/prop->mass;
 
     /* The distance from the atom to the COM, i.e. the rotational arm */
-    com_dist = prop->con_len*prop->con_mass/(prop->mass + prop->con_mass);
+    real comDistance  = prop->con_len*massFraction;
 
     /* The variance relative to the arm */
-    sigma2_rel = sigma2_rot/(com_dist*com_dist);
-    /* At 6 the scaling formula has slope 0,
-     * so we keep sigma2_2d constant after that.
+    real sigma2_rel   = sigma2_rot/gmx::square(comDistance);
+
+    /* For sigma2_rel << 1 we don't notice the rotational effect and
+     * we have a normal, Gaussian displacement distribution.
+     * For larger sigma2_rel the displacement is much less, in fact it can
+     * not exceed 2*comDistance. We can calculate MSD/arm^2 as:
+     *   integral_x=0-inf distance2(x) x/sigma2_rel exp(-x^2/(2 sigma2_rel)) dx
+     * where x is angular displacement and distance2(x) is the distance^2
+     * between points at angle 0 and x:
+     *   distance2(x) = (sin(x) - sin(0))^2 + (cos(x) - cos(0))^2
+     * The limiting value of this MSD is 2, which is also the value for
+     * a uniform rotation distribution that would be reached at long time.
+     * The maximum is 2.5695 at sigma2_rel = 4.5119.
+     * We approximate this integral with a rational polynomial with
+     * coefficients from a Taylor expansion. This approximation is an
+     * overestimate for all values of sigma2_rel. Its maximum value
+     * of 2.6491 is reached at sigma2_rel = sqrt(45/2) = 4.7434.
+     * We keep the approximation constant after that.
+     * We use this approximate MSD as the variance for a Gaussian distribution.
+     *
+     * NOTE: For any sensible buffer tolerance this will result in a (large)
+     * overestimate of the buffer size, since the Gaussian has a long tail,
+     * whereas the actual distribution can not reach values larger than 2.
      */
-    if (sigma2_rel < 6)
-    {
-        /* A constrained atom rotates around the atom it is constrained to.
-         * This results in a smaller linear displacement than for a free atom.
-         * For a perfectly circular displacement, this lowers the displacement
-         * by: 1/arcsin(arc_length)
-         * and arcsin(x) = 1 + x^2/6 + ...
-         * For sigma2_rel<<1 the displacement distribution is erfc
-         * (exact formula is provided below). For larger sigma, it is clear
-         * that the displacement can't be larger than 2*com_dist.
-         * It turns out that the distribution becomes nearly uniform.
-         * For intermediate sigma2_rel, scaling down sigma with the third
-         * order expansion of arcsin with argument sigma_rel turns out
-         * to give a very good approximation of the distribution and variance.
-         * Even for larger values, the variance is only slightly overestimated.
-         * Note that the most relevant displacements are in the long tail.
-         * This rotation approximation always overestimates the tail (which
-         * runs to infinity, whereas it should be <= 2*com_dist).
-         * Thus we always overestimate the drift and the buffer size.
-         */
-        scale      = 1/(1 + sigma2_rel/6);
-        *sigma2_2d = sigma2_rot*scale*scale;
-    }
-    else
-    {
-        /* sigma_2d is set to the maximum given by the scaling above.
-         * For large sigma2 the real displacement distribution is close
-         * to uniform over -2*con_len to 2*com_dist.
-         * Our erfc with sigma_2d=sqrt(1.5)*com_dist (which means the sigma
-         * of the erfc output distribution is con_dist) overestimates
-         * the variance and additionally has a long tail. This means
-         * we have a (safe) overestimation of the drift.
-         */
-        *sigma2_2d = 1.5*com_dist*com_dist;
-    }
+    /* Coeffients obtained from a Taylor expansion */
+    const real a = 1.0/3.0;
+    const real b = 2.0/45.0;
+
+    /* Our approximation is constant after sigma2_rel = 1/sqrt(b) */
+    sigma2_rel   = std::min(sigma2_rel, 1/std::sqrt(b));
+
+    /* Compute the approximate sigma^2 for 2D motion due to the rotation */
+    *sigma2_2d   = gmx::square(comDistance)*
+        sigma2_rel/(1 + a*sigma2_rel + b*gmx::square(sigma2_rel));
 
     /* The constrained atom also moves (in 3D) with the COM of both atoms */
-    *sigma2_3d = kT_fac/(prop->mass + prop->con_mass);
+    *sigma2_3d   = kT_fac/(prop->mass + prop->con_mass);
 }
 
 static void get_atom_sigma2(real                                 kT_fac,
@@ -821,6 +796,8 @@ static real md3_force_switch(real p, real rswitch, real rc)
 
 void calc_verlet_buffer_size(const gmx_mtop_t *mtop, real boxvol,
                              const t_inputrec *ir,
+                             int               nstlist,
+                             int               list_lifetime,
                              real reference_temperature,
                              const verletbuf_list_setup_t *list_setup,
                              int *n_nonlin_vsite,
@@ -832,7 +809,7 @@ void calc_verlet_buffer_size(const gmx_mtop_t *mtop, real boxvol,
     real                  particle_distance;
     real                  nb_clust_frac_pairs_not_in_list_at_cutoff;
 
-    verletbuf_atomtype_t *att  = NULL;
+    verletbuf_atomtype_t *att  = nullptr;
     int                   natt = -1, i;
     real                  elfac;
     real                  kT_fac, mass_min;
@@ -876,7 +853,7 @@ void calc_verlet_buffer_size(const gmx_mtop_t *mtop, real boxvol,
     resolution = 0.001;
 
     env = getenv("GMX_VERLET_BUFFER_RES");
-    if (env != NULL)
+    if (env != nullptr)
     {
         sscanf(env, "%lf", &resolution);
     }
@@ -1024,7 +1001,7 @@ void calc_verlet_buffer_size(const gmx_mtop_t *mtop, real boxvol,
     }
 
     /* Determine the variance of the atomic displacement
-     * over nstlist-1 steps: kT_fac
+     * over list_lifetime steps: kT_fac
      * For inertial dynamics (not Brownian dynamics) the mass factor
      * is not included in kT_fac, it is added later.
      */
@@ -1035,7 +1012,7 @@ void calc_verlet_buffer_size(const gmx_mtop_t *mtop, real boxvol,
          * should be negligible (unless nstlist is extremely large, which
          * you wouldn't do anyhow).
          */
-        kT_fac = 2*BOLTZ*reference_temperature*(ir->nstlist-1)*ir->delta_t;
+        kT_fac = 2*BOLTZ*reference_temperature*list_lifetime*ir->delta_t;
         if (ir->bd_fric > 0)
         {
             /* This is directly sigma^2 of the displacement */
@@ -1066,7 +1043,7 @@ void calc_verlet_buffer_size(const gmx_mtop_t *mtop, real boxvol,
     }
     else
     {
-        kT_fac = BOLTZ*reference_temperature*gmx::square((ir->nstlist-1)*ir->delta_t);
+        kT_fac = BOLTZ*reference_temperature*gmx::square(list_lifetime*ir->delta_t);
     }
 
     mass_min = att[0].prop.mass;
@@ -1116,7 +1093,7 @@ void calc_verlet_buffer_size(const gmx_mtop_t *mtop, real boxvol,
         drift *= nb_clust_frac_pairs_not_in_list_at_cutoff;
 
         /* Convert the drift to drift per unit time per atom */
-        drift /= ir->nstlist*ir->delta_t*mtop->natoms;
+        drift /= nstlist*ir->delta_t*mtop->natoms;
 
         if (debug)
         {

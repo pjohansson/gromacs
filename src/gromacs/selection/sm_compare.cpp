@@ -1,7 +1,7 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2009,2010,2011,2012,2013,2014,2015, by the GROMACS development team, led by
+ * Copyright (c) 2009,2010,2011,2012,2013,2014,2015,2016,2017, by the GROMACS development team, led by
  * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
  * and including many others, as listed in the AUTHORS file in the
  * top-level source directory and at http://www.gromacs.org.
@@ -49,6 +49,7 @@
 #include "gromacs/utility/exceptions.h"
 #include "gromacs/utility/smalloc.h"
 
+#include "keywords.h"
 #include "selmethod.h"
 
 /** Defines the comparison operator for comparison expressions. */
@@ -124,25 +125,32 @@ init_data_compare(int npar, gmx_ana_selparam_t *param);
  * \returns   0 if the input data is valid, -1 on error.
  */
 static void
-init_compare(t_topology *top, int npar, gmx_ana_selparam_t *param, void *data);
+init_compare(const gmx_mtop_t *top, int npar, gmx_ana_selparam_t *param, void *data);
 /** Frees the memory allocated for comparison expression evaluation. */
 static void
 free_data_compare(void *data);
-/** Evaluates comparison expressions. */
+/*! \brief
+ * Evaluates comparison expressions.
+ *
+ * \param[in]  context  Not used.
+ * \param[in]  g        Evaluation index group.
+ * \param[out] out      Output data structure (\p out->u.g is used).
+ * \param[in]  data     Should point to a \c t_methoddata_compare.
+ */
 static void
-evaluate_compare(t_topology *top, t_trxframe *fr, t_pbc *pbc,
+evaluate_compare(const gmx::SelMethodEvalContext &context,
                  gmx_ana_index_t *g, gmx_ana_selvalue_t *out, void *data);
 
 /** Parameters for comparison expression evaluation. */
 static gmx_ana_selparam_t smparams_compare[] = {
-    {"int1",  {INT_VALUE,  -1, {NULL}}, NULL,
+    {"int1",  {INT_VALUE,  -1, {nullptr}}, nullptr,
      SPAR_OPTIONAL | SPAR_DYNAMIC | SPAR_ATOMVAL},
-    {"real1", {REAL_VALUE, -1, {NULL}}, NULL,
+    {"real1", {REAL_VALUE, -1, {nullptr}}, nullptr,
      SPAR_OPTIONAL | SPAR_DYNAMIC | SPAR_ATOMVAL},
-    {"op",    {STR_VALUE,   1, {NULL}}, NULL, 0},
-    {"int2",  {INT_VALUE,  -1, {NULL}}, NULL,
+    {"op",    {STR_VALUE,   1, {nullptr}}, nullptr, 0},
+    {"int2",  {INT_VALUE,  -1, {nullptr}}, nullptr,
      SPAR_OPTIONAL | SPAR_DYNAMIC | SPAR_ATOMVAL},
-    {"real2", {REAL_VALUE, -1, {NULL}}, NULL,
+    {"real2", {REAL_VALUE, -1, {nullptr}}, nullptr,
      SPAR_OPTIONAL | SPAR_DYNAMIC | SPAR_ATOMVAL},
 };
 
@@ -151,14 +159,14 @@ gmx_ana_selmethod_t sm_compare = {
     "cmp", GROUP_VALUE, SMETH_SINGLEVAL,
     asize(smparams_compare), smparams_compare,
     &init_data_compare,
-    NULL,
+    nullptr,
     &init_compare,
-    NULL,
+    nullptr,
     &free_data_compare,
-    NULL,
+    nullptr,
     &evaluate_compare,
-    NULL,
-    {NULL, NULL, 0, NULL},
+    nullptr,
+    {nullptr, nullptr, 0, nullptr},
 };
 
 /*! \brief
@@ -199,7 +207,7 @@ comparison_type(char *str)
 static const char *
 comparison_type_str(e_comparison_t cmpt)
 {
-    const char *p = NULL;
+    const char *p = nullptr;
     switch (cmpt)
     {
         case CMP_INVALID: p = "INVALID"; break;
@@ -323,8 +331,8 @@ init_comparison_value(t_compare_value *val, gmx_ana_selparam_t param[2])
     else
     {
         n           = 0;
-        val->i      = NULL;
-        val->r      = NULL;
+        val->i      = nullptr;
+        val->r      = nullptr;
     }
     return n;
 }
@@ -409,7 +417,7 @@ convert_real_int(int n, t_compare_value *val, e_comparison_t cmpt, bool bRight)
 }
 
 static void
-init_compare(t_topology * /* top */, int /* npar */, gmx_ana_selparam_t *param, void *data)
+init_compare(const gmx_mtop_t * /* top */, int /* npar */, gmx_ana_selparam_t *param, void *data)
 {
     t_methoddata_compare *d = (t_methoddata_compare *)data;
     int                   n1, n2;
@@ -451,9 +459,9 @@ init_compare(t_topology * /* top */, int /* npar */, gmx_ana_selparam_t *param, 
             /* Reverse the sides to place the integer on the right */
             int    flags;
             d->left.r      = d->right.r;
-            d->right.r     = NULL;
+            d->right.r     = nullptr;
             d->right.i     = d->left.i;
-            d->left.i      = NULL;
+            d->left.i      = nullptr;
             flags          = d->left.flags;
             d->left.flags  = d->right.flags;
             d->right.flags = flags;
@@ -503,25 +511,18 @@ free_data_compare(void *data)
 /*! \brief
  * Implementation for evaluate_compare() for integer values.
  *
- * \param[in]  top   Not used.
- * \param[in]  fr    Not used.
- * \param[in]  pbc   Not used.
  * \param[in]  g     Evaluation index group.
  * \param[out] out   Output data structure (\p out->u.g is used).
  * \param[in]  data  Should point to a \c t_methoddata_compare.
  */
 static void
-evaluate_compare_int(t_topology *top, t_trxframe *fr, t_pbc *pbc,
-                     gmx_ana_index_t *g, gmx_ana_selvalue_t *out, void *data)
+evaluate_compare_int(gmx_ana_index_t *g, gmx_ana_selvalue_t *out, void *data)
 {
     t_methoddata_compare *d = (t_methoddata_compare *)data;
     int                   i, i1, i2, ig;
     int                   a, b;
     bool                  bAccept;
 
-    GMX_UNUSED_VALUE(top);
-    GMX_UNUSED_VALUE(fr);
-    GMX_UNUSED_VALUE(pbc);
     for (i = i1 = i2 = ig = 0; i < g->isize; ++i)
     {
         a       = d->left.i[i1];
@@ -556,9 +557,6 @@ evaluate_compare_int(t_topology *top, t_trxframe *fr, t_pbc *pbc,
 /*! \brief
  * Implementation for evaluate_compare() if either value is non-integer.
  *
- * \param[in]  top   Not used.
- * \param[in]  fr    Not used.
- * \param[in]  pbc   Not used.
  * \param[in]  g     Evaluation index group.
  * \param[out] out   Output data structure (\p out->u.g is used).
  * \param[in]  data  Should point to a \c t_methoddata_compare.
@@ -567,17 +565,13 @@ evaluate_compare_int(t_topology *top, t_trxframe *fr, t_pbc *pbc,
  * This is ensured by the initialization method.
  */
 static void
-evaluate_compare_real(t_topology *top, t_trxframe *fr, t_pbc *pbc,
-                      gmx_ana_index_t *g, gmx_ana_selvalue_t *out, void *data)
+evaluate_compare_real(gmx_ana_index_t *g, gmx_ana_selvalue_t *out, void *data)
 {
     t_methoddata_compare *d = (t_methoddata_compare *)data;
     int                   i, i1, i2, ig;
     real                  a, b;
     bool                  bAccept;
 
-    GMX_UNUSED_VALUE(top);
-    GMX_UNUSED_VALUE(fr);
-    GMX_UNUSED_VALUE(pbc);
     for (i = i1 = i2 = ig = 0; i < g->isize; ++i)
     {
         a       = d->left.r[i1];
@@ -609,26 +603,18 @@ evaluate_compare_real(t_topology *top, t_trxframe *fr, t_pbc *pbc,
     out->u.g->isize = ig;
 }
 
-/*!
- * \param[in]  top   Not used.
- * \param[in]  fr    Not used.
- * \param[in]  pbc   Not used.
- * \param[in]  g     Evaluation index group.
- * \param[out] out   Output data structure (\p out->u.g is used).
- * \param[in]  data  Should point to a \c t_methoddata_compare.
- */
 static void
-evaluate_compare(t_topology *top, t_trxframe *fr, t_pbc *pbc,
+evaluate_compare(const gmx::SelMethodEvalContext & /*context*/,
                  gmx_ana_index_t *g, gmx_ana_selvalue_t *out, void *data)
 {
     t_methoddata_compare *d = (t_methoddata_compare *)data;
 
     if (!((d->left.flags | d->right.flags) & CMP_REALVAL))
     {
-        evaluate_compare_int(top, fr, pbc, g, out, data);
+        evaluate_compare_int(g, out, data);
     }
     else
     {
-        evaluate_compare_real(top, fr, pbc, g, out, data);
+        evaluate_compare_real(g, out, data);
     }
 }

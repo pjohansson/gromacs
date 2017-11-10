@@ -3,7 +3,7 @@
  *
  * Copyright (c) 1991-2000, University of Groningen, The Netherlands.
  * Copyright (c) 2001-2004, The GROMACS development team.
- * Copyright (c) 2013,2014,2015,2016, by the GROMACS development team, led by
+ * Copyright (c) 2013,2014,2015,2016,2017, by the GROMACS development team, led by
  * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
  * and including many others, as listed in the AUTHORS file in the
  * top-level source directory and at http://www.gromacs.org.
@@ -64,7 +64,7 @@
 #include "gromacs/utility/futil.h"
 #include "gromacs/utility/real.h"
 #include "gromacs/utility/smalloc.h"
-#include "gromacs/utility/stringutil.h"
+#include "gromacs/utility/strconvert.h"
 
 /*! \brief Shortcut macro to select modes. */
 #define MODE(x) ((mode & (x)) == (x))
@@ -87,36 +87,42 @@ enum {
 };
 
 /*! \brief Routine to compute ACF using FFT. */
-static void low_do_four_core(int nfour, int nframes, real c1[], real cfour[],
+static void low_do_four_core(int nframes, real c1[], real cfour[],
                              int nCos)
 {
     int  i = 0;
-
+    std::vector<std::vector<real> > data;
+    data.resize(1);
+    data[0].resize(nframes, 0);
     switch (nCos)
     {
         case enNorm:
             for (i = 0; (i < nframes); i++)
             {
-                cfour[i] = c1[i];
+                data[0][i] = c1[i];
             }
             break;
         case enCos:
             for (i = 0; (i < nframes); i++)
             {
-                cfour[i] = cos(c1[i]);
+                data[0][i] = cos(c1[i]);
             }
             break;
         case enSin:
             for (i = 0; (i < nframes); i++)
             {
-                cfour[i] = sin(c1[i]);
+                data[0][i] = sin(c1[i]);
             }
             break;
         default:
             gmx_fatal(FARGS, "nCos = %d, %s %d", nCos, __FILE__, __LINE__);
     }
 
-    many_auto_correl(1, nframes, nfour, &cfour);
+    many_auto_correl(&data);
+    for (i = 0; (i < nframes); i++)
+    {
+        cfour[i] = data[0][i];
+    }
 }
 
 /*! \brief Routine to comput ACF without FFT. */
@@ -238,7 +244,7 @@ static void do_ac_core(int nframes, int nout,
 }
 
 /*! \brief Routine to normalize ACF, dividing by corr[0]. */
-void normalize_acf(int nout, real corr[])
+static void normalize_acf(int nout, real corr[])
 {
     int    j;
     double c0;
@@ -279,7 +285,7 @@ void normalize_acf(int nout, real corr[])
 }
 
 /*! \brief Routine that averages ACFs. */
-void average_acf(gmx_bool bVerbose, int n, int nitem, real **c1)
+static void average_acf(gmx_bool bVerbose, int n, int nitem, real **c1)
 {
     real c0;
     int  i, j;
@@ -301,7 +307,7 @@ void average_acf(gmx_bool bVerbose, int n, int nitem, real **c1)
 }
 
 /*! \brief Normalize ACFs. */
-void norm_and_scale_vectors(int nframes, real c1[], real scale)
+static void norm_and_scale_vectors(int nframes, real c1[], real scale)
 {
     int   j, m;
     real *rij;
@@ -332,22 +338,22 @@ static void dump_tmp(char *s, int n, real c[])
 }
 
 /*! \brief High level ACF routine. */
-void do_four_core(unsigned long mode, int nfour, int nf2, int nframes,
-                  real c1[], real csum[], real ctmp[])
+static void do_four_core(unsigned long mode, int nframes,
+                         real c1[], real csum[], real ctmp[])
 {
     real   *cfour;
     char    buf[32];
     real    fac;
     int     j, m, m1;
 
-    snew(cfour, nfour);
+    snew(cfour, nframes);
 
     if (MODE(eacNormal))
     {
         /********************************************
          *  N O R M A L
          ********************************************/
-        low_do_four_core(nfour, nf2, c1, csum, enNorm);
+        low_do_four_core(nframes, c1, csum, enNorm);
     }
     else if (MODE(eacCos))
     {
@@ -357,21 +363,21 @@ void do_four_core(unsigned long mode, int nfour, int nf2, int nframes,
         /* Copy the data to temp array. Since we need it twice
          * we can't overwrite original.
          */
-        for (j = 0; (j < nf2); j++)
+        for (j = 0; (j < nframes); j++)
         {
             ctmp[j] = c1[j];
         }
 
         /* Cosine term of AC function */
-        low_do_four_core(nfour, nf2, ctmp, cfour, enCos);
-        for (j = 0; (j < nf2); j++)
+        low_do_four_core(nframes, ctmp, cfour, enCos);
+        for (j = 0; (j < nframes); j++)
         {
             c1[j]  = cfour[j];
         }
 
         /* Sine term of AC function */
-        low_do_four_core(nfour, nf2, ctmp, cfour, enSin);
-        for (j = 0; (j < nf2); j++)
+        low_do_four_core(nframes, ctmp, cfour, enSin);
+        for (j = 0; (j < nframes); j++)
         {
             c1[j]  += cfour[j];
             csum[j] = c1[j];
@@ -418,34 +424,34 @@ void do_four_core(unsigned long mode, int nfour, int nf2, int nframes,
         /* Because of normalization the number of -0.5 to subtract
          * depends on the number of data points!
          */
-        for (j = 0; (j < nf2); j++)
+        for (j = 0; (j < nframes); j++)
         {
-            csum[j]  = -0.5*(nf2-j);
+            csum[j]  = -0.5*(nframes-j);
         }
 
         /***** DIAGONAL ELEMENTS ************/
         for (m = 0; (m < DIM); m++)
         {
             /* Copy the vector data in a linear array */
-            for (j = 0; (j < nf2); j++)
+            for (j = 0; (j < nframes); j++)
             {
                 ctmp[j]  = gmx::square(c1[DIM*j+m]);
             }
             if (debug)
             {
                 sprintf(buf, "c1diag%d.xvg", m);
-                dump_tmp(buf, nf2, ctmp);
+                dump_tmp(buf, nframes, ctmp);
             }
 
-            low_do_four_core(nfour, nf2, ctmp, cfour, enNorm);
+            low_do_four_core(nframes, ctmp, cfour, enNorm);
 
             if (debug)
             {
                 sprintf(buf, "c1dfout%d.xvg", m);
-                dump_tmp(buf, nf2, cfour);
+                dump_tmp(buf, nframes, cfour);
             }
             fac = 1.5;
-            for (j = 0; (j < nf2); j++)
+            for (j = 0; (j < nframes); j++)
             {
                 csum[j] += fac*(cfour[j]);
             }
@@ -455,7 +461,7 @@ void do_four_core(unsigned long mode, int nfour, int nf2, int nframes,
         {
             /* Copy the vector data in a linear array */
             m1 = (m+1) % DIM;
-            for (j = 0; (j < nf2); j++)
+            for (j = 0; (j < nframes); j++)
             {
                 ctmp[j] = c1[DIM*j+m]*c1[DIM*j+m1];
             }
@@ -463,16 +469,16 @@ void do_four_core(unsigned long mode, int nfour, int nf2, int nframes,
             if (debug)
             {
                 sprintf(buf, "c1off%d.xvg", m);
-                dump_tmp(buf, nf2, ctmp);
+                dump_tmp(buf, nframes, ctmp);
             }
-            low_do_four_core(nfour, nf2, ctmp, cfour, enNorm);
+            low_do_four_core(nframes, ctmp, cfour, enNorm);
             if (debug)
             {
                 sprintf(buf, "c1ofout%d.xvg", m);
-                dump_tmp(buf, nf2, cfour);
+                dump_tmp(buf, nframes, cfour);
             }
             fac = 3.0;
-            for (j = 0; (j < nf2); j++)
+            for (j = 0; (j < nframes); j++)
             {
                 csum[j] += fac*cfour[j];
             }
@@ -493,19 +499,19 @@ void do_four_core(unsigned long mode, int nfour, int nf2, int nframes,
          * First for XX, then for YY, then for ZZ
          * After that we sum them and normalise
          */
-        for (j = 0; (j < nf2); j++)
+        for (j = 0; (j < nframes); j++)
         {
             csum[j] = 0.0;
         }
         for (m = 0; (m < DIM); m++)
         {
             /* Copy the vector data in a linear array */
-            for (j = 0; (j < nf2); j++)
+            for (j = 0; (j < nframes); j++)
             {
                 ctmp[j] = c1[DIM*j+m];
             }
-            low_do_four_core(nfour, nf2, ctmp, cfour, enNorm);
-            for (j = 0; (j < nf2); j++)
+            low_do_four_core(nframes, ctmp, cfour, enNorm);
+            for (j = 0; (j < nframes); j++)
             {
                 csum[j] += cfour[j];
             }
@@ -517,7 +523,7 @@ void do_four_core(unsigned long mode, int nfour, int nf2, int nframes,
     }
 
     sfree(cfour);
-    for (j = 0; (j < nf2); j++)
+    for (j = 0; (j < nframes); j++)
     {
         c1[j] = csum[j]/(real)(nframes-j);
     }
@@ -530,8 +536,8 @@ void low_do_autocorr(const char *fn, const gmx_output_env_t *oenv, const char *t
                      gmx_bool bVerbose, real tbeginfit, real tendfit,
                      int eFitFn)
 {
-    FILE       *fp, *gp = NULL;
-    int         i, nfour;
+    FILE       *fp, *gp = nullptr;
+    int         i;
     real       *csum;
     real       *ctmp, *fit;
     real        sum, Ct2av, Ctav;
@@ -576,30 +582,9 @@ void low_do_autocorr(const char *fn, const gmx_output_env_t *oenv, const char *t
                gmx::boolToString(bNormalize));
         printf("mode = %lu, dt = %g, nrestart = %d\n", mode, dt, nrestart);
     }
-    if (bFour)
-    {
-        /* For FTT corr., we need to pad the data with at least nframes zeros */
-        nfour = 2;
-        while (2*nframes > nfour)
-        {
-            nfour *= 2;
-        }
-        if (debug)
-        {
-            fprintf(debug, "Using FFT to calculate %s, #points for FFT = %d\n",
-                    title, nfour);
-        }
-
-        /* Allocate temp arrays */
-        snew(csum, nfour);
-        snew(ctmp, nfour);
-    }
-    else
-    {
-        nfour = 0; /* To keep the compiler happy */
-        snew(csum, nframes);
-        snew(ctmp, nframes);
-    }
+    /* Allocate temp arrays */
+    snew(csum, nframes);
+    snew(ctmp, nframes);
 
     /* Loop over items (e.g. molecules or dihedrals)
      * In this loop the actual correlation functions are computed, but without
@@ -615,7 +600,7 @@ void low_do_autocorr(const char *fn, const gmx_output_env_t *oenv, const char *t
 
         if (bFour)
         {
-            do_four_core(mode, nfour, nframes, nframes, c1[i], csum, ctmp);
+            do_four_core(mode, nframes, c1[i], csum, ctmp);
         }
         else
         {
@@ -636,8 +621,8 @@ void low_do_autocorr(const char *fn, const gmx_output_env_t *oenv, const char *t
     }
     else
     {
-        fit = NULL;
-        fp  = NULL;
+        fit = nullptr;
+        fp  = nullptr;
     }
     if (bAver)
     {
@@ -653,12 +638,12 @@ void low_do_autocorr(const char *fn, const gmx_output_env_t *oenv, const char *t
 
         if (eFitFn != effnNONE)
         {
-            fit_acf(nout, eFitFn, oenv, fn != NULL, tbeginfit, tendfit, dt, c1[0], fit);
+            fit_acf(nout, eFitFn, oenv, fn != nullptr, tbeginfit, tendfit, dt, c1[0], fit);
             sum = print_and_integrate(fp, nout, dt, c1[0], fit, 1);
         }
         else
         {
-            sum = print_and_integrate(fp, nout, dt, c1[0], NULL, 1);
+            sum = print_and_integrate(fp, nout, dt, c1[0], nullptr, 1);
         }
         if (bVerbose)
         {
@@ -681,12 +666,12 @@ void low_do_autocorr(const char *fn, const gmx_output_env_t *oenv, const char *t
             }
             if (eFitFn != effnNONE)
             {
-                fit_acf(nout, eFitFn, oenv, fn != NULL, tbeginfit, tendfit, dt, c1[i], fit);
+                fit_acf(nout, eFitFn, oenv, fn != nullptr, tbeginfit, tendfit, dt, c1[i], fit);
                 sum = print_and_integrate(fp, nout, dt, c1[i], fit, 1);
             }
             else
             {
-                sum = print_and_integrate(fp, nout, dt, c1[i], NULL, 1);
+                sum = print_and_integrate(fp, nout, dt, c1[i], nullptr, 1);
                 if (debug)
                 {
                     fprintf(debug,
@@ -722,7 +707,7 @@ void low_do_autocorr(const char *fn, const gmx_output_env_t *oenv, const char *t
 }
 
 /*! \brief Legend for selecting Legendre polynomials. */
-static const char *Leg[]   = { NULL, "0", "1", "2", "3", NULL };
+static const char *Leg[]   = { nullptr, "0", "1", "2", "3", nullptr };
 
 t_pargs *add_acf_pargs(int *npargs, t_pargs *pa)
 {

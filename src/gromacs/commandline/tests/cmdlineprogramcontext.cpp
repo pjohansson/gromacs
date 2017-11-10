@@ -1,7 +1,7 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2013,2014,2015,2016, by the GROMACS development team, led by
+ * Copyright (c) 2013,2014,2015,2016,2017, by the GROMACS development team, led by
  * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
  * and including many others, as listed in the AUTHORS file in the
  * top-level source directory and at http://www.gromacs.org.
@@ -114,7 +114,7 @@ class CommandLineProgramContextTest : public ::testing::Test
 
         void testBinaryPathSearch(const char *argv0)
         {
-            ASSERT_TRUE(env_.get() != NULL);
+            ASSERT_TRUE(env_.get() != nullptr);
             gmx::CommandLineProgramContext  info(1, &argv0, move(env_));
             EXPECT_EQ(expectedExecutable_, info.fullBinaryPath());
         }
@@ -146,7 +146,7 @@ TEST_F(CommandLineProgramContextTest, FindsBinaryFromPath)
 TEST_F(CommandLineProgramContextTest, FindsBinaryFromCurrentDirectory)
 {
     env_->workingDirectory_ = Path::join(env_->getWorkingDirectory(), "bin");
-    env_->path_.push_back("");
+    env_->path_.emplace_back("");
     testBinaryPathSearch("test-exe");
 }
 

@@ -1,7 +1,7 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2014,2015, by the GROMACS development team, led by
+ * Copyright (c) 2014,2015,2016,2017, by the GROMACS development team, led by
  * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
  * and including many others, as listed in the AUTHORS file in the
  * top-level source directory and at http://www.gromacs.org.
@@ -41,10 +41,11 @@
 #include "gromacs/fileio/confio.h"
 #include "gromacs/topology/atomprop.h"
 #include "gromacs/topology/atoms.h"
+#include "gromacs/topology/mtop_util.h"
 #include "gromacs/topology/topology.h"
 #include "gromacs/utility/cstringutil.h"
-#include "gromacs/utility/scoped_cptr.h"
 #include "gromacs/utility/smalloc.h"
+#include "gromacs/utility/unique_cptr.h"
 
 using gmx::RVec;
 
@@ -73,16 +74,39 @@ makeExclusionDistances(const t_atoms *a, gmx_atomprop_t aps,
     return exclusionDistances;
 }
 
+void readConformation(const char *confin, gmx_mtop_t *top,
+                      std::vector<RVec> *x, std::vector<RVec> *v,
+                      int *ePBC, matrix box, const char *statusTitle)
+{
+    fprintf(stderr, "Reading %s configuration%s\n", statusTitle,
+            v ? " and velocities" : "");
+    rvec                   *x_tmp = nullptr, *v_tmp = nullptr;
+    bool                    dummy;
+    readConfAndTopology(confin, &dummy, top, ePBC, x ? &x_tmp : nullptr, v ? &v_tmp : nullptr, box);
+    const gmx::sfree_guard  xguard(x_tmp);
+    const gmx::sfree_guard  vguard(v_tmp);
+    if (x && x_tmp)
+    {
+        *x = std::vector<RVec>(x_tmp, x_tmp + top->natoms);
+    }
+    if (v && v_tmp)
+    {
+        *v = std::vector<RVec>(v_tmp, v_tmp + top->natoms);
+    }
+    fprintf(stderr, "%s\nContaining %d atoms in %d residues\n",
+            *top->name, top->natoms, gmx_mtop_nres(top));
+}
+
 void readConformation(const char *confin, t_topology *top,
                       std::vector<RVec> *x, std::vector<RVec> *v,
                       int *ePBC, matrix box, const char *statusTitle)
 {
     fprintf(stderr, "Reading %s configuration%s\n", statusTitle,
             v ? " and velocities" : "");
-    rvec                   *x_tmp = NULL, *v_tmp = NULL;
-    read_tps_conf(confin, top, ePBC, x ? &x_tmp : NULL, v ? &v_tmp : NULL, box, FALSE);
-    gmx::scoped_guard_sfree xguard(x_tmp);
-    gmx::scoped_guard_sfree vguard(v_tmp);
+    rvec                   *x_tmp = nullptr, *v_tmp = nullptr;
+    read_tps_conf(confin, top, ePBC, x ? &x_tmp : nullptr, v ? &v_tmp : nullptr, box, FALSE);
+    const gmx::sfree_guard  xguard(x_tmp);
+    const gmx::sfree_guard  vguard(v_tmp);
     if (x && x_tmp)
     {
         *x = std::vector<RVec>(x_tmp, x_tmp + top->atoms.nr);

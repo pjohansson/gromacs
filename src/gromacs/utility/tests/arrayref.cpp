@@ -1,7 +1,7 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2015,2016, by the GROMACS development team, led by
+ * Copyright (c) 2015,2016,2017, by the GROMACS development team, led by
  * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
  * and including many others, as listed in the AUTHORS file in the
  * top-level source directory and at http://www.gromacs.org.
@@ -33,7 +33,7 @@
  * the research papers on the package. Check out http://www.gromacs.org.
  */
 /*! \internal \file
- * \brief Tests for gmx::ArrayRef and gmx::ConstArrayRef.
+ * \brief Tests for gmx::ArrayRef.
  *
  * \author Mark Abraham <mark.j.abraham@gmail.com>
  * \ingroup module_utility
@@ -41,8 +41,6 @@
 #include "gmxpre.h"
 
 #include "gromacs/utility/arrayref.h"
-
-#include "config.h"
 
 #include <vector>
 
@@ -68,8 +66,8 @@ TEST(EmptyArrayRefTest, IsEmpty)
 
 TEST(EmptyConstArrayRefTest, IsEmpty)
 {
-    EmptyArrayRef       emptyArray = {};
-    ConstArrayRef<real> empty(emptyArray);
+    EmptyArrayRef        emptyArray = {};
+    ArrayRef<const real> empty(emptyArray);
 
     EXPECT_EQ(0U, empty.size());
     EXPECT_TRUE(empty.empty());
@@ -89,16 +87,16 @@ typedef ::testing::Types<
         ArrayRef<gmx_uint64_t>,
         ArrayRef<float>,
         ArrayRef<double>,
-        ConstArrayRef<char>,
-        ConstArrayRef<unsigned char>,
-        ConstArrayRef<int>,
-        ConstArrayRef<unsigned int>,
-        ConstArrayRef<long>,
-        ConstArrayRef<unsigned long>,
-        ConstArrayRef<gmx_int64_t>,
-        ConstArrayRef<gmx_uint64_t>,
-        ConstArrayRef<float>,
-        ConstArrayRef<double>
+        ArrayRef<const char>,
+        ArrayRef<const unsigned char>,
+        ArrayRef<const int>,
+        ArrayRef<const unsigned int>,
+        ArrayRef<const long>,
+        ArrayRef<const unsigned long>,
+        ArrayRef<const gmx_int64_t>,
+        ArrayRef<const gmx_uint64_t>,
+        ArrayRef<const float>,
+        ArrayRef<const double>
         > ArrayRefTypes;
 
 /*! \brief Permit all the tests to run on all kinds of ArrayRefs
@@ -111,6 +109,7 @@ class ArrayRefTest : public ::testing::Test
     public:
         typedef TypeParam ArrayRefType;
         typedef typename ArrayRefType::value_type ValueType;
+        typedef typename std::remove_const<ValueType>::type NonConstValueType;
 
         /*! \brief Run the same tests all the time
          *
@@ -150,9 +149,25 @@ TYPED_TEST_CASE(ArrayRefTest, ArrayRefTypes);
     };                                                          \
     size_t (aSize) = sizeof((a)) / sizeof(typename TestFixture::ValueType);
 
+#define DEFINE_NON_CONST_ARRAY(a, aSize)                        \
+    typename TestFixture::NonConstValueType (a)[] = {           \
+        static_cast<typename TestFixture::ValueType>(1.2),      \
+        static_cast<typename TestFixture::ValueType>(2.4),      \
+        static_cast<typename TestFixture::ValueType>(3.1)       \
+    };                                                          \
+    size_t (aSize) = sizeof((a)) / sizeof(typename TestFixture::ValueType);
+
+
 TYPED_TEST(ArrayRefTest, MakeWithAssignmentWorks)
 {
     DEFINE_ARRAY(a, aSize);
+    typename TestFixture::ArrayRefType arrayRef = a;
+    this->runTests(a, aSize, a, arrayRef);
+}
+
+TYPED_TEST(ArrayRefTest, MakeWithNonConstAssignmentWorks)
+{
+    DEFINE_NON_CONST_ARRAY(a, aSize);
     typename TestFixture::ArrayRefType arrayRef = a;
     this->runTests(a, aSize, a, arrayRef);
 }
@@ -164,6 +179,13 @@ TYPED_TEST(ArrayRefTest, ConstructWithTemplateConstructorWorks)
     this->runTests(a, aSize, a, arrayRef);
 }
 
+TYPED_TEST(ArrayRefTest, ConstructWithNonConstTemplateConstructorWorks)
+{
+    DEFINE_NON_CONST_ARRAY(a, aSize);
+    typename TestFixture::ArrayRefType arrayRef(a);
+    this->runTests(a, aSize, a, arrayRef);
+}
+
 TYPED_TEST(ArrayRefTest, ConstructFromPointersWorks)
 {
     DEFINE_ARRAY(a, aSize);
@@ -171,36 +193,30 @@ TYPED_TEST(ArrayRefTest, ConstructFromPointersWorks)
     this->runTests(a, aSize, a, arrayRef);
 }
 
-TYPED_TEST(ArrayRefTest, MakeFromPointersWorks)
+TYPED_TEST(ArrayRefTest, ConstructFromNonConstPointersWorks)
 {
-    DEFINE_ARRAY(a, aSize);
-    typename TestFixture::ArrayRefType arrayRef
-        = TestFixture::ArrayRefType::fromPointers(a, a + aSize);
+    DEFINE_NON_CONST_ARRAY(a, aSize);
+    typename TestFixture::ArrayRefType arrayRef(a, a + aSize);
     this->runTests(a, aSize, a, arrayRef);
 }
 
-TYPED_TEST(ArrayRefTest, MakeFromArrayWorks)
-{
-    DEFINE_ARRAY(a, aSize);
-    typename TestFixture::ArrayRefType arrayRef
-        = TestFixture::ArrayRefType::fromArray(a, aSize);
-    this->runTests(a, aSize, a, arrayRef);
-}
+template<bool c, typename T>
+using makeConstIf_t = typename std::conditional<c, const T, T>::type;
 
 TYPED_TEST(ArrayRefTest, ConstructFromVectorWorks)
 {
     DEFINE_ARRAY(a, aSize);
-    std::vector<typename TestFixture::ValueType> v(a, a + aSize);
-    typename TestFixture::ArrayRefType           arrayRef(v);
+    makeConstIf_t<std::is_const<typename TestFixture::ValueType>::value,
+                  std::vector<typename TestFixture::NonConstValueType> > v(a, a + aSize);
+    typename TestFixture::ArrayRefType                                   arrayRef(v);
     this->runTests(a, v.size(), v.data(), arrayRef);
 }
 
-TYPED_TEST(ArrayRefTest, MakeFromVectorWorks)
+TYPED_TEST(ArrayRefTest, ConstructFromNonConstVectorWorks)
 {
     DEFINE_ARRAY(a, aSize);
-    std::vector<typename TestFixture::ValueType> v(a, a + aSize);
-    typename TestFixture::ArrayRefType arrayRef
-        = TestFixture::ArrayRefType::fromVector(v.begin(), v.end());
+    std::vector<typename TestFixture::NonConstValueType> v(a, a + aSize);
+    typename TestFixture::ArrayRefType                   arrayRef(v);
     this->runTests(a, v.size(), v.data(), arrayRef);
 }
 
@@ -217,33 +233,22 @@ struct Helper
  *
  * There, we take a non-const struct-field array of static length and
  * make an ArrayRef to it using the template constructor that is
- * supposed to infer the length from the static size. But on xlc on
- * BlueGene/Q, if the base type is not char (or unsigned char), the
- * generated code ends up with an ArrayRef of zero size, so everything
- * breaks. Presumably the default code path accidentally works for
- * char.
- *
- * Fortunately, all current uses of that constructor have a base type
- * of char, so there's no big problem. Using a pointer-based
- * constructor does work, if there's ever a problem (and that is
- * tested above). */
+ * supposed to infer the length from the static size. This has
+ * been a problem (for a compiler that we no longer support),
+ * so we test it.
+ */
 
 TYPED_TEST(ArrayRefTest, ConstructFromStructFieldWithTemplateConstructorWorks)
 {
     DEFINE_ARRAY(a, aSize);
-    Helper<typename TestFixture::ValueType> h;
+    Helper<typename TestFixture::NonConstValueType> h;
     h.size = aSize;
     for (int i = 0; i != h.size; ++i)
     {
         h.a[i] = a[i];
     }
     typename TestFixture::ArrayRefType arrayRef(h.a);
-#if GMX_TARGET_BGQ && defined(__xlC__)
-    if (sizeof(typename TestFixture::ValueType) == sizeof(char))
-#endif
-    {
-        this->runTests(h.a, h.size, h.a, arrayRef);
-    }
+    this->runTests(h.a, h.size, h.a, arrayRef);
 }
 
 #else   // GTEST_HAS_TYPED_TEST

@@ -1,7 +1,7 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2012,2013,2014,2015, by the GROMACS development team, led by
+ * Copyright (c) 2012,2013,2014,2015,2017, by the GROMACS development team, led by
  * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
  * and including many others, as listed in the AUTHORS file in the
  * top-level source directory and at http://www.gromacs.org.
@@ -58,7 +58,7 @@ nb_kernel_ElecGB_VdwNone_GeomP1P1_VF_sparc64_hpc_ace_double
                     (t_nblist                    * gmx_restrict       nlist,
                      rvec                        * gmx_restrict          xx,
                      rvec                        * gmx_restrict          ff,
-                     t_forcerec                  * gmx_restrict          fr,
+                     struct t_forcerec           * gmx_restrict          fr,
                      t_mdatoms                   * gmx_restrict     mdatoms,
                      nb_kernel_data_t gmx_unused * gmx_restrict kernel_data,
                      t_nrnb                      * gmx_restrict        nrnb)
@@ -105,14 +105,14 @@ nb_kernel_ElecGB_VdwNone_GeomP1P1_VF_sparc64_hpc_ace_double
     gid              = nlist->gid;
     shiftvec         = fr->shift_vec[0];
     fshift           = fr->fshift[0];
-    facel            = gmx_fjsp_set1_v2r8(fr->epsfac);
+    facel            = gmx_fjsp_set1_v2r8(fr->ic->epsfac);
     charge           = mdatoms->chargeA;
 
     invsqrta         = fr->invsqrta;
     dvda             = fr->dvda;
     gbtabscale       = gmx_fjsp_set1_v2r8(fr->gbtab->scale);
     gbtab            = fr->gbtab->data;
-    gbinvepsdiff     = gmx_fjsp_set1_v2r8((1.0/fr->epsilon_r) - (1.0/fr->gb_epsilon_solvent));
+    gbinvepsdiff     = gmx_fjsp_set1_v2r8((1.0/fr->ic->epsilon_r) - (1.0/fr->gb_epsilon_solvent));
 
     /* Avoid stupid compiler warnings */
     jnrA = jnrB = 0;
@@ -359,7 +359,7 @@ nb_kernel_ElecGB_VdwNone_GeomP1P1_F_sparc64_hpc_ace_double
                     (t_nblist                    * gmx_restrict       nlist,
                      rvec                        * gmx_restrict          xx,
                      rvec                        * gmx_restrict          ff,
-                     t_forcerec                  * gmx_restrict          fr,
+                     struct t_forcerec           * gmx_restrict          fr,
                      t_mdatoms                   * gmx_restrict     mdatoms,
                      nb_kernel_data_t gmx_unused * gmx_restrict kernel_data,
                      t_nrnb                      * gmx_restrict        nrnb)
@@ -406,14 +406,14 @@ nb_kernel_ElecGB_VdwNone_GeomP1P1_F_sparc64_hpc_ace_double
     gid              = nlist->gid;
     shiftvec         = fr->shift_vec[0];
     fshift           = fr->fshift[0];
-    facel            = gmx_fjsp_set1_v2r8(fr->epsfac);
+    facel            = gmx_fjsp_set1_v2r8(fr->ic->epsfac);
     charge           = mdatoms->chargeA;
 
     invsqrta         = fr->invsqrta;
     dvda             = fr->dvda;
     gbtabscale       = gmx_fjsp_set1_v2r8(fr->gbtab->scale);
     gbtab            = fr->gbtab->data;
-    gbinvepsdiff     = gmx_fjsp_set1_v2r8((1.0/fr->epsilon_r) - (1.0/fr->gb_epsilon_solvent));
+    gbinvepsdiff     = gmx_fjsp_set1_v2r8((1.0/fr->ic->epsilon_r) - (1.0/fr->gb_epsilon_solvent));
 
     /* Avoid stupid compiler warnings */
     jnrA = jnrB = 0;

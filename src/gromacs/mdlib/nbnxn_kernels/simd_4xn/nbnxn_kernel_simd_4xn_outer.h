@@ -1,7 +1,7 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2012,2013,2014,2015,2016, by the GROMACS development team, led by
+ * Copyright (c) 2012,2013,2014,2015,2016,2017, by the GROMACS development team, led by
  * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
  * and including many others, as listed in the AUTHORS file in the
  * top-level source directory and at http://www.gromacs.org.
@@ -176,7 +176,7 @@
 #endif
 
     /* Load j-i for the first i */
-    diagonal_jmi_S    = load(nbat->simd_4xn_diagonal_j_minus_i);
+    diagonal_jmi_S    = load<SimdReal>(nbat->simd_4xn_diagonal_j_minus_i);
     /* Generate all the diagonal masks as comparison results */
 #if UNROLLI == UNROLLJ
     diagonal_mask_S0  = (zero_S < diagonal_jmi_S);
@@ -199,7 +199,7 @@
 
 #if UNROLLI == 2*UNROLLJ
     /* Load j-i for the second half of the j-cluster */
-    diagonal_jmi_S    = load(nbat->simd_4xn_diagonal_j_minus_i + UNROLLJ);
+    diagonal_jmi_S    = load<SimdReal>(nbat->simd_4xn_diagonal_j_minus_i + UNROLLJ);
 #endif
 
     diagonal_mask1_S0 = (zero_S < diagonal_jmi_S);
@@ -223,15 +223,15 @@
      * matter, as long as both filter and mask data are treated the same way.
      */
 #if GMX_SIMD_HAVE_INT32_LOGICAL
-    filter_S0 = load(reinterpret_cast<const int *>(exclusion_filter + 0*UNROLLJ));
-    filter_S1 = load(reinterpret_cast<const int *>(exclusion_filter + 1*UNROLLJ));
-    filter_S2 = load(reinterpret_cast<const int *>(exclusion_filter + 2*UNROLLJ));
-    filter_S3 = load(reinterpret_cast<const int *>(exclusion_filter + 3*UNROLLJ));
+    filter_S0 = load<SimdBitMask>(reinterpret_cast<const int *>(exclusion_filter + 0*UNROLLJ));
+    filter_S1 = load<SimdBitMask>(reinterpret_cast<const int *>(exclusion_filter + 1*UNROLLJ));
+    filter_S2 = load<SimdBitMask>(reinterpret_cast<const int *>(exclusion_filter + 2*UNROLLJ));
+    filter_S3 = load<SimdBitMask>(reinterpret_cast<const int *>(exclusion_filter + 3*UNROLLJ));
 #else
-    filter_S0 = load(reinterpret_cast<const real *>(exclusion_filter + 0*UNROLLJ));
-    filter_S1 = load(reinterpret_cast<const real *>(exclusion_filter + 1*UNROLLJ));
-    filter_S2 = load(reinterpret_cast<const real *>(exclusion_filter + 2*UNROLLJ));
-    filter_S3 = load(reinterpret_cast<const real *>(exclusion_filter + 3*UNROLLJ));
+    filter_S0 = load<SimdBitMask>(reinterpret_cast<const real *>(exclusion_filter + 0*UNROLLJ));
+    filter_S1 = load<SimdBitMask>(reinterpret_cast<const real *>(exclusion_filter + 1*UNROLLJ));
+    filter_S2 = load<SimdBitMask>(reinterpret_cast<const real *>(exclusion_filter + 2*UNROLLJ));
+    filter_S3 = load<SimdBitMask>(reinterpret_cast<const real *>(exclusion_filter + 3*UNROLLJ));
 #endif
 
 #ifdef CALC_COUL_RF
@@ -349,15 +349,15 @@
         pvdw_c12[2*UNROLLJ+jp] = nbat->nbfp[0*2+1];
         pvdw_c12[3*UNROLLJ+jp] = nbat->nbfp[0*2+1];
     }
-    SimdReal c6_S0  = simdLoad(pvdw_c6 +0*UNROLLJ);
-    SimdReal c6_S1  = simdLoad(pvdw_c6 +1*UNROLLJ);
-    SimdReal c6_S2  = simdLoad(pvdw_c6 +2*UNROLLJ);
-    SimdReal c6_S3  = simdLoad(pvdw_c6 +3*UNROLLJ);
+    SimdReal c6_S0  = load<SimdReal>(pvdw_c6 +0*UNROLLJ);
+    SimdReal c6_S1  = load<SimdReal>(pvdw_c6 +1*UNROLLJ);
+    SimdReal c6_S2  = load<SimdReal>(pvdw_c6 +2*UNROLLJ);
+    SimdReal c6_S3  = load<SimdReal>(pvdw_c6 +3*UNROLLJ);
 
-    SimdReal c12_S0 = simdLoad(pvdw_c12+0*UNROLLJ);
-    SimdReal c12_S1 = simdLoad(pvdw_c12+1*UNROLLJ);
-    SimdReal c12_S2 = simdLoad(pvdw_c12+2*UNROLLJ);
-    SimdReal c12_S3 = simdLoad(pvdw_c12+3*UNROLLJ);
+    SimdReal c12_S0 = load<SimdReal>(pvdw_c12+0*UNROLLJ);
+    SimdReal c12_S1 = load<SimdReal>(pvdw_c12+1*UNROLLJ);
+    SimdReal c12_S2 = load<SimdReal>(pvdw_c12+2*UNROLLJ);
+    SimdReal c12_S3 = load<SimdReal>(pvdw_c12+3*UNROLLJ);
 #endif /* FIX_LJ_C */
 
 #ifdef ENERGY_GROUPS
@@ -563,7 +563,7 @@
 #else
         const real *nbfp0     = nbfp_ptr + type[sci  ]*nbat->ntype*c_simdBestPairAlignment;
         const real *nbfp1     = nbfp_ptr + type[sci+1]*nbat->ntype*c_simdBestPairAlignment;
-        const real *nbfp2     = NULL, *nbfp3 = NULL;
+        const real *nbfp2     = nullptr, *nbfp3 = nullptr;
         if (!half_LJ)
         {
             nbfp2 = nbfp_ptr + type[sci+2]*nbat->ntype*c_simdBestPairAlignment;

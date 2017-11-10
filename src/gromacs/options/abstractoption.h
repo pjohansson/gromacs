@@ -1,7 +1,7 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2010,2011,2012,2013,2014,2015, by the GROMACS development team, led by
+ * Copyright (c) 2010,2011,2012,2013,2014,2015,2016,2017, by the GROMACS development team, led by
  * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
  * and including many others, as listed in the AUTHORS file in the
  * top-level source directory and at http://www.gromacs.org.
@@ -66,10 +66,11 @@ namespace gmx
 class AbstractOptionStorage;
 template <typename T> class OptionStorageTemplate;
 class OptionManagerContainer;
+class Variant;
 
 namespace internal
 {
-class OptionsImpl;
+class OptionSectionImpl;
 }
 
 /*! \brief
@@ -101,7 +102,7 @@ class AbstractOption
         //! Initializes the name and default values for an option.
         explicit AbstractOption(const char *name)
             : minValueCount_(1), maxValueCount_(1),
-              name_(name), descr_(NULL), storeIsSet_(NULL)
+              name_(name), descr_(nullptr), storeIsSet_(nullptr)
         { }
 
         /*! \brief
@@ -198,7 +199,7 @@ class AbstractOption
          */
         friend class AbstractOptionStorage;
         //! Needed to be able to call createStorage().
-        friend class internal::OptionsImpl;
+        friend class internal::OptionSectionImpl;
 };
 
 /*! \brief
@@ -359,8 +360,8 @@ class OptionTemplate : public AbstractOption
         //! Initializes the name and default values for an option.
         explicit OptionTemplate(const char *name)
             : AbstractOption(name),
-              defaultValue_(NULL), defaultValueIfSet_(NULL), store_(NULL),
-              countptr_(NULL), storeVector_(NULL)
+              defaultValue_(nullptr), defaultValueIfSet_(nullptr), store_(nullptr),
+              countptr_(nullptr), storeVector_(nullptr)
         { }
 
         /*! \brief
@@ -447,7 +448,7 @@ class OptionInfo
         template <class InfoType>
         bool isType() const
         {
-            return toType<InfoType>() != NULL;
+            return toType<InfoType>() != nullptr;
         }
         /*! \brief
          * Convert the info object to a particular type if the type is correct.
@@ -485,17 +486,38 @@ class OptionInfo
         std::string type() const;
         //! Returns the description of the option.
         std::string formatDescription() const;
-        /*! \brief
-         * Returns the default value if set for the option as a string.
-         *
-         * \see OptionTemplate::defaultValueIfSet()
-         */
-        std::string formatDefaultValueIfSet() const;
 
-        //! Returns the number of values given for the option.
-        int valueCount() const;
-        //! Returns the i'th value of the option as a string.
-        std::string formatValue(int i) const;
+        /*! \brief
+         * Returns the default value(s) of the option.
+         *
+         * The returned values should all be of the same type, but returning
+         * each as a separate variant is currently simpler.
+         *
+         * Currently, this can only be called before option values have been
+         * assigned.
+         */
+        std::vector<Variant> defaultValues() const;
+        /*! \brief
+         * Returns the default value(s) of the option as strings.
+         *
+         * If there is no default value, but defaultValueIfSet() is set, that
+         * is returned instead.
+         *
+         * Currently, this can only be called before option values have been
+         * assigned.
+         */
+        std::vector<std::string> defaultValuesAsStrings() const;
+        /*! \brief
+         * Converts given values to native representation for this option.
+         *
+         * For example, strings are parsed to the type that is actually used to
+         * store the options.
+         *
+         * The return value only depends on the option type, not on the current
+         * value of the option, and the current value in the option is not
+         * changed.
+         */
+        std::vector<Variant> normalizeValues(const std::vector<Variant> &values) const;
 
     protected:
         /*! \cond libapi */

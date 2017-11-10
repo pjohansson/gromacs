@@ -1,7 +1,7 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2013,2014,2015, by the GROMACS development team, led by
+ * Copyright (c) 2013,2014,2015,2016,2017, by the GROMACS development team, led by
  * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
  * and including many others, as listed in the AUTHORS file in the
  * top-level source directory and at http://www.gromacs.org.
@@ -44,14 +44,15 @@
 
 #include <vector>
 
-struct t_topology;
+struct gmx_mtop_t;
+struct t_atoms;
 struct t_trxframe;
 
 namespace gmx
 {
 
 template <typename T>
-class ConstArrayRef;
+class ArrayRef;
 
 namespace test
 {
@@ -68,17 +69,18 @@ class TopologyManager
 
         void loadTopology(const char *filename);
         void initAtoms(int count);
-        void initAtomTypes(const ConstArrayRef<const char *> &types);
+        void initAtomTypes(const ArrayRef<const char *const> &types);
         void initUniformResidues(int residueSize);
         void initUniformMolecules(int moleculeSize);
 
-        void initFrameIndices(const ConstArrayRef<int> &index);
+        void initFrameIndices(const ArrayRef<const int> &index);
 
-        t_topology *topology() { return top_; }
+        gmx_mtop_t *topology() { return mtop_; }
+        t_atoms &atoms();
         t_trxframe *frame() { return frame_; }
 
     private:
-        t_topology             *top_;
+        gmx_mtop_t             *mtop_;
         t_trxframe             *frame_;
         std::vector<char *>     atomtypes_;
 };

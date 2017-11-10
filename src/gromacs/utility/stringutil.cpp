@@ -1,7 +1,7 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2011,2012,2013,2014,2015, by the GROMACS development team, led by
+ * Copyright (c) 2011,2012,2013,2014,2015,2016,2017, by the GROMACS development team, led by
  * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
  * and including many others, as listed in the AUTHORS file in the
  * top-level source directory and at http://www.gromacs.org.
@@ -49,9 +49,11 @@
 #include <cstring>
 
 #include <algorithm>
+#include <sstream>
 #include <string>
 #include <vector>
 
+#include "gromacs/utility/exceptions.h"
 #include "gromacs/utility/gmxassert.h"
 
 namespace gmx
@@ -105,7 +107,7 @@ bool endsWith(const char *str, const char *suffix)
 
 std::string stripSuffixIfPresent(const std::string &str, const char *suffix)
 {
-    if (suffix != NULL)
+    if (suffix != nullptr)
     {
         size_t suffixLength = std::strlen(suffix);
         if (suffixLength > 0 && endsWith(str, suffix))
@@ -133,7 +135,16 @@ std::string stripString(const std::string &str)
 
 std::string formatString(const char *fmt, ...)
 {
-    va_list           ap;
+    va_list     ap;
+    va_start(ap, fmt);
+    std::string result = formatStringV(fmt, ap);
+    va_end(ap);
+    return result;
+}
+
+std::string formatStringV(const char *fmt, va_list ap)
+{
+    va_list           ap_copy;
     char              staticBuf[1024];
     int               length = 1024;
     std::vector<char> dynamicBuf;
@@ -143,9 +154,9 @@ std::string formatString(const char *fmt, ...)
     // provides their own way of doing things...
     while (1)
     {
-        va_start(ap, fmt);
-        int n = vsnprintf(buf, length, fmt, ap);
-        va_end(ap);
+        va_copy(ap_copy, ap);
+        int n = vsnprintf(buf, length, fmt, ap_copy);
+        va_end(ap_copy);
         if (n > -1 && n < length)
         {
             std::string result(buf);
@@ -182,9 +193,37 @@ std::vector<std::string> splitString(const std::string &str)
         }
         if (startPos != end)
         {
-            result.push_back(std::string(startPos, currPos));
+            result.emplace_back(startPos, currPos);
         }
     }
+    return result;
+}
+
+std::vector<std::string> splitDelimitedString(const std::string &str, char delim)
+{
+    std::vector<std::string> result;
+    size_t                   currPos = 0;
+    const size_t             len     = str.length();
+    if (len > 0)
+    {
+        size_t nextDelim;
+        do
+        {
+            nextDelim = str.find(delim, currPos);
+            result.push_back(str.substr(currPos, nextDelim - currPos));
+            currPos = nextDelim < len ? nextDelim + 1 : len;
+        }
+        while (currPos < len || nextDelim < len);
+    }
+    return result;
+}
+
+std::vector<std::string> splitAndTrimDelimitedString(const std::string &str, char delim)
+{
+    std::vector<std::string> result;
+
+    result = splitDelimitedString(str, delim);
+    std::transform(result.begin(), result.end(), result.begin(), stripString);
     return result;
 }
 
@@ -219,7 +258,7 @@ std::string
 replaceInternal(const std::string &input, const char *from, const char *to,
                 bool bWholeWords)
 {
-    GMX_RELEASE_ASSERT(from != NULL && to != NULL,
+    GMX_RELEASE_ASSERT(from != nullptr && to != nullptr,
                        "Replacement strings must not be NULL");
     size_t      matchLength = std::strlen(from);
     std::string result;
@@ -324,7 +363,7 @@ TextLineWrapper::findNextLine(const char *input, size_t lineStart) const
     {
         const char *nextBreakPtr = std::strpbrk(input + lineEnd, " \n");
         size_t      nextBreak
-            = (nextBreakPtr != NULL ? nextBreakPtr - input : inputLength);
+            = (nextBreakPtr != nullptr ? nextBreakPtr - input : inputLength);
         if (nextBreak > lastAllowedBreakPoint && lineEnd > lineStart)
         {
             break;
@@ -358,8 +397,15 @@ TextLineWrapper::formatLine(const std::string &input,
     }
     int  indent        = (bFirstLine ? settings_.firstLineIndent() : settings_.indent());
     bool bContinuation = (lineEnd < inputLength && input[lineEnd - 1] != '\n');
-    // Strip trailing whitespace.
-    if (!settings_.bKeepFinalSpaces_ || lineEnd < inputLength || input[inputLength - 1] == '\n')
+    // Remove explicit line breaks in input
+    // (the returned line should not contain line breaks).
+    while (lineEnd > lineStart && input[lineEnd - 1] == '\n')
+    {
+        --lineEnd;
+    }
+    // Strip trailing whitespace, unless they are explicit in the input and it
+    // has been requested to keep them.
+    if (bContinuation || !settings_.bKeepFinalSpaces_)
     {
         while (lineEnd > lineStart && std::isspace(input[lineEnd - 1]))
         {

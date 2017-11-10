@@ -1,7 +1,7 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2010,2011,2012,2013,2014, by the GROMACS development team, led by
+ * Copyright (c) 2010,2011,2012,2013,2014,2016,2017, by the GROMACS development team, led by
  * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
  * and including many others, as listed in the AUTHORS file in the
  * top-level source directory and at http://www.gromacs.org.
@@ -76,8 +76,7 @@ class CommandLineParserTest : public ::testing::Test
 };
 
 CommandLineParserTest::CommandLineParserTest()
-    : options_(NULL, NULL), parser_(&options_),
-      flag_(false), ivalue1p_(0), ivalue12_(0)
+    : parser_(&options_), flag_(false), ivalue1p_(0), ivalue12_(0)
 {
     using gmx::BooleanOption;
     using gmx::IntegerOption;
@@ -166,7 +165,7 @@ TEST_F(CommandLineParserTest, HandlesSkipUnknown)
     EXPECT_STREQ("-opt2", args.arg(2));
     EXPECT_STREQ("value", args.arg(3));
     EXPECT_STREQ("-opt3", args.arg(4));
-    EXPECT_TRUE(args.arg(5) == NULL);
+    EXPECT_TRUE(args.arg(5) == nullptr);
 
     EXPECT_TRUE(flag_);
     ASSERT_EQ(1U, ivalues_.size());

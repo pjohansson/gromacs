@@ -1,7 +1,7 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2012,2013,2014,2015,2016, by the GROMACS development team, led by
+ * Copyright (c) 2012,2013,2014,2015,2016,2017, by the GROMACS development team, led by
  * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
  * and including many others, as listed in the AUTHORS file in the
  * top-level source directory and at http://www.gromacs.org.
@@ -35,6 +35,9 @@
 #ifndef GMX_HARDWARE_HWINFO_H
 #define GMX_HARDWARE_HWINFO_H
 
+#include <string>
+#include <vector>
+
 #include "gromacs/hardware/gpu_hw_info.h"
 #include "gromacs/utility/basedefinitions.h"
 
@@ -48,10 +51,11 @@ class HardwareTopology;
  * It is initialized by gmx_detect_hardware().
  * NOTE: this structure may only contain structures that are globally valid
  *       (i.e. must be able to be shared among all threads) */
-typedef struct gmx_hw_info_t
+struct gmx_hw_info_t
 {
     /* Data for our local physical node */
     struct gmx_gpu_info_t gpu_info;                /* Information about GPUs detected in the system */
+    std::vector<int>      compatibleGpus;          /* Contains the device IDs of all GPUs that are compatible */
 
     int                   nthreads_hw_avail;       /* Number of hardware threads available; this number
                                                       is based on the number of CPUs reported as available
@@ -76,7 +80,7 @@ typedef struct gmx_hw_info_t
     int                 simd_suggest_max;    /* Highest SIMD instruction set supported by at least one rank */
 
     gmx_bool            bIdenticalGPUs;      /* TRUE if all ranks have the same type(s) and order of GPUs */
-} gmx_hw_info_t;
+};
 
 
 /* The options for the thread affinity setting, default: auto */
@@ -84,17 +88,33 @@ enum {
     threadaffSEL, threadaffAUTO, threadaffON, threadaffOFF, threadaffNR
 };
 
-/* Threading and GPU options, can be set automatically or by the user */
-typedef struct gmx_hw_opt_t {
-    int           nthreads_tot;        /* Total number of threads requested (TMPI) */
-    int           nthreads_tmpi;       /* Number of TMPI threads requested         */
-    int           nthreads_omp;        /* Number of OpenMP threads requested       */
-    int           nthreads_omp_pme;    /* As nthreads_omp, but for PME only nodes  */
-    int           thread_affinity;     /* Thread affinity switch, see enum above   */
-    int           core_pinning_stride; /* Logical core pinning stride              */
-    int           core_pinning_offset; /* Logical core pinning offset              */
-
-    gmx_gpu_opt_t gpu_opt;             /* The GPU options                          */
-} gmx_hw_opt_t;
+/*! \internal \brief Threading and GPU options, can be set automatically or by the user
+ *
+ * \todo During mdrunner(), if the user has left any of these values
+ * at their defaults (which tends to mean "choose automatically"),
+ * then those values are over-written with the result of such
+ * automation. This creates problems for the subsequent code in
+ * knowing what was done, why, and reporting correctly to the
+ * user. Find a way to improve this.
+ */
+struct gmx_hw_opt_t
+{
+    //! Total number of threads requested (thread-MPI + OpenMP).
+    int           nthreads_tot = 0;
+    //! Number of thread-MPI threads requested.
+    int           nthreads_tmpi = 0;
+    //! Number of OpenMP threads requested.
+    int           nthreads_omp = 0;
+    //! Number of OpenMP threads to use on PME_only ranks.
+    int           nthreads_omp_pme = 0;
+    //! Thread affinity switch, see enum above.
+    int           thread_affinity = threadaffSEL;
+    //! Logical core pinning stride.
+    int           core_pinning_stride = 0;
+    //! Logical core pinning offset.
+    int           core_pinning_offset = 0;
+    //! Empty, or a GPU task-assignment string provided by the user.
+    std::string   gpuIdTaskAssignment = "";
+};
 
 #endif

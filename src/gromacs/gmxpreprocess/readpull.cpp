@@ -3,7 +3,7 @@
  *
  * Copyright (c) 1991-2000, University of Groningen, The Netherlands.
  * Copyright (c) 2001-2004, The GROMACS development team.
- * Copyright (c) 2013,2014,2015,2016, by the GROMACS development team, led by
+ * Copyright (c) 2013,2014,2015,2016,2017, by the GROMACS development team, led by
  * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
  * and including many others, as listed in the AUTHORS file in the
  * top-level source directory and at http://www.gromacs.org.
@@ -41,9 +41,11 @@
 #include <string.h>
 
 #include "gromacs/fileio/readinp.h"
+#include "gromacs/fileio/warninp.h"
 #include "gromacs/gmxpreprocess/readir.h"
 #include "gromacs/math/vec.h"
 #include "gromacs/mdlib/mdatoms.h"
+#include "gromacs/mdlib/mdrun.h"
 #include "gromacs/mdtypes/inputrec.h"
 #include "gromacs/mdtypes/md_enums.h"
 #include "gromacs/mdtypes/pull-params.h"
@@ -362,7 +364,7 @@ char **read_pullparams(int *ninp_p, t_inpfile **inp_p,
         {
             sprintf(wbuf, "%s should contain %d pull group indices with geometry %s",
                     buf, pcrd->ngroup, epullg_names[pcrd->eGeom]);
-            set_warning_line(wi, NULL, -1);
+            set_warning_line(wi, nullptr, -1);
             warning_error(wi, wbuf);
         }
         for (int g = 0; g < pcrd->ngroup; g++)
@@ -506,15 +508,15 @@ pull_t *set_pull_init(t_inputrec *ir, const gmx_mtop_t *mtop,
 {
     pull_params_t *pull;
     pull_t        *pull_work;
-    t_mdatoms     *md;
     t_pbc          pbc;
     int            c;
     double         t_start;
 
     pull      = ir->pull;
-    pull_work = init_pull(NULL, pull, ir, 0, NULL, mtop, NULL, oenv, lambda, FALSE, 0);
-    md        = init_mdatoms(NULL, mtop, ir->efep);
-    atoms2md(mtop, ir, 0, NULL, mtop->natoms, md);
+    pull_work = init_pull(nullptr, pull, ir, 0, nullptr, mtop, nullptr, oenv, lambda, FALSE, ContinuationOptions());
+    auto mdAtoms = gmx::makeMDAtoms(nullptr, *mtop, *ir);
+    auto md      = mdAtoms->mdatoms();
+    atoms2md(mtop, ir, -1, nullptr, mtop->natoms, mdAtoms.get());
     if (ir->efep)
     {
         update_mdatoms(md, lambda);
@@ -524,7 +526,7 @@ pull_t *set_pull_init(t_inputrec *ir, const gmx_mtop_t *mtop,
 
     t_start = ir->init_t + ir->init_step*ir->delta_t;
 
-    pull_calc_coms(NULL, pull_work, md, &pbc, t_start, x, NULL);
+    pull_calc_coms(nullptr, pull_work, md, &pbc, t_start, x, nullptr);
 
     fprintf(stderr, "Pull group  natoms  pbc atom  distance at start  reference at t=0\n");
     for (c = 0; c < pull->ncoord; c++)

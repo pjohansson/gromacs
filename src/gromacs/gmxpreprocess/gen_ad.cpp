@@ -3,7 +3,7 @@
  *
  * Copyright (c) 1991-2000, University of Groningen, The Netherlands.
  * Copyright (c) 2001-2004, The GROMACS development team.
- * Copyright (c) 2013,2014,2015, by the GROMACS development team, led by
+ * Copyright (c) 2013,2014,2015,2016,2017, by the GROMACS development team, led by
  * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
  * and including many others, as listed in the AUTHORS file in the
  * top-level source directory and at http://www.gromacs.org.
@@ -61,7 +61,7 @@
 #include "gromacs/utility/smalloc.h"
 
 #define DIHEDRAL_WAS_SET_IN_RTP 0
-static gmx_bool was_dihedral_set_in_rtp(t_param *dih)
+static gmx_bool was_dihedral_set_in_rtp(const t_param *dih)
 {
     return dih->c[MAXFORCEPARAM-1] == DIHEDRAL_WAS_SET_IN_RTP;
 }
@@ -70,11 +70,11 @@ typedef gmx_bool (*peq)(t_param *p1, t_param *p2);
 
 static int acomp(const void *a1, const void *a2)
 {
-    t_param *p1, *p2;
-    int      ac;
+    const t_param *p1, *p2;
+    int            ac;
 
-    p1 = (t_param *)a1;
-    p2 = (t_param *)a2;
+    p1 = static_cast<const t_param *>(a1);
+    p2 = static_cast<const t_param *>(a2);
     if ((ac = (p1->aj()-p2->aj())) != 0)
     {
         return ac;
@@ -91,11 +91,11 @@ static int acomp(const void *a1, const void *a2)
 
 static int pcomp(const void *a1, const void *a2)
 {
-    t_param *p1, *p2;
-    int      pc;
+    const t_param *p1, *p2;
+    int            pc;
 
-    p1 = (t_param *)a1;
-    p2 = (t_param *)a2;
+    p1 = static_cast<const t_param *>(a1);
+    p2 = static_cast<const t_param *>(a2);
     if ((pc = (p1->ai()-p2->ai())) != 0)
     {
         return pc;
@@ -108,11 +108,11 @@ static int pcomp(const void *a1, const void *a2)
 
 static int dcomp(const void *d1, const void *d2)
 {
-    t_param *p1, *p2;
-    int      dc;
+    const t_param *p1, *p2;
+    int            dc;
 
-    p1 = (t_param *)d1;
-    p2 = (t_param *)d2;
+    p1 = static_cast<const t_param *>(d1);
+    p2 = static_cast<const t_param *>(d2);
     /* First sort by J & K (the two central) atoms */
     if ((dc = (p1->aj()-p2->aj())) != 0)
     {
@@ -306,11 +306,11 @@ static int int_comp(const void *a, const void *b)
 
 static int idcomp(const void *a, const void *b)
 {
-    t_param *pa, *pb;
-    int      d;
+    const t_param *pa, *pb;
+    int            d;
 
-    pa = (t_param *)a;
-    pb = (t_param *)b;
+    pa = static_cast<const t_param *>(a);
+    pb = static_cast<const t_param *>(b);
     if ((d = (pa->a[0]-pb->a[0])) != 0)
     {
         return d;
@@ -497,7 +497,7 @@ static int get_impropers(t_atoms *atoms, t_hackblock hb[], t_param **improper,
     /* Add all the impropers from the residue database to the list. */
     nimproper = 0;
     start     = 0;
-    if (hb != NULL)
+    if (hb != nullptr)
     {
         for (i = 0; (i < atoms->nres); i++)
         {
@@ -523,7 +523,7 @@ static int get_impropers(t_atoms *atoms, t_hackblock hb[], t_param **improper,
                         srenew(*improper, nalloc);
                     }
                     /* Not broken out */
-                    set_p(&((*improper)[nimproper]), ai, NULL, impropers->b[j].s);
+                    set_p(&((*improper)[nimproper]), ai, nullptr, impropers->b[j].s);
                     nimproper++;
                 }
             }
@@ -564,7 +564,7 @@ static int nb_dist(t_nextnb *nnb, int ai, int aj)
     return NRE;
 }
 
-gmx_bool is_hydro(t_atoms *atoms, int ai)
+static gmx_bool is_hydro(t_atoms *atoms, int ai)
 {
     return ((*(atoms->atomname[ai]))[0] == 'H');
 }

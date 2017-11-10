@@ -1,7 +1,7 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2014,2015,2016, by the GROMACS development team, led by
+ * Copyright (c) 2014,2015,2016,2017, by the GROMACS development team, led by
  * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
  * and including many others, as listed in the AUTHORS file in the
  * top-level source directory and at http://www.gromacs.org.
@@ -102,9 +102,9 @@ int ocl_copy_H2D_async(cl_mem d_dest, void * h_src,
 
 /*! \brief Launches synchronous host to device memory copy.
  */
-int ocl_copy_H2D(cl_mem d_dest, void * h_src,
-                 size_t offset, size_t bytes,
-                 cl_command_queue command_queue)
+int ocl_copy_H2D_sync(cl_mem d_dest, void * h_src,
+                      size_t offset, size_t bytes,
+                      cl_command_queue command_queue)
 {
     return ocl_copy_H2D_generic(d_dest, h_src, offset, bytes, false, command_queue, NULL);
 }
@@ -115,11 +115,11 @@ int ocl_copy_H2D(cl_mem d_dest, void * h_src,
  *  identifying this particular device to host operation. The event can further
  *  be used to queue a wait for this operation or to query profiling information.
  */
-int ocl_copy_D2H_generic(void * h_dest, cl_mem d_src,
-                         size_t offset, size_t bytes,
-                         bool bAsync,
-                         cl_command_queue command_queue,
-                         cl_event *copy_event)
+static int ocl_copy_D2H_generic(void * h_dest, cl_mem d_src,
+                                size_t offset, size_t bytes,
+                                bool bAsync,
+                                cl_command_queue command_queue,
+                                cl_event *copy_event)
 {
     cl_int gmx_unused cl_error;
 
@@ -271,6 +271,7 @@ std::string ocl_get_error_string(cl_int error)
         case -1003: return "CL_INVALID_D3D10_RESOURCE_KHR";
         case -1004: return "CL_D3D10_RESOURCE_ALREADY_ACQUIRED_KHR";
         case -1005: return "CL_D3D10_RESOURCE_NOT_ACQUIRED_KHR";
-        default: return "Unknown OpenCL error";
+        default:    return "Unknown OpenCL error: " +
+                   std::to_string(static_cast<int32_t>(error));
     }
 }

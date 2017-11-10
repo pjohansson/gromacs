@@ -3,7 +3,7 @@
  *
  * Copyright (c) 1991-2000, University of Groningen, The Netherlands.
  * Copyright (c) 2001-2004, The GROMACS development team.
- * Copyright (c) 2013,2014,2015,2016, by the GROMACS development team, led by
+ * Copyright (c) 2013,2014,2015,2016,2017, by the GROMACS development team, led by
  * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
  * and including many others, as listed in the AUTHORS file in the
  * top-level source directory and at http://www.gromacs.org.
@@ -40,15 +40,19 @@
 
 #include <cmath>
 
+#include "gromacs/ewald/ewald-utils.h"
 #include "gromacs/math/functions.h"
 #include "gromacs/math/units.h"
 #include "gromacs/math/utilities.h"
 #include "gromacs/math/vec.h"
 #include "gromacs/mdtypes/commrec.h"
 #include "gromacs/mdtypes/forcerec.h"
+#include "gromacs/mdtypes/inputrec.h"
 #include "gromacs/mdtypes/md_enums.h"
 #include "gromacs/utility/fatalerror.h"
 #include "gromacs/utility/gmxassert.h"
+
+#include "pme-internal.h"
 
 /* There's nothing special to do here if just masses are perturbed,
  * but if either charge or type is perturbed then the implementation
@@ -64,6 +68,7 @@ void ewald_LRcorrection(int numAtomsLocal,
                         t_commrec *cr,
                         int numThreads, int thread,
                         t_forcerec *fr,
+                        const t_inputrec *ir,
                         real *chargeA, real *chargeB,
                         real *C6A, real *C6B,
                         real *sigmaA, real *sigmaB,
@@ -100,24 +105,31 @@ void ewald_LRcorrection(int numAtomsLocal,
     double      Vexcl_lj;
     real        one_4pi_eps;
     real        v, vc, qiA, qiB, dr2, rinv;
-    real        Vself_q[2], Vself_lj[2], Vdipole[2], rinv2, ewc_q = fr->ewaldcoeff_q, ewcdr;
-    real        ewc_lj = fr->ewaldcoeff_lj, ewc_lj2 = ewc_lj * ewc_lj;
+    real        Vself_q[2], Vself_lj[2], Vdipole[2], rinv2, ewc_q = fr->ic->ewaldcoeff_q, ewcdr;
+    real        ewc_lj = fr->ic->ewaldcoeff_lj, ewc_lj2 = ewc_lj * ewc_lj;
     real        c6Ai   = 0, c6Bi = 0, c6A = 0, c6B = 0, ewcdr2, ewcdr4, c6L = 0, rinv6;
     rvec        df, dx, mutot[2], dipcorrA, dipcorrB;
     tensor      dxdf_q = {{0}}, dxdf_lj = {{0}};
-    real        vol    = box[XX][XX]*box[YY][YY]*box[ZZ][ZZ];
     real        L1_q, L1_lj, dipole_coeff, qqA, qqB, qqL, vr0_q, vr0_lj = 0;
-    gmx_bool    bMolPBC      = fr->bMolPBC;
-    gmx_bool    bDoingLBRule = (fr->ljpme_combination_rule == eljpmeLB);
+    real        chargecorr[2] = { 0, 0 };
+    gmx_bool    bMolPBC       = fr->bMolPBC;
+    gmx_bool    bDoingLBRule  = (fr->ljpme_combination_rule == eljpmeLB);
     gmx_bool    bNeedLongRangeCorrection;
+
+    GMX_ASSERT(ir, "Invalid inputrec pointer");
+    matrix          scaledBox;
+    EwaldBoxZScaler boxScaler(*ir);
+    boxScaler.scaleBox(box, scaledBox);
 
     /* This routine can be made faster by using tables instead of analytical interactions
      * However, that requires a thorough verification that they are correct in all cases.
      */
 
-    one_4pi_eps   = ONE_4PI_EPS0/fr->epsilon_r;
+    bool vdwPme   = EVDW_PME(fr->ic->vdwtype);
+
+    one_4pi_eps   = ONE_4PI_EPS0/fr->ic->epsilon_r;
     vr0_q         = ewc_q*M_2_SQRTPI;
-    if (EVDW_PME(fr->vdwtype))
+    if (vdwPme)
     {
         vr0_lj    = -gmx::power6(ewc_lj)/6.0;
     }
@@ -142,13 +154,15 @@ void ewald_LRcorrection(int numAtomsLocal,
         dipcorrB[i] = 0;
     }
     dipole_coeff = 0;
+
+    real boxVolume = scaledBox[XX][XX]*scaledBox[YY][YY]*scaledBox[ZZ][ZZ];
     switch (ewald_geometry)
     {
         case eewg3D:
             if (epsilon_surface != 0)
             {
                 dipole_coeff =
-                    2*M_PI*ONE_4PI_EPS0/((2*epsilon_surface + fr->epsilon_r)*vol);
+                    2*M_PI*ONE_4PI_EPS0/((2*epsilon_surface + fr->ic->epsilon_r)*boxVolume);
                 for (i = 0; (i < DIM); i++)
                 {
                     dipcorrA[i] = 2*dipole_coeff*mutot[0][i];
@@ -157,9 +171,17 @@ void ewald_LRcorrection(int numAtomsLocal,
             }
             break;
         case eewg3DC:
-            dipole_coeff = 2*M_PI*one_4pi_eps/vol;
-            dipcorrA[ZZ] = 2*dipole_coeff*mutot[0][ZZ];
-            dipcorrB[ZZ] = 2*dipole_coeff*mutot[1][ZZ];
+            dipole_coeff  = 2*M_PI*one_4pi_eps/boxVolume;
+            dipcorrA[ZZ]  = 2*dipole_coeff*mutot[0][ZZ];
+            dipcorrB[ZZ]  = 2*dipole_coeff*mutot[1][ZZ];
+            for (int q = 0; q < (bHaveChargeOrTypePerturbed ? 2 : 1); q++)
+            {
+                /* Avoid charge corrections with near-zero net charge */
+                if (fabs(fr->qsum[q]) > 1e-4)
+                {
+                    chargecorr[q] = 2*dipole_coeff*fr->qsum[q];
+                }
+            }
             break;
         default:
             gmx_incons("Unsupported Ewald geometry");
@@ -179,7 +201,7 @@ void ewald_LRcorrection(int numAtomsLocal,
         {
             /* Initiate local variables (for this i-particle) to 0 */
             qiA = chargeA[i]*one_4pi_eps;
-            if (EVDW_PME(fr->vdwtype))
+            if (vdwPme)
             {
                 c6Ai = C6A[i];
                 if (bDoingLBRule)
@@ -206,7 +228,7 @@ void ewald_LRcorrection(int numAtomsLocal,
                     if (k > i)
                     {
                         qqA = qiA*chargeA[k];
-                        if (EVDW_PME(fr->vdwtype))
+                        if (vdwPme)
                         {
                             c6A  = c6Ai * C6A[k];
                             if (bDoingLBRule)
@@ -330,6 +352,10 @@ void ewald_LRcorrection(int numAtomsLocal,
                 {
                     f[i][j] -= dipcorrA[j]*chargeA[i];
                 }
+                if (chargecorr[0] != 0)
+                {
+                    f[i][ZZ] += chargecorr[0]*chargeA[i]*x[i][ZZ];
+                }
             }
         }
     }
@@ -340,7 +366,7 @@ void ewald_LRcorrection(int numAtomsLocal,
             /* Initiate local variables (for this i-particle) to 0 */
             qiA = chargeA[i]*one_4pi_eps;
             qiB = chargeB[i]*one_4pi_eps;
-            if (EVDW_PME(fr->vdwtype))
+            if (vdwPme)
             {
                 c6Ai = C6A[i];
                 c6Bi = C6B[i];
@@ -363,7 +389,7 @@ void ewald_LRcorrection(int numAtomsLocal,
                     {
                         qqA = qiA*chargeA[k];
                         qqB = qiB*chargeB[k];
-                        if (EVDW_PME(fr->vdwtype))
+                        if (vdwPme)
                         {
                             c6A = c6Ai*C6A[k];
                             c6B = c6Bi*C6B[k];
@@ -378,7 +404,7 @@ void ewald_LRcorrection(int numAtomsLocal,
                             real fscal;
 
                             qqL   = L1_q*qqA + lambda_q*qqB;
-                            if (EVDW_PME(fr->vdwtype))
+                            if (vdwPme)
                             {
                                 c6L = L1_lj*c6A + lambda_lj*c6B;
                             }
@@ -431,7 +457,7 @@ void ewald_LRcorrection(int numAtomsLocal,
                                     }
                                 }
 
-                                if ((c6A != 0.0 || c6B != 0.0) && EVDW_PME(fr->vdwtype))
+                                if ((c6A != 0.0 || c6B != 0.0) && vdwPme)
                                 {
                                     rinv6         = rinv2*rinv2*rinv2;
                                     ewcdr2        = ewc_lj2*dr2;
@@ -478,6 +504,11 @@ void ewald_LRcorrection(int numAtomsLocal,
                     f[i][j] -= L1_q*dipcorrA[j]*chargeA[i]
                         + lambda_q*dipcorrB[j]*chargeB[i];
                 }
+                if (chargecorr[0] != 0 || chargecorr[1] != 0)
+                {
+                    f[i][ZZ] += (L1_q*chargecorr[0]*chargeA[i]
+                                 + lambda_q*chargecorr[1])*x[i][ZZ];
+                }
             }
         }
     }
@@ -504,14 +535,15 @@ void ewald_LRcorrection(int numAtomsLocal,
             {
                 /* Self-energy correction */
                 Vself_q[q] = ewc_q*one_4pi_eps*fr->q2sum[q]*M_1_SQRTPI;
-                if (EVDW_PME(fr->vdwtype))
+                if (vdwPme)
                 {
                     Vself_lj[q] =  fr->c6sum[q]*0.5*vr0_lj;
                 }
             }
 
-            /* Apply surface dipole correction:
-             * correction = dipole_coeff * (dipole)^2
+            /* Apply surface and charged surface dipole correction:
+             * correction = dipole_coeff * ( (dipole)^2
+             *              - qsum*sum_i q_i z_i^2 - qsum^2 * box_z^2 / 12 )
              */
             if (dipole_coeff != 0)
             {
@@ -522,6 +554,23 @@ void ewald_LRcorrection(int numAtomsLocal,
                 else if (ewald_geometry == eewg3DC)
                 {
                     Vdipole[q] = dipole_coeff*mutot[q][ZZ]*mutot[q][ZZ];
+
+                    if (chargecorr[q] != 0)
+                    {
+                        /* Here we use a non thread-parallelized loop,
+                         * because this is the only loop over atoms for
+                         * energies and they need reduction (unlike forces).
+                         * We could implement a reduction over threads,
+                         * but this case is rarely used.
+                         */
+                        const real *qPtr   = (q == 0 ? chargeA : chargeB);
+                        real        sumQZ2 = 0;
+                        for (int i = 0; i < numAtomsLocal; i++)
+                        {
+                            sumQZ2 += qPtr[i]*x[i][ZZ]*x[i][ZZ];
+                        }
+                        Vdipole[q] -= dipole_coeff*fr->qsum[q]*(sumQZ2 + fr->qsum[q]*box[ZZ][ZZ]*box[ZZ][ZZ]/12);
+                    }
                 }
             }
         }
@@ -529,7 +578,7 @@ void ewald_LRcorrection(int numAtomsLocal,
     if (!bHaveChargeOrTypePerturbed)
     {
         *Vcorr_q = Vdipole[0] - Vself_q[0] - Vexcl_q;
-        if (EVDW_PME(fr->vdwtype))
+        if (vdwPme)
         {
             *Vcorr_lj = -Vself_lj[0] - Vexcl_lj;
         }
@@ -541,7 +590,7 @@ void ewald_LRcorrection(int numAtomsLocal,
             - Vexcl_q;
         *dvdlambda_q += Vdipole[1] - Vself_q[1]
             - (Vdipole[0] - Vself_q[0]) - dvdl_excl_q;
-        if (EVDW_PME(fr->vdwtype))
+        if (vdwPme)
         {
             *Vcorr_lj      = -(L1_lj*Vself_lj[0] + lambda_lj*Vself_lj[1]) - Vexcl_lj;
             *dvdlambda_lj += -Vself_lj[1] + Vself_lj[0] - dvdl_excl_lj;
