@@ -70,8 +70,6 @@
 #include "gromacs/utility/gmxomp.h"
 #include "gromacs/utility/smalloc.h"
 
-using namespace std;
-
 #define DEBUG_CONTACTLINE
 
 /****************************************************************************
@@ -85,11 +83,11 @@ enum class Algorithm {
     Hops = 3
 };
 
-using IndexVec = vector<size_t>;
-using IndexSet = set<size_t>;
+using IndexVec = std::vector<size_t>;
+using IndexSet = std::set<size_t>;
 
 // rvec, but as an array instead of raw pointer
-using DimTuple = array<real, DIM>;
+using RvecArray = std::array<real, DIM>;
 
 struct CLConf {
     CLConf(t_pargs    pa[],
@@ -177,7 +175,7 @@ struct Interface {
                 positions.push_back({x0[i][XX], x0[i][YY], x0[i][ZZ]});
             }
         }
-        catch (const bad_alloc& e) {
+        catch (const std::bad_alloc& e) {
             gmx_fatal(FARGS, "Could not allocate memory for all frames (%s).",
                       e.what());
         }
@@ -186,12 +184,12 @@ struct Interface {
     IndexVec bottom,
              interface;
     IndexSet contact_line;
-    vector<DimTuple> positions;
+    std::vector<RvecArray> positions;
 
     // Vectors for absolute contact line positions from rolling
     // a ball over it and the corresponding closest molecular indices
     // for every position.
-    vector<real> rolled_xs;
+    std::vector<real> rolled_xs;
     IndexVec  rolled_inds;
 };
 
@@ -202,11 +200,11 @@ struct Counter {
 
     T total() const { return this->duration.count(); }
 
-    void set() { start = chrono::system_clock::now(); }
-    void stop() { duration += chrono::system_clock::now() - start; }
+    void set() { start = std::chrono::system_clock::now(); }
+    void stop() { duration += std::chrono::system_clock::now() - start; }
 
-    chrono::system_clock::time_point start;
-    chrono::duration<T> duration;
+    std::chrono::system_clock::time_point start;
+    std::chrono::duration<T> duration;
 };
 
 struct Timings {
@@ -332,7 +330,7 @@ find_interface_indices(const rvec          *x0,
     return interface_inds;
 }
 
-static vector<IndexVec>
+static std::vector<IndexVec>
 slice_system_along_dir(const rvec     *x0,
                        const IndexVec &interface,
                        const CLConf   &conf,
@@ -342,7 +340,7 @@ slice_system_along_dir(const rvec     *x0,
     const unsigned num_slices = static_cast<unsigned>(ceil((conf.rmax[dir] - conf.rmin[dir]) / conf.precision));
     const real final_slice_precision = (conf.rmax[dir] - conf.rmin[dir]) / num_slices;
 
-    vector<IndexVec> slice_indices (num_slices);
+    std::vector<IndexVec> slice_indices (num_slices);
     for (const auto i : interface)
     {
         const auto x = x0[i][dir];
@@ -362,8 +360,8 @@ find_bottom_layer_indices(const rvec     *x0,
 {
     const auto slice_indices = slice_system_along_dir(x0, interface, conf, ZZ);
 
-    // Track the maximum count, when a decrease is found the peak
-    // was in the previous slice
+    // Track the maximum count.
+    // When a decrease is found the peak was in the previous slice.
     int prev_slice = -1;
     unsigned max_count = 0;
 
@@ -403,7 +401,7 @@ add_contact_line(Interface         &interface,
         while (x >= conf.rmin[XX])
         {
             IndexVec candidates;
-            vector<real> dr2s;
+            std::vector<real> dr2s;
 
             for (const auto index : bottom)
             {
@@ -576,7 +574,7 @@ at_previous_contact_line(const IndexSet  &indices,
     return prev_contact_line;
 }
 
-static vector<real>
+static std::vector<real>
 calculate_fractions(const IndexVec &from_previous,
                     const IndexVec &num_advanced)
 {
@@ -587,7 +585,7 @@ calculate_fractions(const IndexVec &from_previous,
          sum_previous = 0.0,
          sum_fractions = 0.0;
 
-    vector<real> fractions;
+    std::vector<real> fractions;
 
     while (from != from_previous.cend())
     {
@@ -680,15 +678,15 @@ analyze_replacement(const IndexSet    &advanced_indices,
 */
 
 struct CLData {
-    vector<real> times,
-                 fractions,
-                 distances;
+    std::vector<real> times,
+                      fractions,
+                      distances;
 };
 
 template<typename T>
-static int find_the_closest_neighbour(const DimTuple         &x0,
-                                      const T                &to,
-                                      const vector<DimTuple> &positions)
+static int find_the_closest_neighbour(const RvecArray              &x0,
+                                      const T                      &to,
+                                      const std::vector<RvecArray> &positions)
 {
     auto iter_to = to.cbegin();
     auto x1 = positions[*iter_to];
@@ -712,9 +710,9 @@ static int find_the_closest_neighbour(const DimTuple         &x0,
 }
 
 template<typename T1, typename T2>
-static IndexSet find_second_layer(const T1               &from,
-                                  const T2               &to,
-                                  const vector<DimTuple> &positions)
+static IndexSet find_second_layer(const T1                     &from,
+                                  const T2                     &to,
+                                  const std::vector<RvecArray> &positions)
 {
     IndexSet second_layer;
 
@@ -729,9 +727,9 @@ static IndexSet find_second_layer(const T1               &from,
 }
 
 template<typename T1, typename T2>
-static IndexVec find_closest_neighbours(const T1               &from,
-                                        const T2               &to,
-                                        const vector<DimTuple> &positions)
+static IndexVec find_closest_neighbours(const T1                     &from,
+                                        const T2                     &to,
+                                        const std::vector<RvecArray> &positions)
 {
     IndexVec neighbours;
 
@@ -745,7 +743,7 @@ static IndexVec find_closest_neighbours(const T1               &from,
     return neighbours;
 }
 
-using DistAndHeight = pair<real, real>;
+using DistAndHeight = std::pair<real, real>;
 
 static DistAndHeight
 calc_displacement_distance(const Interface &interface)
@@ -770,8 +768,8 @@ calc_displacement_distance(const Interface &interface)
     );
 
     // Then calculate the distance along x to them
-    vector<real> distances;
-    vector<real> heights;
+    std::vector<real> distances;
+    std::vector<real> heights;
     auto from = second_layer.cbegin();
     auto to = closest_neighbours.cbegin();
 
@@ -798,14 +796,16 @@ calc_displacement_distance(const Interface &interface)
     const auto mean_dz = accumulate(heights.cbegin(), heights.cend(), 0.0)
                         / heights.size();
 
-    return pair<real, real> { static_cast<real>(mean_dr), static_cast<real>(mean_dz) };
+    return DistAndHeight {
+        static_cast<real>(mean_dr), static_cast<real>(mean_dz)
+    };
 }
 
 // Calculate the arithmetic mean and variance of all values in a vector.
 // Excepts if less than two values are present in the vector.
 template <typename T>
-const static pair<T, T>
-calc_mean_and_var(const vector<T> &values)
+const static std::pair<T, T>
+calc_mean_and_var(const std::vector<T> &values)
 {
     const auto mean = accumulate(values.cbegin(), values.cend(), 0.0)
                         / values.size();
@@ -815,30 +815,30 @@ calc_mean_and_var(const vector<T> &values)
                         }
                     ) / (values.size() - 1);
 
-    return pair<T, T> { mean, var };
+    return std::pair<T, T> { mean, var };
 }
 
 // Calculate the mean distance and height between the contact line
 // and their closest second layer molecules. Return the distances
 // to use for plotting a distance figure.
-static vector<real>
-calculate_mean_distance(const vector<DistAndHeight> &values)
+static std::vector<real>
+calculate_mean_distance(const std::vector<DistAndHeight> &values)
 {
-    vector<real> dists;
-    vector<real> heights;
+    std::vector<real> dists;
+    std::vector<real> heights;
     real dr, dz;
     for (const auto v : values)
 
     {
-        tie(dr, dz) = v;
+        std::tie(dr, dz) = v;
         dists.push_back(dr);
         heights.push_back(dz);
     }
 
     real mean_dr, var_dr,
          mean_dz, var_dz;
-    tie(mean_dr, var_dr) = calc_mean_and_var(dists);
-    tie(mean_dz, var_dz) = calc_mean_and_var(heights);
+    std::tie(mean_dr, var_dr) = calc_mean_and_var(dists);
+    std::tie(mean_dz, var_dz) = calc_mean_and_var(heights);
 
     const auto err_dr = sqrt(var_dr) / (values.size() - 1);
     const auto err_dz = sqrt(var_dz) / (values.size() - 1);
@@ -887,16 +887,16 @@ collect_contact_line_advancement(const char             *fn,
     // to analyze the entire set at the end of the trajectory analysis.
     IndexVec num_advanced;
     IndexVec num_from_previous;
-    vector<real> times;
+    std::vector<real> times;
 
     // Also save the distance from second layer atoms to their closest
     // contact line atom
-    vector<DistAndHeight> distances;
+    std::vector<DistAndHeight> distances;
 
     // To compare against previous frames when calculating which
     // indices advanced the contact line we need to save this
     // information. A deque gives us a window of the last-to-first data.
-    deque<Interface> interfaces;
+    std::deque<Interface> interfaces;
 
 #ifdef DEBUG_CONTACTLINE
     constexpr size_t MAXLEN = 80;
@@ -977,8 +977,8 @@ collect_contact_line_advancement(const char             *fn,
             // write_sto_conf_indexed requires [int] data, not [size_t]
             // this is debugging so we don't care about performance,
             // just copy them
-            const vector<int> int_inds(current.interface.cbegin(),
-                                       current.interface.cend()),
+            const std::vector<int> int_inds(current.interface.cbegin(),
+                                            current.interface.cend()),
                               cl_inds(current.contact_line.cbegin(),
                                       current.contact_line.cend());
 
@@ -1011,14 +1011,14 @@ collect_contact_line_advancement(const char             *fn,
     delete[] debug_title;
 #endif
 
-    close_trj(status);
+    close_trx(status);
     fprintf(stderr, "\nRead %d frames from trajectory.\n", 0);
     sfree(x0);
     delete pbc;
 
     const auto fractions = calculate_fractions(num_from_previous, num_advanced);
 
-    vector<real> dists;
+    std::vector<real> dists;
     if (conf.calc_jump_distance)
     {
         dists = calculate_mean_distance(distances);
