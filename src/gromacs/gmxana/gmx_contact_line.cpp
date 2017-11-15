@@ -101,6 +101,7 @@ struct CLConf {
          calc_jump_distance{ static_cast<bool>(opt2bSet("-dist", fnmsize, fnm)) },
          cutoff{ opt2parg_real("-co", pasize, pa) },
          cutoff2{ cutoff * cutoff },
+         ball_radius{ opt2parg_real("-ball", pasize, pa) },
          precision{ opt2parg_real("-prec", pasize, pa) },
          dx{ opt2parg_real("-dx", pasize, pa) },
          hop_min{ opt2parg_real("-hmin", pasize, pa) },
@@ -144,6 +145,7 @@ struct CLConf {
     bool calc_jump_distance;
     real cutoff,
          cutoff2,
+         ball_radius,
          precision,
          dx,
          hop_min,
@@ -387,10 +389,9 @@ add_contact_line(Interface         &interface,
                  const CLConf      &conf)
 {
     // Roll a ball along the bottom of the interface to detect the contact line
-    constexpr real r = 0.28;
-    constexpr real r2 = r * r;
-    constexpr real dy_ball = r / 5.0;
-    constexpr real dx_ball = r / 10.0;
+    const real r2 = conf.ball_radius * conf.ball_radius;
+    const real dy_ball = conf.ball_radius / 5.0;
+    const real dx_ball = conf.ball_radius / 10.0;
 
     real y = conf.rmin[YY];
 
@@ -1103,7 +1104,8 @@ gmx_contact_line(int argc, char *argv[])
                 precision = 0.3,
                 dx = 0.3,
                 hop_min = 0.25,
-                hop_max = 0.35;
+                hop_max = 0.35,
+                ball_radius = 0.28;
     const char *algorithm[] = { NULL, "contact-line", "bottom", "hops", NULL };
 
     t_pargs pa[] = {
@@ -1129,6 +1131,8 @@ gmx_contact_line(int argc, char *argv[])
           "Stride between contact line comparisons." },
         { "-al" , FALSE, etENUM, { &algorithm },
           "Algorithm for determining elegibility of atoms." },
+        { "-ball" , FALSE, etREAL, { &ball_radius },
+          "Radius of ball which is rolled over the interface." },
     };
 
     const char *bugs[] = {
