@@ -38,6 +38,7 @@
 
 #include <algorithm> // find, set_difference
 #include <array>
+#include <assert.h>
 #include <cctype>
 #include <chrono>
 #include <cmath>
@@ -382,6 +383,188 @@ find_bottom_layer_indices(const rvec     *x0,
     return slice_indices.at(prev_slice);
 }
 
+#include "gromacs/random.h"
+#include "gromacs/random/uniformrealdistribution.h"
+
+// static coord_to_index
+
+using Coord2 = std::array<real, 2>;
+
+static int
+get_random_index_from_list(gmx::DefaultRandomEngine  &rng,
+                           const std::vector<int> &active)
+{
+    if (active.size() == 0)
+    {
+        return -1;
+    }
+
+    gmx::UniformIntDistribution<size_t> dist(0, active.size() - 1);
+    const auto i = dist(rng);
+
+    return active[i];
+}
+
+static Coord2
+gen_coordinate_in_box(gmx::DefaultRandomEngine &rng,
+                      const Coord2             &xlim,
+                      const Coord2             &ylim
+                     )
+{
+    gmx::UniformRealDistribution<real> xdist(xlim[0], xlim[1]);
+    gmx::UniformRealDistribution<real> ydist(ylim[0], ylim[1]);
+
+    const auto x = xdist(rng);
+    const auto y = ydist(rng);
+
+    return Coord2 { x, y };
+}
+
+static Coord2
+gen_coordinate_around_x(gmx::DefaultRandomEngine &rng,
+                        const Coord2             &x0,
+                        const real               rmin
+                       )
+{
+    const auto rlim = Coord2 { -rmin, rmin };
+    while (true)
+    {
+        const auto candidate = gen_coordinate_in_box(rng, rlim, rlim);
+        const auto dr = sqrt(pow(candidate[0], 2) + pow(candidate[1], 2));
+
+        if (dr >= rmin && dr <= 2.0 * rmin)
+        {
+            return candidate;
+        }
+    }
+}
+
+// When sampling the outer interface, use a poisson disk distribution
+// to generate points in the yz plane along which to sample the outermost
+// molecules. This method is efficient and should result in uniform sampling.
+//
+// See: http://www.cs.ubc.ca/%7Erbridson/docs/bridson-siggraph07-poissondisk.pdf
+static std::vector<std::array<real, 2>>
+sample_points_poisson_disk(const CLConf &conf)
+{
+    constexpr unsigned k = 30; // suggested magic variable for the sampling
+    const real rmin = conf.ball_radius / 2.0;
+    const real cell_size = rmin / sqrt(2.0);
+
+    const unsigned ny = ceil((conf.rmax[YY] - conf.rmin[YY]) / cell_size);
+    const unsigned nz = ceil((conf.rmax[ZZ] - conf.rmin[ZZ]) / cell_size);
+
+    std::vector<std::array<real, 2>> coordinates; // Samples coordinates
+    std::vector<int> background_grid(ny * nz, -1); // -1: no sample, else index in coordinates
+    std::vector<int> active; // Index of active samples from the coordinate list
+
+    constexpr unsigned seed = 1;
+    static gmx::DefaultRandomEngine rng(seed);
+
+    const auto ylim = Coord2 { conf.rmin[YY], conf.rmax[YY] };
+    const auto zlim = Coord2 { conf.rmin[ZZ], conf.rmax[ZZ] };
+    const auto x0 = gen_coordinate_in_box(rng, ylim, zlim);
+
+    // Rest of algorithm TODO!!!!!!!
+
+    return coordinates;
+}
+
+static IndexSet
+get_outer_interface(const Interface   &interface,
+                    const rvec        *x0,
+                    const CLConf      &conf)
+{
+    // Roll a ball along the interface to detect only the outer interface`
+    const real r2 = conf.ball_radius * conf.ball_radius;
+    const real dx_ball = conf.ball_radius / 10.0;
+    const real dy_ball = conf.ball_radius / 5.0;
+    const real dz_ball = conf.ball_radius;
+
+    IndexSet outer_interface {};
+
+    const auto sample_coords = sample_points_poisson_disk(conf);
+
+    /*
+    real z = conf.rmin[ZZ];
+
+    while (z <= conf.rmax[ZZ])
+    {
+        real y = conf.rmin[YY];
+
+        while (y <= conf.rmax[YY])
+        {
+            // Just stupidly move towards the contact line (from the max)
+            // until some molecule is found within the ball radius.
+            real x = conf.rmax[XX];
+
+            while (x >= conf.rmin[XX])
+            {
+                // For this new ball position, find all candidates that
+                // are within the radius and *if any* are found,
+                // take the closest one as the contact line molecule
+                // and break the loop.
+
+                IndexVec candidates;
+                std::vector<real> dr2s;
+
+                for (const auto index : interface.interface)
+                {
+                    const RvecArray x1 {x, y, z};
+                    const auto dr2 = distance2(x1.data(), x0[index]);
+
+                    if (dr2 <= r2)
+                    {
+                        candidates.push_back(index);
+                        dr2s.push_back(dr2);
+                    }
+                    else
+                    {
+                        const auto dr2 = distance2(x1.data(), x0[index + 1]);
+
+                        if (dr2 <= r2)
+                        {
+                            candidates.push_back(index);
+                            dr2s.push_back(dr2);
+                        }
+                        else
+                        {
+                            const auto dr2 = distance2(x1.data(), x0[index + 2]);
+
+                            if (dr2 <= r2)
+                            {
+                                candidates.push_back(index);
+                                dr2s.push_back(dr2);
+                            }
+                        }
+                    }
+                }
+
+                if (candidates.size() > 0)
+                {
+                    const auto it = std::min_element(dr2s.cbegin(), dr2s.cend());
+                    const auto dn = std::distance(dr2s.cbegin(), it);
+                    const auto index = candidates[dn];
+
+                    outer_interface.insert(index);
+
+                    break;
+                }
+
+                x -= dx_ball;
+            }
+
+            y += dy_ball;
+        }
+
+        z += dz_ball;
+    }
+    */
+
+    return outer_interface;
+}
+
+
 static void
 add_contact_line(Interface         &interface,
                  const rvec        *x0,
@@ -390,17 +573,25 @@ add_contact_line(Interface         &interface,
 {
     // Roll a ball along the bottom of the interface to detect the contact line
     const real r2 = conf.ball_radius * conf.ball_radius;
-    const real dy_ball = conf.ball_radius / 5.0;
     const real dx_ball = conf.ball_radius / 10.0;
+    const real dy_ball = conf.ball_radius / 5.0;
 
     real y = conf.rmin[YY];
 
     while (y <= conf.rmax[YY])
     {
+        // Just stupidly move towards the contact line (from the max)
+        // until some molecule is found within the ball radius.
+
         real x = conf.rmax[XX];
 
         while (x >= conf.rmin[XX])
         {
+            // For this new ball position, find all candidates that
+            // are within the radius and *if any* are found,
+            // take the closest one as the contact line molecule
+            // and break the loop.
+
             IndexVec candidates;
             std::vector<real> dr2s;
 
@@ -856,11 +1047,37 @@ calculate_mean_distance(const std::vector<DistAndHeight> &values)
     return dists;
 }
 
+static void
+write_interface_coords(const char          *fn,
+                       const Interface     &interface,
+                       const rvec          *x0,
+                       const struct CLConf &conf)
+{
+    const auto outer_interface = get_outer_interface(interface, x0, conf);
+
+    // In turn, write:
+    // 1. The number of coordinate points as an unsigned int.
+    // 2. Each coordinate as 1 rvec.
+
+    auto fp = gmx_ffopen(fn, "ab");
+
+    const auto num_coords = static_cast<uint64_t>(outer_interface.size());
+    fwrite(&num_coords, sizeof(num_coords), 1, fp);
+
+    for (const auto index : outer_interface)
+    {
+        fwrite(x0[index], sizeof(x0[0]), 1, fp);
+    }
+
+    gmx_ffclose(fp);
+}
+
 static CLData
-collect_contact_line_advancement(const char             *fn,
+collect_contact_line_advancement(const char             *fn_traj,
                                  int                    *grpindex,
                                  int                     grpsize,
                                  struct CLConf          &conf,
+                                 const char             *fnout_interface,
                                  const t_topology       *top,
                                  const int               ePBC,
                                  const gmx_output_env_t *oenv)
@@ -871,7 +1088,7 @@ collect_contact_line_advancement(const char             *fn,
     t_trxstatus *status;
     real t;
 
-    if ((num_atoms = read_first_x(oenv, &status, fn, &t, &x0, box)) == 0)
+    if ((num_atoms = read_first_x(oenv, &status, fn_traj, &t, &x0, box)) == 0)
     {
         gmx_fatal(FARGS, "Could not read coordinates from statusfile\n");
     }
@@ -905,6 +1122,19 @@ collect_contact_line_advancement(const char             *fn,
     auto debug_title = new char[MAXLEN];
 #endif
 
+    // If the interface should be saved, open a file for it.
+    // Start by writing the size of each vector element (`real`).
+    FILE *fp_interface { nullptr };
+    const bool save_interface_coords = fnout_interface != NULL;
+
+    if (save_interface_coords)
+    {
+        fp_interface = gmx_ffopen(fnout_interface, "wb");
+        constexpr auto sizeof_real { sizeof(real) };
+        fwrite(&sizeof_real, sizeof(size_t), 1, fp_interface);
+        gmx_ffclose(fp_interface);
+    }
+
     Timings timings;
     timings.traj_total.set();
 
@@ -937,6 +1167,11 @@ collect_contact_line_advancement(const char             *fn,
             if (conf.calc_jump_distance)
             {
                 distances.push_back(calc_displacement_distance(current));
+            }
+
+            if (save_interface_coords)
+            {
+                write_interface_coords(fnout_interface, current, x0, conf);
             }
 
             if (interfaces.size() > conf.stride)
@@ -1144,6 +1379,7 @@ gmx_contact_line(int argc, char *argv[])
         { efTPR, NULL, NULL,  ffREAD },
         { efXVG, "-o", "clfrac", ffWRITE },
         { efXVG, "-dist", "dist", ffOPTWR },
+        { efDAT, "-interface", "interfaces", ffOPTWR },
     };
 
 #define NFILE asize(fnm)
@@ -1174,7 +1410,15 @@ gmx_contact_line(int argc, char *argv[])
     struct CLConf conf {pa, asize(pa), rmin, rmax, nenum(algorithm), fnm, asize(fnm)};
 
     const auto contact_line_data = collect_contact_line_advancement(
-        ftp2fn(efTRX, NFILE, fnm), *index, *grpsizes, conf, top, ePBC, oenv);
+        ftp2fn(efTRX, NFILE, fnm),
+        *index,
+        *grpsizes,
+        conf,
+        opt2fn("-interface", NFILE, fnm),
+        top,
+        ePBC,
+        oenv);
+
     save_contact_line_figure(contact_line_data, opt2fn("-o", NFILE, fnm), oenv);
 
     if (conf.calc_jump_distance)
