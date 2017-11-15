@@ -418,8 +418,8 @@ add_contact_line(Interface         &interface,
 
             if (candidates.size() > 0)
             {
-                const auto it = min_element(dr2s.cbegin(), dr2s.cend());
-                const auto dn = distance(dr2s.cbegin(), it);
+                const auto it = std::min_element(dr2s.cbegin(), dr2s.cend());
+                const auto dn = std::distance(dr2s.cbegin(), it);
                 const auto index = candidates[dn];
 
                 interface.rolled_xs.push_back(x);
@@ -807,9 +807,9 @@ template <typename T>
 const static std::pair<T, T>
 calc_mean_and_var(const std::vector<T> &values)
 {
-    const auto mean = accumulate(values.cbegin(), values.cend(), 0.0)
+    const auto mean = std::accumulate(values.cbegin(), values.cend(), 0.0)
                         / values.size();
-    const auto var = accumulate(values.cbegin(), values.cend(), 0.0,
+    const auto var = std::accumulate(values.cbegin(), values.cend(), 0.0,
                         [=] (const T& acc, const T& value) {
                             return acc + pow(value - mean, 2);
                         }
