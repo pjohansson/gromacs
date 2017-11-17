@@ -38,7 +38,6 @@
 
 #include <algorithm> // find, set_difference
 #include <array>
-#include <assert.h>
 #include <cctype>
 #include <chrono>
 #include <cmath>
@@ -62,6 +61,8 @@
 #include "gromacs/math/vec.h"
 #include "gromacs/pbcutil/pbc.h"
 #include "gromacs/pbcutil/rmpbc.h"
+#include "gromacs/random.h"
+#include "gromacs/random/seed.h"
 #include "gromacs/topology/index.h"
 #include "gromacs/topology/topology.h"
 #include "gromacs/utility/arraysize.h"
@@ -122,6 +123,16 @@ struct CLConf {
             gmx_fatal(FARGS, "Input stride must be positive.");
         }
         stride = static_cast<size_t>(stride_buf);
+
+        const auto tmpseed = opt2parg_int("-seed", pasize, pa);
+        if (tmpseed < 0)
+        {
+            seed = gmx::makeRandomSeed();
+        }
+        else
+        {
+            seed = static_cast<decltype(seed)>(tmpseed);
+        }
     }
 
     void set_box_limits(const matrix box)
@@ -153,6 +164,7 @@ struct CLConf {
          hop_min2,
          hop_max,
          hop_max2;
+    decltype(gmx::makeRandomSeed()) seed;
     int nmin,
         nmax;
     size_t stride;
@@ -383,8 +395,6 @@ find_bottom_layer_indices(const rvec     *x0,
     return slice_indices.at(prev_slice);
 }
 
-#include "gromacs/random.h"
-
 using Coord2 = std::array<real, 2>;
 
 static int
@@ -488,12 +498,6 @@ struct PoissonDiskGrid {
 void PoissonDiskGrid::add_coordinate(const Coord2 &x)
 {
     const auto i = coord_to_index(x);
-#ifdef DEBUG_CONTACTLINE
-    if (i >= ny * nz)
-    {
-        gmx_fatal(FARGS, "Trying to add out-of-bounds index (%lu of %lu total). This came from the coordinate (%f, %f). Aborting.", i, grid.size(), x[0], x[1]);
-    }
-#endif
     const auto n = coordinates.size();
 
     coordinates.push_back(x);
@@ -516,11 +520,25 @@ size_t PoissonDiskGrid::coord_to_index(const Coord2 &x) const
 // Return the `grid` index from its corresponding 2d indices.
 size_t PoissonDiskGrid::index_from_2d(const size_t iy, const size_t iz) const
 {
-    // TODO: This causes OOB error if iy = ny and iz = nz (possible elsewhere too).
-    // Double check.
-    const auto index = iy * nz + iz;
+    if (iy >= ny || iz >= nz)
+    {
+        if (iy >= ny)
+        {
+            gmx_fatal(FARGS,
+                      "Bad input index `iy` %lu (larger than maximum %lu)",
+                      iy, ny - 1
+            );
+        }
+        if (iz >= nz)
+        {
+            gmx_fatal(FARGS,
+                      "Bad input index `iz` %lu (larger than maximum %lu)",
+                      iz, nz - 1
+            );
+        }
+    }
 
-    return index;
+    return iy * nz + iz;
 }
 
 // Return a pair of the corresponding 2d indices of a 1d `grid` index.
@@ -546,8 +564,8 @@ bool PoissonDiskGrid::try_add_coordinate(const Coord2 &x)
     // at rmin / sqrt(2) we only have to check cells within 2 in each direction.
     const auto imin = static_cast<int>(iy) - 2 >= 0 ? iy - 2 : 0;
     const auto jmin = static_cast<int>(iz) - 2 >= 0 ? iz - 2 : 0;
-    const auto imax = iy + 2 <= ny ? iy + 2 : ny;
-    const auto jmax = iz + 2 <= nz ? iz + 2 : nz;
+    const auto imax = iy + 2 <= ny - 1 ? iy + 2 : ny - 1;
+    const auto jmax = iz + 2 <= nz - 1 ? iz + 2 : nz - 1;
 
     for (auto i = imin; i <= imax; ++i)
     {
@@ -586,10 +604,9 @@ sample_points_poisson_disk(const CLConf &conf)
 {
     constexpr unsigned kmax = 30; // suggested magic variable for the sampling
 
-    constexpr unsigned seed = 1;
-    static gmx::DefaultRandomEngine rng(seed);
+    static gmx::DefaultRandomEngine rng(conf.seed);
 
-    const real rmin = conf.ball_radius / 2.0;
+    const real rmin = conf.ball_radius / sqrt(2);
     PoissonDiskGrid poisson_disk (rmin, conf.rmin, conf.rmax);
 
     const auto ylim = Coord2 { conf.rmin[YY], conf.rmax[YY] };
@@ -633,8 +650,6 @@ get_outer_interface(const Interface   &interface,
     // Roll a ball along the interface to detect only the outer interface`
     const real r2 = conf.ball_radius * conf.ball_radius;
     const real dx_ball = conf.ball_radius / 10.0;
-    // const real dy_ball = conf.ball_radius / 5.0;
-    // const real dz_ball = conf.ball_radius;
 
     IndexSet outer_interface {};
 
@@ -704,83 +719,10 @@ get_outer_interface(const Interface   &interface,
         }
     }
 
-    /*
-    real z = conf.rmin[ZZ];
-
-    while (z <= conf.rmax[ZZ])
-    {
-        real y = conf.rmin[YY];
-
-        while (y <= conf.rmax[YY])
-        {
-            // Just stupidly move towards the contact line (from the max)
-            // until some molecule is found within the ball radius.
-            real x = conf.rmax[XX];
-
-            while (x >= conf.rmin[XX])
-            {
-                // For this new ball position, find all candidates that
-                // are within the radius and *if any* are found,
-                // take the closest one as the contact line molecule
-                // and break the loop.
-
-                IndexVec candidates;
-                std::vector<real> dr2s;
-
-                for (const auto index : interface.interface)
-                {
-                    const RvecArray x1 {x, y, z};
-                    const auto dr2 = distance2(x1.data(), x0[index]);
-
-                    if (dr2 <= r2)
-                    {
-                        candidates.push_back(index);
-                        dr2s.push_back(dr2);
-                    }
-                    else
-                    {
-                        const auto dr2 = distance2(x1.data(), x0[index + 1]);
-
-                        if (dr2 <= r2)
-                        {
-                            candidates.push_back(index);
-                            dr2s.push_back(dr2);
-                        }
-                        else
-                        {
-                            const auto dr2 = distance2(x1.data(), x0[index + 2]);
-
-                            if (dr2 <= r2)
-                            {
-                                candidates.push_back(index);
-                                dr2s.push_back(dr2);
-                            }
-                        }
-                    }
-                }
-
-                if (candidates.size() > 0)
-                {
-                    const auto it = std::min_element(dr2s.cbegin(), dr2s.cend());
-                    const auto dn = std::distance(dr2s.cbegin(), it);
-                    const auto index = candidates[dn];
-
-                    outer_interface.insert(index);
-
-                    break;
-                }
-
-                x -= dx_ball;
-            }
-
-            y += dy_ball;
-        }
-
-        z += dz_ball;
-    }
-    */
-
-    fprintf(stderr, "Found %lu outer interface indices.\n", outer_interface.size());
+#ifdef DEBUG_CONTACTLINE
+    fprintf(stderr, "\b Also found %lu outer interface indices.\n",
+            outer_interface.size());
+#endif
 
     return outer_interface;
 }
@@ -1555,7 +1497,8 @@ gmx_contact_line(int argc, char *argv[])
                 rmax = {-1.0, -1.0, -1.0};
     static int nmin = 20,
                nmax = 100,
-               stride = 1;
+               stride = 1,
+               seed = -1;
     static real cutoff = 1.0,
                 precision = 0.3,
                 dx = 0.3,
@@ -1589,6 +1532,8 @@ gmx_contact_line(int argc, char *argv[])
           "Algorithm for determining elegibility of atoms." },
         { "-ball" , FALSE, etREAL, { &ball_radius },
           "Radius of ball which is rolled over the interface." },
+        { "-seed" , FALSE, etINT, { &seed },
+          "Optional non-negative seed for the random number generation." },
     };
 
     const char *bugs[] = {
