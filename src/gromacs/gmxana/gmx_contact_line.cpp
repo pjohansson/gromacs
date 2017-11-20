@@ -231,7 +231,7 @@ struct Timings {
 };
 
 static void
-print_a_timing(const char    *label,
+print_a_timing(const char            *label,
                const Counter<double>  counter,
                const Counter<double>  total)
 {
@@ -467,10 +467,11 @@ struct PoissonDiskGrid {
      origin { rmin_vec[YY], rmin_vec[ZZ] },
      size { rmax_vec[YY] - rmin_vec[YY], rmax_vec[ZZ] - rmin_vec[ZZ] }
     {
-        const real cell_size = rmin / sqrt(2.0);
-        ny = ceil(size[0] / cell_size);
-        nz = ceil(size[1] / cell_size);
+        const real target_cell_size = rmin / sqrt(2.0);
+        ny = ceil(size[0] / target_cell_size);
+        nz = ceil(size[1] / target_cell_size);
         grid = std::vector<int>(ny * nz, -1);
+        cell_size = Coord2 { size[0] / ny, size[1] / nz };
     }
 
     void add_coordinate(const Coord2 &x);
@@ -481,7 +482,7 @@ struct PoissonDiskGrid {
 
     real rmin;
     size_t ny, nz;
-    Coord2 origin, size;
+    Coord2 origin, size, cell_size;
 
     // List of coordinates that have been added.
     std::vector<Coord2> coordinates;
@@ -508,11 +509,12 @@ void PoissonDiskGrid::add_coordinate(const Coord2 &x)
 // Return the index to the cell of the `grid` of an input coordinate.
 size_t PoissonDiskGrid::coord_to_index(const Coord2 &x) const
 {
-    const auto dy = static_cast<real>(size[0] / ny);
-    const auto dz = static_cast<real>(size[1] / nz);
-
-    const auto iy = static_cast<size_t>(floor((x[0] - origin[0]) / dy));
-    const auto iz = static_cast<size_t>(floor((x[1] - origin[1]) / dz));
+    const auto iy = static_cast<size_t>(
+        floor((x[0] - origin[0]) / cell_size[0])
+    );
+    const auto iz = static_cast<size_t>(
+        floor((x[1] - origin[1]) / cell_size[1])
+    );
 
     return index_from_2d(iy, iz);
 }
@@ -574,6 +576,7 @@ bool PoissonDiskGrid::try_add_coordinate(const Coord2 &x)
             const auto k = index_from_2d(i, j);
             const auto n = grid.at(k);
 
+            // n = -1 means that no coordinate is in this cell, skip it
             if (n > -1)
             {
                 const auto x1 = coordinates[n];
@@ -653,6 +656,7 @@ get_outer_interface(const Interface   &interface,
 
     IndexSet outer_interface {};
 
+    // Roll at these fixed (sampled) coordinates in the y-z plane.
     const auto sample_coords = sample_points_poisson_disk(conf);
 
     for (const auto coord : sample_coords)
