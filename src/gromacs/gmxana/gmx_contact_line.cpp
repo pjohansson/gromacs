@@ -38,7 +38,6 @@
 
 #include <algorithm> // find, set_difference
 #include <array>
-#include <assert.h>
 #include <cctype>
 #include <chrono>
 #include <cmath>
@@ -62,6 +61,8 @@
 #include "gromacs/math/vec.h"
 #include "gromacs/pbcutil/pbc.h"
 #include "gromacs/pbcutil/rmpbc.h"
+#include "gromacs/random.h"
+#include "gromacs/random/seed.h"
 #include "gromacs/topology/index.h"
 #include "gromacs/topology/topology.h"
 #include "gromacs/utility/arraysize.h"
@@ -122,6 +123,16 @@ struct CLConf {
             gmx_fatal(FARGS, "Input stride must be positive.");
         }
         stride = static_cast<size_t>(stride_buf);
+
+        const auto tmpseed = opt2parg_int("-seed", pasize, pa);
+        if (tmpseed < 0)
+        {
+            seed = gmx::makeRandomSeed();
+        }
+        else
+        {
+            seed = static_cast<decltype(seed)>(tmpseed);
+        }
     }
 
     void set_box_limits(const matrix box)
@@ -153,6 +164,7 @@ struct CLConf {
          hop_min2,
          hop_max,
          hop_max2;
+    decltype(gmx::makeRandomSeed()) seed;
     int nmin,
         nmax;
     size_t stride;
@@ -383,26 +395,24 @@ find_bottom_layer_indices(const rvec     *x0,
     return slice_indices.at(prev_slice);
 }
 
-#include "gromacs/random.h"
-#include "gromacs/random/uniformrealdistribution.h"
-
-// static coord_to_index
-
 using Coord2 = std::array<real, 2>;
 
 static int
-get_random_index_from_list(gmx::DefaultRandomEngine  &rng,
-                           const std::vector<int> &active)
+get_random_element_from_set(gmx::DefaultRandomEngine  &rng,
+                            const std::set<size_t>    &list)
 {
-    if (active.size() == 0)
+    if (list.size() == 0)
     {
         return -1;
     }
 
-    gmx::UniformIntDistribution<size_t> dist(0, active.size() - 1);
+    gmx::UniformIntDistribution<> dist(0, list.size() - 1);
     const auto i = dist(rng);
 
-    return active[i];
+    auto it = list.cbegin();
+    std::advance(it, i);
+
+    return *it;
 }
 
 static Coord2
@@ -423,10 +433,12 @@ gen_coordinate_in_box(gmx::DefaultRandomEngine &rng,
 static Coord2
 gen_coordinate_around_x(gmx::DefaultRandomEngine &rng,
                         const Coord2             &x0,
-                        const real               rmin
+                        const real                rmin,
+                        const Coord2             &xlim,
+                        const Coord2             &ylim
                        )
 {
-    const auto rlim = Coord2 { -rmin, rmin };
+    const auto rlim = Coord2 { -2 * rmin, 2 * rmin };
     while (true)
     {
         const auto candidate = gen_coordinate_in_box(rng, rlim, rlim);
@@ -434,9 +446,152 @@ gen_coordinate_around_x(gmx::DefaultRandomEngine &rng,
 
         if (dr >= rmin && dr <= 2.0 * rmin)
         {
-            return candidate;
+            const auto x = candidate[0] + x0[0];
+            const auto y = candidate[1] + x0[1];
+
+            if (x >= xlim[0] && x < xlim[1] && y >= ylim[0] && y < ylim[1])
+            {
+                return Coord2 { x, y };
+            }
         }
     }
+}
+
+// Class which contains the required collections to construct a Poisson disk.
+struct PoissonDiskGrid {
+    // Initialize the variables and the `grid` with all-empty values (-1).
+    PoissonDiskGrid(const real rmin,
+                    const rvec rmin_vec,
+                    const rvec rmax_vec)
+    :rmin { rmin },
+     origin { rmin_vec[YY], rmin_vec[ZZ] },
+     size { rmax_vec[YY] - rmin_vec[YY], rmax_vec[ZZ] - rmin_vec[ZZ] }
+    {
+        const real cell_size = rmin / sqrt(2.0);
+        ny = ceil(size[0] / cell_size);
+        nz = ceil(size[1] / cell_size);
+        grid = std::vector<int>(ny * nz, -1);
+    }
+
+    void add_coordinate(const Coord2 &x);
+    size_t coord_to_index(const Coord2 &x) const;
+    size_t index_from_2d(const size_t iy, const size_t iz) const;
+    std::pair<size_t, size_t> index_to_2d(const size_t i) const;
+    bool try_add_coordinate(const Coord2 &x);
+
+    real rmin;
+    size_t ny, nz;
+    Coord2 origin, size;
+
+    // List of coordinates that have been added.
+    std::vector<Coord2> coordinates;
+
+    // Background 2D grid with indices to each cell's index to its coordinate // in the `coordinates` vector. A cell with no coordinate has the value -1.
+    std::vector<int> grid;
+
+    // Indices of currently active samples in the `coordinates` vector.
+    std::set<size_t> active;
+};
+
+// Add a coordinate to the `coordinates` vector and its index to the
+// background grid and active list.
+void PoissonDiskGrid::add_coordinate(const Coord2 &x)
+{
+    const auto i = coord_to_index(x);
+    const auto n = coordinates.size();
+
+    coordinates.push_back(x);
+    grid.at(i) = n;
+    active.insert(n);
+}
+
+// Return the index to the cell of the `grid` of an input coordinate.
+size_t PoissonDiskGrid::coord_to_index(const Coord2 &x) const
+{
+    const auto dy = static_cast<real>(size[0] / ny);
+    const auto dz = static_cast<real>(size[1] / nz);
+
+    const auto iy = static_cast<size_t>(floor((x[0] - origin[0]) / dy));
+    const auto iz = static_cast<size_t>(floor((x[1] - origin[1]) / dz));
+
+    return index_from_2d(iy, iz);
+}
+
+// Return the `grid` index from its corresponding 2d indices.
+size_t PoissonDiskGrid::index_from_2d(const size_t iy, const size_t iz) const
+{
+    if (iy >= ny || iz >= nz)
+    {
+        if (iy >= ny)
+        {
+            gmx_fatal(FARGS,
+                      "Bad input index `iy` %lu (larger than maximum %lu)",
+                      iy, ny - 1
+            );
+        }
+        if (iz >= nz)
+        {
+            gmx_fatal(FARGS,
+                      "Bad input index `iz` %lu (larger than maximum %lu)",
+                      iz, nz - 1
+            );
+        }
+    }
+
+    return iy * nz + iz;
+}
+
+// Return a pair of the corresponding 2d indices of a 1d `grid` index.
+std::pair<size_t, size_t> PoissonDiskGrid::index_to_2d(const size_t i) const
+{
+    const auto iz = i % nz;
+    const auto iy = static_cast<size_t>(floor(i / nz));
+
+    return std::pair<size_t, size_t> { iy, iz };
+}
+
+// Try to add a coordinate to the system: Do so only if there are no previously
+// added `coordinates` within the minimum distance `rmin` of it.
+//
+// Return `true` if the coordinate was successfully added, `false` if not.
+bool PoissonDiskGrid::try_add_coordinate(const Coord2 &x)
+{
+    const auto i = coord_to_index(x);
+    size_t iy, iz;
+    std::tie(iy, iz) = index_to_2d(i);
+
+    // Check only a fixed area of the `grid`: since the cell size is bounded
+    // at rmin / sqrt(2) we only have to check cells within 2 in each direction.
+    const auto imin = static_cast<int>(iy) - 2 >= 0 ? iy - 2 : 0;
+    const auto jmin = static_cast<int>(iz) - 2 >= 0 ? iz - 2 : 0;
+    const auto imax = iy + 2 <= ny - 1 ? iy + 2 : ny - 1;
+    const auto jmax = iz + 2 <= nz - 1 ? iz + 2 : nz - 1;
+
+    for (auto i = imin; i <= imax; ++i)
+    {
+        for (auto j = jmin; j <= jmax; ++j)
+        {
+            const auto k = index_from_2d(i, j);
+            const auto n = grid.at(k);
+
+            if (n > -1)
+            {
+                const auto x1 = coordinates[n];
+                const auto dr = sqrt(
+                    pow(x1[0] - x[0], 2) + pow(x1[1] - x[1], 2)
+                );
+
+                if (dr < rmin)
+                {
+                    return false;
+                }
+            }
+        }
+    }
+
+    add_coordinate(x);
+
+    return true;
 }
 
 // When sampling the outer interface, use a poisson disk distribution
@@ -444,30 +599,47 @@ gen_coordinate_around_x(gmx::DefaultRandomEngine &rng,
 // molecules. This method is efficient and should result in uniform sampling.
 //
 // See: http://www.cs.ubc.ca/%7Erbridson/docs/bridson-siggraph07-poissondisk.pdf
-static std::vector<std::array<real, 2>>
+static std::vector<Coord2>
 sample_points_poisson_disk(const CLConf &conf)
 {
-    constexpr unsigned k = 30; // suggested magic variable for the sampling
-    const real rmin = conf.ball_radius / 2.0;
-    const real cell_size = rmin / sqrt(2.0);
+    constexpr unsigned kmax = 30; // suggested magic variable for the sampling
 
-    const unsigned ny = ceil((conf.rmax[YY] - conf.rmin[YY]) / cell_size);
-    const unsigned nz = ceil((conf.rmax[ZZ] - conf.rmin[ZZ]) / cell_size);
+    static gmx::DefaultRandomEngine rng(conf.seed);
 
-    std::vector<std::array<real, 2>> coordinates; // Samples coordinates
-    std::vector<int> background_grid(ny * nz, -1); // -1: no sample, else index in coordinates
-    std::vector<int> active; // Index of active samples from the coordinate list
-
-    constexpr unsigned seed = 1;
-    static gmx::DefaultRandomEngine rng(seed);
+    const real rmin = conf.ball_radius / sqrt(2);
+    PoissonDiskGrid poisson_disk (rmin, conf.rmin, conf.rmax);
 
     const auto ylim = Coord2 { conf.rmin[YY], conf.rmax[YY] };
     const auto zlim = Coord2 { conf.rmin[ZZ], conf.rmax[ZZ] };
     const auto x0 = gen_coordinate_in_box(rng, ylim, zlim);
 
-    // Rest of algorithm TODO!!!!!!!
+    poisson_disk.add_coordinate(x0);
 
-    return coordinates;
+    while (poisson_disk.active.size() > 0)
+    {
+        const auto i = get_random_element_from_set(rng, poisson_disk.active);
+        const auto x1 = poisson_disk.coordinates[i];
+
+        bool found_new_sample = false;
+
+        for (unsigned k = 0; k < kmax; ++k)
+        {
+            const auto x2 = gen_coordinate_around_x(rng, x1, rmin, ylim, zlim);
+
+            if (poisson_disk.try_add_coordinate(x2))
+            {
+                found_new_sample = true;
+                break;
+            }
+        }
+
+        if (!found_new_sample)
+        {
+            poisson_disk.active.erase(i);
+        }
+    }
+
+    return poisson_disk.coordinates;
 }
 
 static IndexSet
@@ -478,40 +650,41 @@ get_outer_interface(const Interface   &interface,
     // Roll a ball along the interface to detect only the outer interface`
     const real r2 = conf.ball_radius * conf.ball_radius;
     const real dx_ball = conf.ball_radius / 10.0;
-    const real dy_ball = conf.ball_radius / 5.0;
-    const real dz_ball = conf.ball_radius;
 
     IndexSet outer_interface {};
 
     const auto sample_coords = sample_points_poisson_disk(conf);
 
-    /*
-    real z = conf.rmin[ZZ];
-
-    while (z <= conf.rmax[ZZ])
+    for (const auto coord : sample_coords)
     {
-        real y = conf.rmin[YY];
+        const auto y = coord[0];
+        const auto z = coord[1];
 
-        while (y <= conf.rmax[YY])
+        auto x = conf.rmax[XX];
+
+        while (x >= conf.rmin[XX])
         {
-            // Just stupidly move towards the contact line (from the max)
-            // until some molecule is found within the ball radius.
-            real x = conf.rmax[XX];
+            // For this new ball position, find all candidates that
+            // are within the radius and *if any* are found,
+            // take the closest one as the contact line molecule
+            // and break the loop.
 
-            while (x >= conf.rmin[XX])
+            IndexVec candidates;
+            std::vector<real> dr2s;
+
+            for (const auto index : interface.interface)
             {
-                // For this new ball position, find all candidates that
-                // are within the radius and *if any* are found,
-                // take the closest one as the contact line molecule
-                // and break the loop.
+                const RvecArray x1 {x, y, z};
+                const auto dr2 = distance2(x1.data(), x0[index]);
 
-                IndexVec candidates;
-                std::vector<real> dr2s;
-
-                for (const auto index : interface.interface)
+                if (dr2 <= r2)
                 {
-                    const RvecArray x1 {x, y, z};
-                    const auto dr2 = distance2(x1.data(), x0[index]);
+                    candidates.push_back(index);
+                    dr2s.push_back(dr2);
+                }
+                else
+                {
+                    const auto dr2 = distance2(x1.data(), x0[index + 1]);
 
                     if (dr2 <= r2)
                     {
@@ -520,46 +693,36 @@ get_outer_interface(const Interface   &interface,
                     }
                     else
                     {
-                        const auto dr2 = distance2(x1.data(), x0[index + 1]);
+                        const auto dr2 = distance2(x1.data(), x0[index + 2]);
 
                         if (dr2 <= r2)
                         {
                             candidates.push_back(index);
                             dr2s.push_back(dr2);
                         }
-                        else
-                        {
-                            const auto dr2 = distance2(x1.data(), x0[index + 2]);
-
-                            if (dr2 <= r2)
-                            {
-                                candidates.push_back(index);
-                                dr2s.push_back(dr2);
-                            }
-                        }
                     }
                 }
-
-                if (candidates.size() > 0)
-                {
-                    const auto it = std::min_element(dr2s.cbegin(), dr2s.cend());
-                    const auto dn = std::distance(dr2s.cbegin(), it);
-                    const auto index = candidates[dn];
-
-                    outer_interface.insert(index);
-
-                    break;
-                }
-
-                x -= dx_ball;
             }
 
-            y += dy_ball;
-        }
+            if (candidates.size() > 0)
+            {
+                const auto it = std::min_element(dr2s.cbegin(), dr2s.cend());
+                const auto dn = std::distance(dr2s.cbegin(), it);
+                const auto index = candidates[dn];
 
-        z += dz_ball;
+                outer_interface.insert(index);
+
+                break;
+            }
+
+            x -= dx_ball;
+        }
     }
-    */
+
+#ifdef DEBUG_CONTACTLINE
+    fprintf(stderr, "\b Also found %lu outer interface indices.\n",
+            outer_interface.size());
+#endif
 
     return outer_interface;
 }
@@ -1334,7 +1497,8 @@ gmx_contact_line(int argc, char *argv[])
                 rmax = {-1.0, -1.0, -1.0};
     static int nmin = 20,
                nmax = 100,
-               stride = 1;
+               stride = 1,
+               seed = -1;
     static real cutoff = 1.0,
                 precision = 0.3,
                 dx = 0.3,
@@ -1368,6 +1532,8 @@ gmx_contact_line(int argc, char *argv[])
           "Algorithm for determining elegibility of atoms." },
         { "-ball" , FALSE, etREAL, { &ball_radius },
           "Radius of ball which is rolled over the interface." },
+        { "-seed" , FALSE, etINT, { &seed },
+          "Optional non-negative seed for the random number generation." },
     };
 
     const char *bugs[] = {
