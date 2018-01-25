@@ -3,7 +3,7 @@
  *
  * Copyright (c) 1991-2000, University of Groningen, The Netherlands.
  * Copyright (c) 2001-2004, The GROMACS development team.
- * Copyright (c) 2013,2014,2015,2016,2017, by the GROMACS development team, led by
+ * Copyright (c) 2013,2014,2015,2016,2017,2018, by the GROMACS development team, led by
  * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
  * and including many others, as listed in the AUTHORS file in the
  * top-level source directory and at http://www.gromacs.org.
@@ -125,7 +125,7 @@ void trjtools_gmx_prepare_tng_writing(const char               *filename,
 /*! \brief Write a trxframe to the TNG file in status.
  *
  * This function is needed because both t_trxstatus and
- * tng_trajectory_t are encapsulated, so client trajectory-writing
+ * gmx_tng_trajectory_t are encapsulated, so client trajectory-writing
  * code with a t_trxstatus can't just call the TNG writing
  * function. */
 void write_tng_frame(t_trxstatus        *status,
@@ -198,19 +198,19 @@ int check_times(real t);
 #define DATA_NOT_OK   (1<<1)
 #define FRAME_NOT_OK  (HEADER_NOT_OK | DATA_NOT_OK)
 
-int read_first_frame(const gmx_output_env_t *oenv, t_trxstatus **status,
-                     const char *fn, struct t_trxframe *fr, int flags);
+bool read_first_frame(const gmx_output_env_t *oenv, t_trxstatus **status,
+                      const char *fn, struct t_trxframe *fr, int flags);
 /* Read the first frame which is in accordance with flags, which are
  * defined further up in this file.
  * Memory will be allocated for flagged entries.
  * The flags are copied to fr for subsequent calls to read_next_frame.
- * Returns TRUE when succeeded, FALSE otherwise.
+ * Returns true when succeeded, false otherwise.
  */
 
-gmx_bool read_next_frame(const gmx_output_env_t *oenv, t_trxstatus *status,
-                         struct t_trxframe *fr);
+bool read_next_frame(const gmx_output_env_t *oenv, t_trxstatus *status,
+                     struct t_trxframe *fr);
 /* Reads the next frame which is in accordance with fr->flags.
- * Returns TRUE when succeeded, FALSE otherwise.
+ * Returns true when succeeded, false otherwise.
  */
 
 int read_first_x(const gmx_output_env_t *oenv, t_trxstatus **status,

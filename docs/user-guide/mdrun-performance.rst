@@ -1,3 +1,5 @@
+.. _gmx-performance:
+
 Getting good performance from mdrun
 ===================================
 The |Gromacs| build system and the :ref:`gmx mdrun` tool has a lot of built-in
@@ -121,6 +123,8 @@ see the Reference Manual. The most important of these are
 
 .. glossary::
 
+.. _gmx-domain-decomp:
+
     Domain Decomposition
         The domain decomposition (DD) algorithm decomposes the
         (short-ranged) component of the non-bonded interactions into
@@ -203,12 +207,6 @@ behavior.
     the total number of OpenMP threads per separate PME ranks.
     The default, 0, copies the value from ``-ntomp``.
 
-``-gpu_id``
-    A string that specifies the ID numbers of the GPUs to be
-    used by corresponding PP ranks on this node. For example,
-    "0011" specifies that the lowest two PP ranks use GPU 0,
-    and the other two use GPU 1.
-
 ``-pin``
     Can be set to "auto," "on" or "off" to control whether
     mdrun will attempt to set the affinity of threads to cores.
@@ -250,6 +248,29 @@ behavior.
     Defaults to "auto," which uses a compatible GPU if available.
     Setting "cpu" requires that no GPU is used. Setting "gpu" requires
     that a compatible GPU be available and will be used.
+
+``-gpu_id``
+    A string that specifies the ID numbers of the GPUs that
+    are available to be used by ranks on this node. For example,
+    "12" specifies that the GPUs with IDs 1 and 2 (as reported
+    by the GPU runtime) can be used by mdrun. This is useful
+    when sharing a node with other computations, or if a GPU
+    is best used to support a display. If many GPUs are
+    present, a comma may be used to separate the IDs, so
+    "12,13" would make GPUs 12 and 13 available to mdrun.
+    It could be necessary to use different GPUs on different
+    nodes of a simulation, in which case the environment
+    variable ``GMX_GPU_ID`` can be set differently for the ranks
+    on different nodes to achieve that result.
+
+``-gputasks``
+    A string that specifies the ID numbers of the GPUs to be
+    used by corresponding GPU tasks on this node. For example,
+    "0011" specifies that the first two GPU tasks will use GPU 0,
+    and the other two use GPU 1. When using this option, the
+    number of ranks must be known to mdrun, as well as where
+    tasks of different types should be run, such as by using
+    ``-nb gpu``.
 
 Examples for mdrun on one node
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -296,7 +317,7 @@ CPU cores between them using OpenMP threads.
 
 ::
 
-    gmx mdrun -ntmpi 4 -gpu_id "1122"
+    gmx mdrun -ntmpi 4 -nb gpu -gputasks 1122
 
 Starts mdrun using four thread-MPI ranks, and maps them
 to GPUs with IDs 1 and 2. The CPU cores available will
@@ -367,8 +388,8 @@ cases.
 ``-gcom``
     During the simulation :ref:`gmx mdrun` must communicate between all ranks to
     compute quantities such as kinetic energy. By default, this
-    happens whenever plausible, and is influenced by a lot of [.mdp
-    options](#mdp-options). The period between communication phases
+    happens whenever plausible, and is influenced by a lot of :ref:`[.mdp]
+    options. <mdp-general>` The period between communication phases
     must be a multiple of :mdp:`nstlist`, and defaults to
     the minimum of :mdp:`nstcalcenergy` and :mdp:`nstlist`.
     ``mdrun -gcom`` sets the number of steps that must elapse between
@@ -435,7 +456,7 @@ each.
 
 ::
 
-    mpirun -np 4 gmx mdrun -ntomp 6 -gpu_id 00
+    mpirun -np 4 gmx mdrun -ntomp 6 -nb gpu -gputasks 00
 
 Starts :ref:`mdrun_mpi` on a machine with two nodes, using
 four total ranks, each rank with six OpenMP threads,
@@ -443,7 +464,7 @@ and both ranks on a node sharing GPU with ID 0.
 
 ::
 
-    mpirun -np 8 gmx mdrun -ntomp 3 -gpu_id 0000
+    mpirun -np 8 gmx mdrun -ntomp 3 -gputasks 0000
 
 Using a same/similar hardware as above,
 starts :ref:`mdrun_mpi` on a machine with two nodes, using
@@ -454,21 +475,23 @@ on the same hardware.
 
 ::
 
-    mpirun -np 20 gmx_mpi mdrun -ntomp 4 -gpu_id 0
+    mpirun -np 20 gmx_mpi mdrun -ntomp 4 -gputasks 00
 
 Starts :ref:`mdrun_mpi` with 20 ranks, and assigns the CPU cores evenly
 across ranks each to one OpenMP thread. This setup is likely to be
 suitable when there are ten nodes, each with one GPU, and each node
-has two sockets.
+has two sockets each of four cores.
 
 ::
 
-    mpirun -np 20 gmx_mpi mdrun -gpu_id 00
+    mpirun -np 10 gmx_mpi mdrun -gpu_id 1
 
 Starts :ref:`mdrun_mpi` with 20 ranks, and assigns the CPU cores evenly
 across ranks each to one OpenMP thread. This setup is likely to be
-suitable when there are ten nodes, each with one GPU, and each node
-has two sockets.
+suitable when there are ten nodes, each with two GPUs, but another
+job on each node is using GPU 0. The job scheduler should set the
+affinity of threads of both jobs to their allocated cores, or the
+performance of mdrun will suffer greatly.
 
 ::
 
@@ -476,15 +499,9 @@ has two sockets.
 
 Starts :ref:`mdrun_mpi` with 20 ranks. This setup is likely
 to be suitable when there are ten nodes, each with two
-GPUs.
-
-::
-
-    mpirun -np 40 gmx_mpi mdrun -gpu_id 0011
-
-Starts :ref:`mdrun_mpi` with 40 ranks. This setup is likely
-to be suitable when there are ten nodes, each with two
-GPUs, and OpenMP performs poorly on the hardware.
+GPUs, but there is no need to specify ``-gpu_id`` for the
+normal case where all the GPUs on the node are available
+for use.
 
 Controlling the domain decomposition algorithm
 ----------------------------------------------
@@ -631,6 +648,8 @@ TODO In future patch:
 TODO In future patch: import wiki page stuff on performance checklist; maybe here,
 maybe elsewhere
 
+.. _gmx-mdrun-on-gpu:
+
 Running mdrun with GPUs
 -----------------------
 
@@ -645,7 +664,7 @@ available to date (up to and including Maxwell, compute capability 5.2).
 
 Application clocks can be set using the NVIDIA system managemet tool
 ``nvidia-smi``. If the system permissions allow, :ref:`gmx mdrun` has
-built-in support to set application clocks if built with NVML support. # TODO add ref to relevant section
+built-in support to set application clocks if built with :ref:`NVML support<CUDA GPU acceleration>`.
 Note that application clocks are a global setting, hence affect the
 performance of all applications that use the respective GPU(s).
 For this reason, :ref:`gmx mdrun` sets application clocks at initialization
@@ -654,6 +673,156 @@ to the values found at startup, unless it detects that they were altered
 during its runtime.
 
 .. _NVIDIA blog article: https://devblogs.nvidia.com/parallelforall/increase-performance-gpu-boost-k80-autoboost/
+
+.. _gmx-gpu-tasks:
+
+Types of GPU tasks
+^^^^^^^^^^^^^^^^^^
+
+To better understand the later sections on different GPU use cases for
+calculation of :ref:`short range<gmx-gpu-pp>` and :ref:`PME <gmx-gpu-pme>`,
+we first introduce the concept of different GPU tasks. When thinking about
+running a simulation, several different kinds of interactions between the atoms
+have to be calculated (for more information please refer to the reference manual).
+The calculation can thus be split into several distinct parts that are largely independent
+of each other (hence can be calculated in any order, e.g. sequentially or concurrently),
+with the information from each of them combined at the end of
+time step to obtain the final forces on each atom and to propagate the system
+to the next time point. For a better understanding also please see the section
+on :ref:`domain decomposition <gmx-domain-decomp>`.
+
+Of all calculations required for an MD step,
+GROMACS aims to optimize performance bottom-up for each step
+from the lowest level (SIMD unit, cores, sockets, accelerators, etc.).
+Therefore much of the indivdual computation units are
+highly tuned for the lowest level of hardware parallelism: the SIMD units.
+Additionally, with GPU accelerators used as *co-processors*, some of the work
+can be *offloaded*, that is calculated simultaneously/concurrently with the CPU
+on the accelerator device, with the result being communicated to the CPU.
+Right now, |Gromacs| supports GPU accelerator offload of two tasks:
+the short-range :ref:`nonbonded interactions in real space <gmx-gpu-pp>`,
+and :ref:`PME <gmx-gpu-pme>`.
+
+**Please note that the solving of PME on GPU is still only the initial
+version supporting this behaviour, and comes with a set of limitations
+outlined further below.**
+
+Right now, we generally support short-range nonbonded offload with and
+without dynamic pruning on a wide range of GPU accelerators
+(both NVIDIA and AMD). This is compatible with the grand majority of
+the features and parallelization modes and can be used to scale to large machines.
+
+Simultaneously offloading both short-range nonbonded and long-range
+PME work to GPU accelerators is a new feature that that has some
+restrictions in terms of feature and parallelization
+compatibility (please see the :ref:`section below <gmx-pme-gpu-limitations>`).
+
+.. _gmx-gpu-pp:
+
+GPU computation of short range nonbonded interactions
+.....................................................
+
+.. TODO make this more elaborate and include figures
+
+Using the GPU for the short-ranged nonbonded interactions provides
+the majority of the available speed-up compared to run using only the CPU.
+Here, the GPU acts as an accelerator that can effectively parallelize
+this problem and thus reduce the calculation time.
+
+.. _gmx-gpu-pme:
+
+GPU accelerated calculation of PME
+..................................
+
+.. TODO again, extend this and add some actual useful information concerning performance etc...
+
+Recent additions to |Gromacs| now also allow the off-loading of the PME calculation
+to the GPU, to further reduce the load on the CPU and improve usage overlap between
+CPU and GPU. Here, the solving of PME will be performed in addition to the calculation
+of the short range interactions on the same GPU as the short range interactions.
+
+.. _gmx-pme-gpu-limitations:
+
+Known limitations
+.................
+
+**Please note again the limitations outlined above!**
+
+- Only compilation with CUDA is supported.
+
+- Only a PME order of 4 is supported in GPU.
+
+- PME will run on a GPU only when exactly one rank has a
+  PME task, ie. decompositions with multiple ranks doing PME are not supported.
+
+- Only single precision is supported.
+
+- Free energy calculations are not supported, because only single PME grids can be calculated.
+
+- LJ PME is not supported on GPU.
+
+Assigning tasks to GPUs
+.......................
+
+Depending on which tasks should be performed on which hardware, different kinds of
+calculations can be combined on the same or different GPUs, according to the information
+provided for running :ref:`mdrun <gmx mdrun>`.
+
+.. Someone more knowledgeable than me should check the accuracy of this part, so that
+   I don't say something that is factually wrong :)
+
+It is possible to assign the calculation of the different computational tasks to the same GPU, meaning
+that they will share the computational resources on the same device, or to different processing units
+that will each perform one task each.
+
+One overview over the possible task assignments is given below:
+
+|Gromacs| version 2018:
+
+  Two different types of GPU accelerated tasks are available, NB and PME.
+  Each PP rank has a NB task that can be offloaded to a GPU.
+  If there is only one rank with a PME task (including if that rank is a
+  PME-only rank), then that task can be offloaded to a GPU. Such a PME
+  task can run wholly on the GPU, or have its latter stages run only on the CPU.
+
+  Limitations are that PME on GPU does not support PME domain decomposition,
+  so that only one PME task can be offloaded to a single GPU 
+  assigned to a separate PME rank, while NB can be decomposed and offloaded to multiple GPUs.
+
+.. Future |Gromacs| versions past 2018:
+
+..   Combinations of different number of NB and single PME ranks on different
+     GPUs are being planned to be implemented in the near future. In addition,
+     we plan to add support for using multiple GPUs for each rank (e.g. having one GPU
+     each to solve the NB and PME part for a single rank), and to
+     implement domain decomposition on GPUs to allow the separation of the PME
+     part to different GPU tasks.
+
+
+Performance considerations for GPU tasks
+........................................
+
+#) The performace balance depends on how many (and how fast) CPU
+   cores you have, vs. how many and how fast the GPUs are that you have.
+
+#) With slow/old GPUs and/or fast/modern CPUs with many
+   cores, it might make more sense to let the CPU do PME calculation,
+   with the GPUs focused on the calculation of the NB.
+
+#) With fast/modern GPUs and/or slow/old CPUs with few cores,
+   it generally helps to have the GPU do PME.
+
+#) It *is* possible to use multiple GPUs with PME offload
+   by letting e.g.
+   3 MPI ranks use one GPU each for short-range interactions,
+   while a fourth rank does the PME on its GPU.
+
+#) The only way to know for sure what alternative is best for
+   your machine is to test and check performance.
+
+.. TODO: we need to be more concrete here, i.e. what machine/software aspects to take into consideration, when will default run mode be using PME-GPU and when will it not, when/how should the user reason about testing different settings than the default.
+
+.. TODO someone who knows about the mixed mode should comment further.
 
 Reducing overheads in GPU accelerated runs
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -692,7 +861,7 @@ A separate GPU driver thread can require CPU resources
 which may clash with the concurrently running non-offloaded tasks,
 potentially degrading the performance of PME or bonded force computation.
 This effect is most pronounced when using AMD GPUs with OpenCL with
-all stable driver releases to date (up to and including fglrx 12.15).
+older driver releases (e.g. fglrx 12.15).
 To minimize the overhead it is recommended to
 leave a CPU hardware thread unused when launching :ref:`gmx mdrun`,
 especially on CPUs with high core count and/or HyperThreading enabled.
@@ -711,16 +880,20 @@ Running the OpenCL version of mdrun
 
 The current version works with GCN-based AMD GPUs, and NVIDIA CUDA
 GPUs. Make sure that you have the latest drivers installed. For AMD GPUs,
-Mesa version 17.0 or newer with LLVM 4.0 or newer is supported in addition
-to the proprietary driver. For NVIDIA GPUs, using the proprietary driver is
+the compute-oriented `ROCm <https://rocm.github.io/>`_ stack is recommended;
+alternatively, the AMDGPU-PRO stack is also compatible; using the outdated
+and unsupported `fglrx` proprietary driver and runtime is not recommended (but
+for certain older hardware that may be the only way to obtain support).
+In addition Mesa version 17.0 or newer with LLVM 4.0 or newer is also supported.
+For NVIDIA GPUs, using the proprietary driver is
 required as the open source nouveau driver (available in Mesa) does not
 provide the OpenCL support.
 The minimum OpenCL version required is |REQUIRED_OPENCL_MIN_VERSION|. See
 also the :ref:`known limitations <opencl-known-limitations>`.
 
-Devices from the AMD GCN architectures (all series) and NVIDIA Fermi
-and later (compute capability 2.0) are known to work, but before
-doing production runs always make sure that the |Gromacs| tests
+Devices from the AMD GCN architectures (all series) are compatible
+and regularly tested; NVIDIA Fermi and later (compute capability 2.0)
+are known to work, but before doing production runs always make sure that the |Gromacs| tests
 pass successfully on the hardware.
 
 The OpenCL GPU kernels are compiled at run time. Hence,
@@ -743,6 +916,7 @@ Known limitations of the OpenCL support
 
 Limitations in the current OpenCL support of interest to |Gromacs| users:
 
+- PME GPU offload is not supported with OpenCL.
 - No Intel devices (CPUs, GPUs or Xeon Phi) are supported
 - Due to blocking behavior of some asynchronous task enqueuing functions
   in the NVIDIA OpenCL runtime, with the affected driver versions there is
@@ -752,22 +926,12 @@ Limitations in the current OpenCL support of interest to |Gromacs| users:
 - On NVIDIA GPUs the OpenCL kernels achieve much lower performance
   than the equivalent CUDA kernels due to limitations of the NVIDIA OpenCL
   compiler.
-- The AMD APPSDK version 3.0 ships with OpenCL compiler/runtime components,
-  libamdocl12cl64.so and libamdocl64.so (only in earlier releases),
-  that conflict with newer fglrx GPU drivers which provide the same libraries.
-  This conflict manifests in kernel launch failures as, due to the library path
-  setup, the OpenCL runtime loads the APPSDK version of the aforementioned
-  libraries instead of the ones provided by the driver installer.
-  The recommended workaround is to remove or rename the APPSDK versions of the
-  offending libraries.
 
 Limitations of interest to |Gromacs| developers:
 
 - The current implementation is not compatible with OpenCL devices that are
   not using warp/wavefronts or for which the warp/wavefront size is not a
   multiple of 32
-- Some Ewald tabulated kernels are known to produce incorrect results, so
-  (correct) analytical kernels are used instead.
 
 Performance checklist
 ---------------------
@@ -796,7 +960,7 @@ of 2. So it can be useful go through the checklist.
   * For CUDA, use the newest CUDA availabe for your GPU to take advantage of the
     latest performance enhancements.
   * Use a recent GPU driver.
-  * If compiling on a cluster head node, make sure that ``GMX_CPU_ACCELERATION``
+  * If compiling on a cluster head node, make sure that ``GMX_SIMD``
     is appropriate for the compute nodes.
 
 Run setup
@@ -811,7 +975,7 @@ Run setup
   sites (``gmx pdb2gmx -vsite h``).
 * For massively parallel runs with PME, you might need to try different numbers
   of PME ranks (``gmx mdrun -npme ???``) to achieve best performance;
-  ``gmx tune_pme`` can help automate this search.
+  :ref:`gmx tune_pme` can help automate this search.
 * For massively parallel runs (also ``gmx mdrun -multidir``), or with a slow
   network, global communication can become a bottleneck and you can reduce it
   with ``gmx mdrun -gcom`` (note that this does affect the frequency of

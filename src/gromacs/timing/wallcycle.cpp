@@ -3,7 +3,7 @@
  *
  * Copyright (c) 1991-2000, University of Groningen, The Netherlands.
  * Copyright (c) 2001-2008, The GROMACS development team.
- * Copyright (c) 2013,2014,2015,2016,2017, by the GROMACS development team, led by
+ * Copyright (c) 2013,2014,2015,2016,2017,2018, by the GROMACS development team, led by
  * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
  * and including many others, as listed in the AUTHORS file in the
  * top-level source directory and at http://www.gromacs.org.
@@ -43,6 +43,7 @@
 #include <cstdlib>
 
 #include <array>
+#include <vector>
 
 #include "gromacs/mdtypes/commrec.h"
 #include "gromacs/timing/cyclecounter.h"
@@ -106,9 +107,10 @@ static const char *wcn[ewcNR] =
     "Comm. coord.", "Born radii", "Force", "Wait + Comm. F", "PME mesh",
     "PME redist. X/F", "PME spread", "PME gather", "PME 3D-FFT", "PME 3D-FFT Comm.", "PME solve LJ", "PME solve Elec",
     "PME wait for PP", "Wait + Recv. PME F",
-    "Wait PME GPU spread", "Wait PME GPU gather", "Reduce GPU PME F",
+    "Wait PME GPU spread", "PME 3D-FFT", "PME solve", /* the strings for FFT/solve are repeated here for mixed mode counters */
+    "Wait PME GPU gather", "Reduce GPU PME F",
     "Wait GPU NB nonloc.", "Wait GPU NB local", "NB X/F buffer ops.",
-    "Vsite spread", "COM pull force",
+    "Vsite spread", "COM pull force", "AWH",
     "Write traj.", "Update", "Constraints", "Comm. energies",
     "Enforced rotation", "Add rot. forces", "Position swapping", "IMD", "Test"
 };
@@ -134,13 +136,13 @@ static const char *wcsn[ewcsNR] =
 /* PME GPU timing events' names - correspond to the enum in the gpu_timing.h */
 static const char *PMEStageNames[] =
 {
-    "Spline",
-    "Spread",
-    "Spline/spread",
-    "FFT r2c",
-    "Solve",
-    "FFT c2r",
-    "Gather",
+    "PME spline",
+    "PME spread",
+    "PME spline + spread",
+    "PME 3D-FFT r2c",
+    "PME solve",
+    "PME 3D-FFT c2r",
+    "PME gather",
 };
 
 gmx_bool wallcycle_have_counter(void)
@@ -864,18 +866,29 @@ void wallcycle_print(FILE *fplog, const gmx::MDLogger &mdlog, int nnodes, int np
 
     if (wc->wcc[ewcPMEMESH].n > 0)
     {
-        fprintf(fplog, " Breakdown of PME mesh computation\n");
-        fprintf(fplog, "%s\n", hline);
+        // A workaround to not print breakdown when no subcounters were recorded.
+        // TODO: figure out and record PME GPU counters (what to do with the waiting ones?)
+        std::vector<int> validPmeSubcounterIndices;
         for (i = ewcPPDURINGPME+1; i < ewcNR; i++)
         {
-            if (is_pme_subcounter(i))
+            if (is_pme_subcounter(i) && wc->wcc[i].n > 0)
+            {
+                validPmeSubcounterIndices.push_back(i);
+            }
+        }
+
+        if (!validPmeSubcounterIndices.empty())
+        {
+            fprintf(fplog, " Breakdown of PME mesh computation\n");
+            fprintf(fplog, "%s\n", hline);
+            for (auto i : validPmeSubcounterIndices)
             {
                 print_cycles(fplog, npme > 0 ? c2t_pme : c2t_pp, wcn[i],
                              npme > 0 ? npme : npp, nth_pme,
                              wc->wcc[i].n, cyc_sum[i], tot);
             }
+            fprintf(fplog, "%s\n", hline);
         }
-        fprintf(fplog, "%s\n", hline);
     }
 
     if (useCycleSubcounters && wc->wcsc)
@@ -977,7 +990,6 @@ void wallcycle_print(FILE *fplog, const gmx::MDLogger &mdlog, int nnodes, int np
         gpu_cpu_ratio = tot_gpu/tot_cpu_overlap;
         if (gpu_nbnxn_t->nb_c > 0 && wc->wcc[ewcFORCE].n > 0)
         {
-            // FIXME the code below is not updated for PME on GPU
             fprintf(fplog, "\nAverage per-step force GPU/CPU evaluation time ratio: %.3f ms/%.3f ms = %.3f\n",
                     tot_gpu/gpu_nbnxn_t->nb_c, tot_cpu_overlap/wc->wcc[ewcFORCE].n,
                     gpu_cpu_ratio);
@@ -986,14 +998,14 @@ void wallcycle_print(FILE *fplog, const gmx::MDLogger &mdlog, int nnodes, int np
         /* only print notes related to CPU-GPU load balance with PME */
         if (wc->wcc[ewcPMEMESH].n > 0)
         {
-            fprintf(fplog, "For optimal performance this ratio should be close to 1!\n");
+            fprintf(fplog, "For optimal resource utilization this ratio should be close to 1\n");
 
             /* print note if the imbalance is high with PME case in which
              * CPU-GPU load balancing is possible */
-            if (gpu_cpu_ratio < 0.75 || gpu_cpu_ratio > 1.2)
+            if (gpu_cpu_ratio < 0.8 || gpu_cpu_ratio > 1.25)
             {
                 /* Only the sim master calls this function, so always print to stderr */
-                if (gpu_cpu_ratio < 0.75)
+                if (gpu_cpu_ratio < 0.8)
                 {
                     if (npp > 1)
                     {
@@ -1001,8 +1013,8 @@ void wallcycle_print(FILE *fplog, const gmx::MDLogger &mdlog, int nnodes, int np
                          * but we currently can't check that here.
                          */
                         GMX_LOG(mdlog.warning).asParagraph().appendText(
-                                "NOTE: The GPU has >25% less load than the CPU. This imbalance causes\n"
-                                "      performance loss. Maybe the domain decomposition limits the PME tuning.\n"
+                                "NOTE: The CPU has >25% more load than the GPU. This imbalance wastes\n"
+                                "      GPU resources. Maybe the domain decomposition limits the PME tuning.\n"
                                 "      In that case, try setting the DD grid manually (-dd) or lowering -dds.");
                     }
                     else
@@ -1011,15 +1023,15 @@ void wallcycle_print(FILE *fplog, const gmx::MDLogger &mdlog, int nnodes, int np
                          * too small for increasing the cut-off for PME tuning.
                          */
                         GMX_LOG(mdlog.warning).asParagraph().appendText(
-                                "NOTE: The GPU has >25% less load than the CPU. This imbalance causes\n"
-                                "      performance loss.");
+                                "NOTE: The CPU has >25% more load than the GPU. This imbalance wastes\n"
+                                "      GPU resources.");
                     }
                 }
-                if (gpu_cpu_ratio > 1.2)
+                if (gpu_cpu_ratio > 1.25)
                 {
                     GMX_LOG(mdlog.warning).asParagraph().appendText(
-                            "NOTE: The GPU has >20% more load than the CPU. This imbalance causes\n"
-                            "      performance loss, consider using a shorter cut-off and a finer PME grid.");
+                            "NOTE: The GPU has >25% more load than the CPU. This imbalance wastes\n"
+                            "      CPU resources.");
                 }
             }
         }

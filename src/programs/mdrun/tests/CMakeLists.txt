@@ -34,6 +34,7 @@
 
 # make an "object library" for code that we re-use for both kinds of tests
 add_library(mdrun_test_objlib OBJECT
+    energyreader.cpp
     mdruncomparisonfixture.cpp
     moduletest.cpp
     terminationhelper.cpp
@@ -46,7 +47,6 @@ gmx_add_gtest_executable(
     ${exename}
     # files with code for tests
     tabulated_bonded_interactions.cpp
-    energyreader.cpp
     grompp.cpp
     initialconstraints.cpp
     rerun.cpp
@@ -56,6 +56,8 @@ gmx_add_gtest_executable(
     swapcoords.cpp
     interactiveMD.cpp
     termination.cpp
+    # PME tests; FIXME: move this back into mdrun_test_objlib above and figure out the MPI race issue
+    pmetest.cpp
     # pseudo-library for code for testing mdrun
     $<TARGET_OBJECTS:mdrun_test_objlib>
     # pseudo-library for code for mdrun

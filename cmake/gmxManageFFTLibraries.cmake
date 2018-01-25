@@ -68,8 +68,11 @@ if(${GMX_FFT_LIBRARY} STREQUAL "FFTW3")
 
     if(GMX_BUILD_OWN_FFTW)
 
-        if(WIN32)
-            message(FATAL_ERROR "Cannot build FFTW3 automatically (GMX_BUILD_OWN_FFTW=ON) on Windows")
+        if(MSVC)
+            message(FATAL_ERROR "Cannot build FFTW3 automatically (GMX_BUILD_OWN_FFTW=ON) in Visual Studio")
+        endif()
+        if(CMAKE_GENERATOR STREQUAL "Ninja")
+            message(FATAL_ERROR "Cannot build FFTW3 automatically (GMX_BUILD_OWN_FFTW=ON) with ninja")
         endif()
 
         add_subdirectory(src/contrib/fftw)
@@ -90,12 +93,12 @@ if(${GMX_FFT_LIBRARY} STREQUAL "FFTW3")
         include_directories(SYSTEM ${${FFTW}_INCLUDE_DIRS})
 
         if ((${GMX_SIMD_ACTIVE} MATCHES "SSE" OR ${GMX_SIMD_ACTIVE} MATCHES "AVX") AND NOT ${FFTW}_HAVE_SIMD)
-            message(WARNING "The fftw library found is compiled without SIMD support, which makes it slow. Consider recompiling it or contact your admin")
+            set(FFT_WARNING_MESSAGE "The fftw library found is compiled without SIMD support, which makes it slow. Consider recompiling it or contact your admin")
         else()
             if(${GMX_SIMD_ACTIVE} MATCHES "AVX" AND NOT (${FFTW}_HAVE_SSE OR ${FFTW}_HAVE_SSE2))
                 # If we end up here we have an AVX Gromacs build, and
                 # FFTW with SIMD.
-                message(WARNING "The FFTW library was compiled with neither --enable-sse nor --enable-sse2; those would have enabled SSE(2) SIMD instructions. This will give suboptimal performance. You should (re)compile the FFTW library with --enable-sse2 and --enable-avx (and --enable-avx2 or --enable-avx512 if supported).")
+                set(FFT_WARNING_MESSAGE "The FFTW library was compiled with neither --enable-sse nor --enable-sse2; those would have enabled SSE(2) SIMD instructions. This will give suboptimal performance. You should (re)compile the FFTW library with --enable-sse2 and --enable-avx (and --enable-avx2 or --enable-avx512 if supported).")
             endif()
         endif()
         set(FFT_STATUS_MESSAGE "Using external FFT library - FFTW3")
@@ -165,6 +168,9 @@ else()
 endif()
 gmx_check_if_changed(FFT_CHANGED GMX_FFT_LIBRARY)
 if (FFT_CHANGED)
+    if(FFT_WARNING_MESSAGE)
+        message(WARNING "${FFT_WARNING_MESSAGE}")
+    endif()
     message(STATUS "${FFT_STATUS_MESSAGE}")
 endif()
 

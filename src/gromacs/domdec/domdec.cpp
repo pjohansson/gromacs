@@ -1,7 +1,7 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2005,2006,2007,2008,2009,2010,2011,2012,2013,2014,2015,2016,2017, by the GROMACS development team, led by
+ * Copyright (c) 2005,2006,2007,2008,2009,2010,2011,2012,2013,2014,2015,2016,2017,2018, by the GROMACS development team, led by
  * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
  * and including many others, as listed in the AUTHORS file in the
  * top-level source directory and at http://www.gromacs.org.
@@ -1157,8 +1157,9 @@ static void dd_collect_cg(gmx_domdec_t  *dd,
     dd->comm->master_cg_ddp_count = state_local->ddp_count;
 }
 
-static void dd_collect_vec_sendrecv(gmx_domdec_t *dd,
-                                    const rvec *lv, rvec *v)
+static void dd_collect_vec_sendrecv(gmx_domdec_t                  *dd,
+                                    gmx::ArrayRef<const gmx::RVec> lv,
+                                    gmx::ArrayRef<gmx::RVec>       v)
 {
     gmx_domdec_master_t *ma;
     int                  n, i, c, a, nalloc = 0;
@@ -1170,7 +1171,7 @@ static void dd_collect_vec_sendrecv(gmx_domdec_t *dd,
     if (!DDMASTER(dd))
     {
 #if GMX_MPI
-        MPI_Send(const_cast<void *>(static_cast<const void *>(lv)), dd->nat_home*sizeof(rvec), MPI_BYTE,
+        MPI_Send(const_cast<void *>(static_cast<const void *>(lv.data())), dd->nat_home*sizeof(rvec), MPI_BYTE,
                  DDMASTERRANK(dd), dd->rank, dd->mpi_comm_all);
 #endif
     }
@@ -1234,8 +1235,9 @@ static void get_commbuffer_counts(gmx_domdec_t *dd,
     }
 }
 
-static void dd_collect_vec_gatherv(gmx_domdec_t *dd,
-                                   const rvec *lv, rvec *v)
+static void dd_collect_vec_gatherv(gmx_domdec_t                  *dd,
+                                   gmx::ArrayRef<const gmx::RVec> lv,
+                                   gmx::ArrayRef<gmx::RVec>       v)
 {
     gmx_domdec_master_t *ma;
     int                 *rcounts = nullptr, *disps = nullptr;
@@ -1252,7 +1254,7 @@ static void dd_collect_vec_gatherv(gmx_domdec_t *dd,
         buf = ma->vbuf;
     }
 
-    dd_gatherv(dd, dd->nat_home*sizeof(rvec), lv, rcounts, disps, buf);
+    dd_gatherv(dd, dd->nat_home*sizeof(rvec), lv.data(), rcounts, disps, buf);
 
     if (DDMASTER(dd))
     {
@@ -1272,14 +1274,12 @@ static void dd_collect_vec_gatherv(gmx_domdec_t *dd,
     }
 }
 
-void dd_collect_vec(gmx_domdec_t           *dd,
-                    const t_state          *state_local,
-                    const PaddedRVecVector *localVector,
-                    rvec                   *v)
+void dd_collect_vec(gmx_domdec_t                  *dd,
+                    const t_state                 *state_local,
+                    gmx::ArrayRef<const gmx::RVec> lv,
+                    gmx::ArrayRef<gmx::RVec>       v)
 {
     dd_collect_cg(dd, state_local);
-
-    const rvec *lv = as_rvec_array(localVector->data());
 
     if (dd->nnodes <= GMX_DD_NNODES_SENDRECV)
     {
@@ -1289,15 +1289,6 @@ void dd_collect_vec(gmx_domdec_t           *dd,
     {
         dd_collect_vec_gatherv(dd, lv, v);
     }
-}
-
-void dd_collect_vec(gmx_domdec_t           *dd,
-                    const t_state          *state_local,
-                    const PaddedRVecVector *localVector,
-                    PaddedRVecVector       *vector)
-{
-    dd_collect_vec(dd, state_local, localVector,
-                   DDMASTER(dd) ? as_rvec_array(vector->data()) : nullptr);
 }
 
 
@@ -1344,15 +1335,18 @@ void dd_collect_state(gmx_domdec_t *dd,
     }
     if (state_local->flags & (1 << estX))
     {
-        dd_collect_vec(dd, state_local, &state_local->x, &state->x);
+        gmx::ArrayRef<gmx::RVec> globalXRef = state ? gmx::makeArrayRef(state->x) : gmx::EmptyArrayRef();
+        dd_collect_vec(dd, state_local, state_local->x, globalXRef);
     }
     if (state_local->flags & (1 << estV))
     {
-        dd_collect_vec(dd, state_local, &state_local->v, &state->v);
+        gmx::ArrayRef<gmx::RVec> globalVRef = state ? gmx::makeArrayRef(state->v) : gmx::EmptyArrayRef();
+        dd_collect_vec(dd, state_local, state_local->v, globalVRef);
     }
     if (state_local->flags & (1 << estCGP))
     {
-        dd_collect_vec(dd, state_local, &state_local->cg_p, &state->cg_p);
+        gmx::ArrayRef<gmx::RVec> globalCgpRef = state ? gmx::makeArrayRef(state->cg_p) : gmx::EmptyArrayRef();
+        dd_collect_vec(dd, state_local, state_local->cg_p, globalCgpRef);
     }
 }
 
@@ -7430,6 +7424,16 @@ static gmx_bool dd_dlb_get_should_check_whether_to_turn_dlb_on(gmx_domdec_t *dd)
         return FALSE;
     }
 
+    if (dd->comm->cycl_n[ddCyclStep] == 0)
+    {
+        /* We can have zero timed steps when dd_partition_system is called
+         * more than once at the same step, e.g. with replica exchange.
+         * Turning on DLB would trigger an assertion failure later, but is
+         * also useless right after exchanging replicas.
+         */
+        return FALSE;
+    }
+
     /* We should check whether we should use DLB directly after
      * unlocking DLB. */
     if (dd->comm->bCheckWhetherToTurnDlbOn)
@@ -8466,9 +8470,26 @@ static void set_cg_boundaries(gmx_domdec_zones_t *zones)
     }
 }
 
+/* \brief Set zone dimensions for zones \p zone_start to \p zone_end-1
+ *
+ * Also sets the atom density for the home zone when \p zone_start=0.
+ * For this \p numMovedChargeGroupsInHomeZone needs to be passed to tell
+ * how many charge groups will move but are still part of the current range.
+ * \todo When converting domdec to use proper classes, all these variables
+ *       should be private and a method should return the correct count
+ *       depending on an internal state.
+ *
+ * \param[in,out] dd          The domain decomposition struct
+ * \param[in]     box         The box
+ * \param[in]     ddbox       The domain decomposition box struct
+ * \param[in]     zone_start  The start of the zone range to set sizes for
+ * \param[in]     zone_end    The end of the zone range to set sizes for
+ * \param[in]     numMovedChargeGroupsInHomeZone  The number of charge groups in the home zone that should moved but are still present in dd->comm->zones.cg_range
+ */
 static void set_zones_size(gmx_domdec_t *dd,
                            matrix box, const gmx_ddbox_t *ddbox,
-                           int zone_start, int zone_end)
+                           int zone_start, int zone_end,
+                           int numMovedChargeGroupsInHomeZone)
 {
     gmx_domdec_comm_t  *comm;
     gmx_domdec_zones_t *zones;
@@ -8687,7 +8708,7 @@ static void set_zones_size(gmx_domdec_t *dd,
         {
             vol *= zones->size[0].x1[dim] - zones->size[0].x0[dim];
         }
-        zones->dens_zone0 = (zones->cg_range[1] - zones->cg_range[0])/vol;
+        zones->dens_zone0 = (zones->cg_range[1] - zones->cg_range[0] - numMovedChargeGroupsInHomeZone)/vol;
     }
 
     if (debug)
@@ -9499,6 +9520,11 @@ void dd_partition_system(FILE                *fplog,
 
     ncg_home_old = dd->ncg_home;
 
+    /* When repartitioning we mark charge groups that will move to neighboring
+     * DD cells, but we do not move them right away for performance reasons.
+     * Thus we need to keep track of how many charge groups will move for
+     * obtaining correct local charge group / atom counts.
+     */
     ncg_moved = 0;
     if (bRedist)
     {
@@ -9557,7 +9583,7 @@ void dd_partition_system(FILE                *fplog,
         switch (fr->cutoff_scheme)
         {
             case ecutsVERLET:
-                set_zones_size(dd, state_local->box, &ddbox, 0, 1);
+                set_zones_size(dd, state_local->box, &ddbox, 0, 1, ncg_moved);
 
                 nbnxn_put_on_grid(fr->nbv->nbs, fr->ePBC, state_local->box,
                                   0,
@@ -9627,7 +9653,8 @@ void dd_partition_system(FILE                *fplog,
     if (fr->cutoff_scheme == ecutsVERLET)
     {
         set_zones_size(dd, state_local->box, &ddbox,
-                       bSortCG ? 1 : 0, comm->zones.n);
+                       bSortCG ? 1 : 0, comm->zones.n,
+                       0);
     }
 
     wallcycle_sub_stop(wcycle, ewcsDD_SETUPCOMM);

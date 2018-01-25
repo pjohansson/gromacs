@@ -59,6 +59,8 @@
 #include <vector>
 
 #include "gromacs/ewald/pme.h"
+#include "gromacs/gpu_utils/gpu_utils.h"
+#include "gromacs/gpu_utils/hostallocator.h"
 #include "gromacs/math/vectypes.h"
 #include "gromacs/utility/basedefinitions.h"
 
@@ -242,9 +244,11 @@ struct PmeGpuSettings
     /*! \brief A boolean which tells if any PME GPU stage should copy all of its outputs to the host.
      * Only intended to be used by the test framework.
      */
-    bool copyAllOutputs;
+    bool               copyAllOutputs;
+    /*! \brief An enum which tells whether most PME GPU D2H/H2D data transfers should be synchronous. */
+    GpuApiCallBehavior transferKind;
     /*! \brief Various flags for the current PME computation, corresponding to the GMX_PME_ flags in pme.h. */
-    int  currentFlags;
+    int                currentFlags;
 };
 
 /*! \internal \brief
@@ -253,6 +257,9 @@ struct PmeGpuSettings
  */
 struct PmeGpuStaging
 {
+    //! Host-side force buffer
+    std::vector < gmx::RVec, gmx::HostAllocator < gmx::RVec>> h_forces;
+
     /*! \brief Virial and energy intermediate host-side buffer. Size is PME_GPU_VIRIAL_AND_ENERGY_COUNT. */
     float  *h_virialAndEnergy;
     /*! \brief B-spline values intermediate host-side buffer. */

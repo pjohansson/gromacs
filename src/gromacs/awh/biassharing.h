@@ -32,70 +32,53 @@
  * To help us fund GROMACS development, we humbly ask that you cite
  * the research papers on the package. Check out http://www.gromacs.org.
  */
+
 /*! \internal \file
- * \brief Implements gmx::HostAllocationPolicy for allocating memory
- * suitable for GPU transfers on CUDA.
  *
- * \author Mark Abraham <mark.j.abraham@gmail.com>
+ * \brief
+ * Declares functions to check bias sharing properties.
+ *
+ * This actual sharing of biases is currently implemeted in BiasState.
+ *
+ * \author Berk Hess <hess@kth.se>
+ * \ingroup module_awh
  */
-#include "gmxpre.h"
 
-#include "hostallocator.h"
+#ifndef GMX_AWH_BIASSHARING_H
+#define GMX_AWH_BIASSHARING_H
 
-#include <cstdlib>
+#include <cstddef>
 
-#include "gromacs/utility/alignedallocator.h"
+#include <vector>
+
+struct gmx_multisim_t;
 
 namespace gmx
 {
 
-HostAllocationPolicy::HostAllocationPolicy(Impl s) : allocateForGpu_(s) {}
+struct AwhParams;
 
-void *
-HostAllocationPolicy::malloc(std::size_t bytes) const
-{
-    void *buffer = nullptr;
-    if (allocateForGpu_ == Impl::AllocateForGpu)
-    {
-        if (bytes != 0)
-        {
-            // Alternatively, this could become a pair of
-            // e.g. PageAlignedAllocationPolicy and cudaHostRegister
-            // calls if that is useful for something.
-            cudaError_t stat = cudaMallocHost(&buffer, bytes, cudaHostAllocDefault);
-            // TODO Throw an exception upon failure, particularly
-            // for cudaErrorMemoryAllocation.
-            if (stat != cudaSuccess)
-            {
-                buffer = nullptr;
-            }
-        }
-    }
-    else
-    {
-        buffer = AlignedAllocationPolicy::malloc(bytes);
-    }
-    return buffer;
-}
+/*! \brief Returns if any bias is sharing within a simulation.
+ *
+ * \param[in] awhParams  The AWH parameters.
+ */
+bool haveBiasSharingWithinSimulation(const AwhParams &awhParams);
 
-void
-HostAllocationPolicy::free(void *buffer) const
-{
-    if (buffer == nullptr)
-    {
-        return;
-    }
-    if (allocateForGpu_ == Impl::AllocateForGpu)
-    {
-        cudaFreeHost(buffer);
-        return;
-    }
-    AlignedAllocationPolicy::free(buffer);
-}
+/*! \brief Checks if biases are compatible for sharing between simulations, throws if not.
+ *
+ * Should be called simultaneously on the master rank of every simulation.
+ * Note that this only checks for technical compatibility. It is up to
+ * the user to check that the sharing physically makes sense.
+ * Throws an exception when shared biases are not compatible.
+ *
+ * \param[in] awhParams     The AWH parameters.
+ * \param[in] pointSize     Vector of grid-point sizes for each bias.
+ * \param[in] multiSimComm  Struct for multi-simulation communication.
+ */
+void biasesAreCompatibleForSharingBetweenSimulations(const AwhParams           &awhParams,
+                                                     const std::vector<size_t> &pointSize,
+                                                     const gmx_multisim_t      *multiSimComm);
 
-HostAllocationPolicy makeHostAllocationPolicyForGpu()
-{
-    return HostAllocationPolicy(HostAllocationPolicy::Impl::AllocateForGpu);
-}
+}      // namespace gmx
 
-} // namespace gmx
+#endif /* GMX_AWH_BIASSHARING_H */

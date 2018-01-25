@@ -3,7 +3,7 @@
  *
  * Copyright (c) 1991-2000, University of Groningen, The Netherlands.
  * Copyright (c) 2001-2004, The GROMACS development team.
- * Copyright (c) 2013,2014,2015,2016,2017, by the GROMACS development team, led by
+ * Copyright (c) 2013,2014,2015,2016,2017,2018, by the GROMACS development team, led by
  * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
  * and including many others, as listed in the AUTHORS file in the
  * top-level source directory and at http://www.gromacs.org.
@@ -65,6 +65,7 @@
 #include "gromacs/topology/index.h"
 #include "gromacs/topology/topology.h"
 #include "gromacs/trajectory/trajectoryframe.h"
+#include "gromacs/utility/arrayref.h"
 #include "gromacs/utility/arraysize.h"
 #include "gromacs/utility/fatalerror.h"
 #include "gromacs/utility/futil.h"
@@ -270,7 +271,7 @@ static void put_molecule_com_in_box(int unitcell_enum, int ecenter,
 {
     int     i, j;
     int     d;
-    rvec    com, new_com, shift, box_center;
+    rvec    com, shift, box_center;
     real    m;
     double  mtot;
     t_pbc   pbc;
@@ -299,20 +300,22 @@ static void put_molecule_com_in_box(int unitcell_enum, int ecenter,
         svmul(1.0/mtot, com, com);
 
         /* check if COM is outside box */
-        copy_rvec(com, new_com);
+        gmx::RVec newCom;
+        copy_rvec(com, newCom);
+        auto      newComArrayRef = gmx::arrayRefFromArray(&newCom, 1);
         switch (unitcell_enum)
         {
             case euRect:
-                put_atoms_in_box(ePBC, box, 1, &new_com);
+                put_atoms_in_box(ePBC, box, newComArrayRef);
                 break;
             case euTric:
-                put_atoms_in_triclinic_unitcell(ecenter, box, 1, &new_com);
+                put_atoms_in_triclinic_unitcell(ecenter, box, newComArrayRef);
                 break;
             case euCompact:
-                put_atoms_in_compact_unitcell(ePBC, ecenter, box, 1, &new_com);
+                put_atoms_in_compact_unitcell(ePBC, ecenter, box, newComArrayRef);
                 break;
         }
-        rvec_sub(new_com, com, shift);
+        rvec_sub(newCom, com, shift);
         if (norm2(shift) > 0)
         {
             if (debug)
@@ -337,7 +340,7 @@ static void put_residue_com_in_box(int unitcell_enum, int ecenter,
     int              d, presnr;
     real             m;
     double           mtot;
-    rvec             box_center, com, new_com, shift;
+    rvec             box_center, com, shift;
     static const int NOTSET = -12347;
     calc_box_center(ecenter, box, box_center);
 
@@ -354,20 +357,22 @@ static void put_residue_com_in_box(int unitcell_enum, int ecenter,
             svmul(1.0/mtot, com, com);
 
             /* check if COM is outside box */
-            copy_rvec(com, new_com);
+            gmx::RVec newCom;
+            copy_rvec(com, newCom);
+            auto      newComArrayRef = gmx::arrayRefFromArray(&newCom, 1);
             switch (unitcell_enum)
             {
                 case euRect:
-                    put_atoms_in_box(ePBC, box, 1, &new_com);
+                    put_atoms_in_box(ePBC, box, newComArrayRef);
                     break;
                 case euTric:
-                    put_atoms_in_triclinic_unitcell(ecenter, box, 1, &new_com);
+                    put_atoms_in_triclinic_unitcell(ecenter, box, newComArrayRef);
                     break;
                 case euCompact:
-                    put_atoms_in_compact_unitcell(ePBC, ecenter, box, 1, &new_com);
+                    put_atoms_in_compact_unitcell(ePBC, ecenter, box, newComArrayRef);
                     break;
             }
-            rvec_sub(new_com, com, shift);
+            rvec_sub(newCom, com, shift);
             if (norm2(shift))
             {
                 if (debug)
@@ -885,7 +890,7 @@ int gmx_trjconv(int argc, char *argv[])
     int              *nfwritten       = nullptr;
     int               ndrop           = 0, ncol, drop0 = 0, drop1 = 0, dropuse = 0;
     double          **dropval;
-    real              tshift = 0, t0 = -1, dt = 0.001, prec;
+    real              tshift = 0, dt = -1, prec;
     gmx_bool          bFit, bPFit, bReset;
     int               nfitdim;
     gmx_rmpbc_t       gpbc = nullptr;
@@ -899,7 +904,7 @@ int gmx_trjconv(int argc, char *argv[])
     char              out_file2[256], *charpt;
     char             *outf_base = nullptr;
     const char       *outf_ext  = nullptr;
-    char              top_title[256], title[256], filemode[5];
+    char              top_title[256], title[256], timestr[32], stepstr[32], filemode[5];
     gmx_output_env_t *oenv;
 
     t_filenm          fnm[] = {
@@ -1100,10 +1105,17 @@ int gmx_trjconv(int argc, char *argv[])
             }
 
             /* top_title is only used for gro and pdb,
-             * the header in such a file is top_title t= ...
-             * to prevent a double t=, remove it from top_title
+             * the header in such a file is top_title, followed by
+             * t= ... and/or step= ...
+             * to prevent double t= or step=, remove it from top_title.
+             * From GROMACS-2018 we only write t/step when the frame actually
+             * has a valid time/step, so we need to check for both separately.
              */
             if ((charpt = std::strstr(top_title, " t= ")))
+            {
+                charpt[0] = '\0';
+            }
+            if ((charpt = std::strstr(top_title, " step= ")))
             {
                 charpt[0] = '\0';
             }
@@ -1292,8 +1304,29 @@ int gmx_trjconv(int argc, char *argv[])
 
         if (bHaveFirstFrame)
         {
-            set_trxframe_ePBC(&fr, ePBC);
+            if (bTDump)
+            {
+                // Determine timestep (assuming constant spacing for now) if we
+                // need to dump frames based on time. This is required so we do not
+                // skip the first frame if that was the one that should have been dumped
+                double firstFrameTime = fr.time;
+                if (read_next_frame(oenv, trxin, &fr))
+                {
+                    dt     = fr.time - firstFrameTime;
+                    bDTset = TRUE;
+                    if (dt <= 0)
+                    {
+                        fprintf(stderr, "Warning: Frame times are not incrementing - will dump first frame.\n");
+                    }
+                }
+                // Now close and reopen so we are at first frame again
+                close_trx(trxin);
+                done_frame(&fr);
+                // Reopen at first frame (We already know it exists if we got here)
+                read_first_frame(oenv, &trxin, in_file, &fr, flags);
+            }
 
+            set_trxframe_ePBC(&fr, ePBC);
             natoms = fr.natoms;
 
             if (bSetTime)
@@ -1375,7 +1408,6 @@ int gmx_trjconv(int argc, char *argv[])
             frame    =  0;
             outframe =  0;
             model_nr =  0;
-            bDTset   = FALSE;
 
             /* Main loop over frames */
             do
@@ -1438,22 +1470,23 @@ int gmx_trjconv(int argc, char *argv[])
 
                 if (bTDump)
                 {
-                    /* determine timestep */
-                    if (t0 == -1)
+                    // If we could not read two frames or times are not incrementing
+                    // we have almost no idea what to do,
+                    // but dump the first frame so output is not broken.
+                    if (dt <= 0 || !bDTset)
                     {
-                        t0 = fr.time;
+                        bDumpFrame = true;
                     }
                     else
                     {
-                        if (!bDTset)
-                        {
-                            dt     = fr.time-t0;
-                            bDTset = TRUE;
-                        }
+                        // Dump the frame if we are less than half a frame time
+                        // below it. This will also ensure we at least dump a
+                        // somewhat reasonable frame if the spacing is unequal
+                        // and we have overrun the frame time. Once we dump one
+                        // frame based on time we quit, so it does not matter
+                        // that this might be true for all subsequent frames too.
+                        bDumpFrame = (fr.time > tdump-0.5*dt);
                     }
-                    /* This is not very elegant, as one can not dump a frame after
-                     * a timestep with is more than twice as small as the first one. */
-                    bDumpFrame = (fr.time > tdump-0.5*dt) && (fr.time <= tdump+0.5*dt);
                 }
                 else
                 {
@@ -1651,19 +1684,20 @@ int gmx_trjconv(int argc, char *argv[])
                             }
                         }
 
+                        auto positionsArrayRef = gmx::arrayRefFromArray(reinterpret_cast<gmx::RVec *>(fr.x), natoms);
                         if (bPBCcomAtom)
                         {
                             switch (unitcell_enum)
                             {
                                 case euRect:
-                                    put_atoms_in_box(ePBC, fr.box, natoms, fr.x);
+                                    put_atoms_in_box(ePBC, fr.box, positionsArrayRef);
                                     break;
                                 case euTric:
-                                    put_atoms_in_triclinic_unitcell(ecenter, fr.box, natoms, fr.x);
+                                    put_atoms_in_triclinic_unitcell(ecenter, fr.box, positionsArrayRef);
                                     break;
                                 case euCompact:
                                     put_atoms_in_compact_unitcell(ePBC, ecenter, fr.box,
-                                                                  natoms, fr.x);
+                                                                  positionsArrayRef);
                                     break;
                             }
                         }
@@ -1800,8 +1834,29 @@ int gmx_trjconv(int argc, char *argv[])
                             case efGRO:
                             case efG96:
                             case efPDB:
-                                sprintf(title, "Generated by trjconv : %s t= %9.5f",
-                                        top_title, frout.time);
+                                // Only add a generator statement if title is empty,
+                                // to avoid multiple generated-by statements from various programs
+                                if (std::strlen(top_title) == 0)
+                                {
+                                    sprintf(top_title, "Generated by trjconv");
+                                }
+                                if (frout.bTime)
+                                {
+                                    sprintf(timestr, " t= %9.5f", frout.time);
+                                }
+                                else
+                                {
+                                    std::strcpy(timestr, "");
+                                }
+                                if (frout.bStep)
+                                {
+                                    sprintf(stepstr, " step= %" GMX_PRId64, frout.step);
+                                }
+                                else
+                                {
+                                    std::strcpy(stepstr, "");
+                                }
+                                snprintf(title, 256, "%s%s%s", top_title, timestr, stepstr);
                                 if (bSeparate || bSplitHere)
                                 {
                                     out = gmx_ffopen(out_file2, "w");
@@ -1814,7 +1869,6 @@ int gmx_trjconv(int argc, char *argv[])
                                         break;
                                     case efPDB:
                                         fprintf(out, "REMARK    GENERATED BY TRJCONV\n");
-                                        sprintf(title, "%s t= %9.5f", top_title, frout.time);
                                         /* if reading from pdb, we want to keep the original
                                            model numbering else we write the output frame
                                            number plus one, because model 0 is not allowed in pdb */

@@ -70,11 +70,11 @@ gatherLoadBySimdIntTranspose(const double *  base,
     // but multiplication otherwise.
     if (align == 4)
     {
-        simdoffset = simdoffset << 2;
+        simdoffset.simdInternal_ = _mm512_slli_epi32(simdoffset.simdInternal_, 2);
     }
     else if (align == 8)
     {
-        simdoffset = simdoffset << 3;
+        simdoffset.simdInternal_ = _mm512_slli_epi32(simdoffset.simdInternal_, 3);
     }
     else
     {
@@ -99,15 +99,15 @@ gatherLoadUBySimdIntTranspose(const double *  base,
     // but multiplication otherwise.
     if (align == 2)
     {
-        simdoffset = simdoffset << 1;
+        simdoffset.simdInternal_ = _mm512_slli_epi32(simdoffset.simdInternal_, 1);
     }
     else if (align == 4)
     {
-        simdoffset = simdoffset << 2;
+        simdoffset.simdInternal_ = _mm512_slli_epi32(simdoffset.simdInternal_, 2);
     }
     else if (align == 8)
     {
-        simdoffset = simdoffset << 3;
+        simdoffset.simdInternal_ = _mm512_slli_epi32(simdoffset.simdInternal_, 3);
     }
     else
     {
@@ -176,11 +176,11 @@ gatherLoadUTranspose(const double *        base,
     // but multiplication otherwise.
     if (align == 4)
     {
-        simdoffset = simdoffset << 2;
+        simdoffset.simdInternal_ = _mm512_slli_epi32(simdoffset.simdInternal_, 2);
     }
     else if (align == 8)
     {
-        simdoffset = simdoffset << 3;
+        simdoffset.simdInternal_ = _mm512_slli_epi32(simdoffset.simdInternal_, 3);
     }
     else
     {
@@ -211,11 +211,11 @@ transposeScatterStoreU(double *            base,
     // but multiplication otherwise.
     if (align == 4)
     {
-        simdoffset = simdoffset << 2;
+        simdoffset.simdInternal_ = _mm512_slli_epi32(simdoffset.simdInternal_, 2);
     }
     else if (align == 8)
     {
-        simdoffset = simdoffset << 3;
+        simdoffset.simdInternal_ = _mm512_slli_epi32(simdoffset.simdInternal_, 3);
     }
     else
     {
@@ -235,9 +235,9 @@ transposeScatterIncrU(double *            base,
                       SimdDouble          v1,
                       SimdDouble          v2)
 {
-    GMX_ALIGNED(double, GMX_SIMD_DOUBLE_WIDTH)  rdata0[GMX_SIMD_DOUBLE_WIDTH];
-    GMX_ALIGNED(double, GMX_SIMD_DOUBLE_WIDTH)  rdata1[GMX_SIMD_DOUBLE_WIDTH];
-    GMX_ALIGNED(double, GMX_SIMD_DOUBLE_WIDTH)  rdata2[GMX_SIMD_DOUBLE_WIDTH];
+    alignas(GMX_SIMD_ALIGNMENT) double  rdata0[GMX_SIMD_DOUBLE_WIDTH];
+    alignas(GMX_SIMD_ALIGNMENT) double  rdata1[GMX_SIMD_DOUBLE_WIDTH];
+    alignas(GMX_SIMD_ALIGNMENT) double  rdata2[GMX_SIMD_DOUBLE_WIDTH];
 
     store(rdata0, v0);
     store(rdata1, v1);
@@ -259,9 +259,9 @@ transposeScatterDecrU(double *            base,
                       SimdDouble          v1,
                       SimdDouble          v2)
 {
-    GMX_ALIGNED(double, GMX_SIMD_DOUBLE_WIDTH)  rdata0[GMX_SIMD_DOUBLE_WIDTH];
-    GMX_ALIGNED(double, GMX_SIMD_DOUBLE_WIDTH)  rdata1[GMX_SIMD_DOUBLE_WIDTH];
-    GMX_ALIGNED(double, GMX_SIMD_DOUBLE_WIDTH)  rdata2[GMX_SIMD_DOUBLE_WIDTH];
+    alignas(GMX_SIMD_ALIGNMENT) double  rdata0[GMX_SIMD_DOUBLE_WIDTH];
+    alignas(GMX_SIMD_ALIGNMENT) double  rdata1[GMX_SIMD_DOUBLE_WIDTH];
+    alignas(GMX_SIMD_ALIGNMENT) double  rdata2[GMX_SIMD_DOUBLE_WIDTH];
 
     store(rdata0, v0);
     store(rdata1, v1);

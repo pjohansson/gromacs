@@ -1,7 +1,7 @@
 %
 % This file is part of the GROMACS molecular simulation package.
 %
-% Copyright (c) 2013,2014,2015,2016,2017, by the GROMACS development team, led by
+% Copyright (c) 2013,2014,2015,2016,2017,2018, by the GROMACS development team, led by
 % Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
 % and including many others, as listed in the AUTHORS file in the
 % top-level source directory and at http://www.gromacs.org.
@@ -1343,12 +1343,11 @@ H = \sum_{i=1}^{N} \frac{\pb_i}{2m_i} + U\left(\rv_1,\rv_2,\ldots,\rv_N\right) +
 The values and velocities of the Nos{\'e}-Hoover thermostat variables
 are generally not included in the output, as they take up a fair
 amount of space and are generally not important for analysis of
-simulations, but this can be overridden by defining the environment
-variable {\tt GMX_NOSEHOOVER_CHAINS}, which will print the values of all
+simulations, but by setting an mdp option the values of all
 the positions and velocities of all Nos{\'e}-Hoover particles in the
-chain to the {\tt .edr} file.  Leap-frog simulations currently can only have 
-Nos{\'e}-Hoover chain lengths of 1, but this will likely be updated in 
-later version.
+chain are written to the {\tt .edr} file.  Leap-frog simulations
+currently can only have  Nos{\'e}-Hoover chain lengths of 1,
+but this will likely be updated in later version.
 
 As described in the integrator section, for temperature coupling, the
 temperature that the algorithm attempts to match to the reference
@@ -1551,7 +1550,24 @@ The equations of motion for the atoms, obtained from the Hamiltonian are:
 \bea \frac {\de^2\ve{r}_i}{\de t^2} & = & \frac{\ve{F}_i}{m_i} -
 \ve{M} \frac{\de \ve{r}_i}{\de t} , \\ \ve{M} & = & \ve{b}^{-1} \left[
   \ve{b} \frac{\de \ve{b}'}{\de t} + \frac{\de \ve{b}}{\de t} \ve{b}'
-  \right] \ve{b}'^{-1}.  \eea The (inverse) mass parameter matrix
+  \right] \ve{b}'^{-1}.
+  \eea 
+This extra term has the appearance of a friction, but it should be 
+noted that it is ficticious, and rather an effect of the
+Parrinello-Rahman equations of motion being defined with all
+particle coordinates represented relative to the box vectors, while
+{\gromacs] uses normal Cartesian coordinates for positions, 
+velocities and forces. It is worth noting that the kinetic energy too
+should formally be calculated based on velocities relative to the
+box vectors. This can have an effect e.g. for external constant stress,
+but for now we only support coupling to constant external 
+pressures, and for any normal simulation the velocities of box
+vectors should be extremely small compared to particle velocities.
+Gang Liu has done some work on deriving this for Cartesian
+coordinates\cite{Liu2015} that we will try to implement at
+some point in the future together with support for external stress.
+
+The (inverse) mass parameter matrix
 $\ve{W}^{-1}$ determines the strength of the coupling, and how the box
 can be deformed.  The box restriction (\ref{eqn:box_rot}) will be
 fulfilled automatically if the corresponding elements of $\ve{W}^{-1}$
@@ -2203,8 +2219,9 @@ $\langle \rond_i\!\!(t) \rond_j\!\!(t+s) \rangle =
     2 m_i \gamma_i k_B T \delta(s) \delta_{ij}$.
 When $1/\gamma_i$ is large compared to the time scales present in the system,
 one could see stochastic dynamics as molecular dynamics with stochastic
-temperature-coupling. The advantage compared to MD with Berendsen
-temperature-coupling is that in case of SD the generated ensemble is known.
+temperature-coupling. But any processes that take longer than $1/\gamma_i$,
+e.g. hydrodynamics, will be dampened. Since each degree of freedom is coupled
+independently to a heat bath, equilibration of fast modes occurs rapidly.
 For simulating a system in vacuum there is the additional advantage that there is no
 accumulation of errors for the overall translational and rotational
 degrees of freedom.

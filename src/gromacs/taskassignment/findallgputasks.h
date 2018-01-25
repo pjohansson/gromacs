@@ -1,7 +1,7 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2015, by the GROMACS development team, led by
+ * Copyright (c) 2017, by the GROMACS development team, led by
  * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
  * and including many others, as listed in the AUTHORS file in the
  * top-level source directory and at http://www.gromacs.org.
@@ -32,51 +32,34 @@
  * To help us fund GROMACS development, we humbly ask that you cite
  * the research papers on the package. Check out http://www.gromacs.org.
  */
-/*! \internal \file
- * \brief Tests for base definitions (only alignment attributes for now)
+/*! \internal
+ * \file
+ * \brief Declares routine for collecting all GPU tasks found on ranks of a node.
  *
- * \author Erik Lindahl <erik.lindahl@gmail.com>
- * \ingroup module_utility
+ * \author Mark Abraham <mark.j.abraham@gmail.com>
+ * \ingroup module_taskassignment
  */
+#ifndef GMX_TASKASSIGNMENT_FINDALLGPUTASKS_H
+#define GMX_TASKASSIGNMENT_FINDALLGPUTASKS_H
 
-#include "gmxpre.h"
-
-#include "gromacs/utility/basedefinitions.h"
-
-#include <cstdint>
-
-#include <gtest/gtest.h>
-
-#include "gromacs/utility/real.h"
+#include "gromacs/taskassignment/taskassignment.h"
+#include "gromacs/utility/arrayref.h"
+#include "gromacs/utility/gmxmpi.h"
 
 namespace gmx
 {
 
-TEST(BasedefinitionsTest, GmxAlignedDeclaresAlignedVariable)
-{
-    GMX_ALIGNED(real, 2)  r1;
-    GMX_ALIGNED(real, 4)  r2;
-    GMX_ALIGNED(real, 8)  r3;
+/*! \brief Returns container of all tasks on all ranks of this node
+ * that are eligible for GPU execution.
+ *
+ * Perform all necessary communication for preparing for task
+ * assignment. Separating this aspect makes it possible to unit test
+ * the logic of task assignment. */
+GpuTasksOnRanks
+findAllGpuTasksOnThisNode(ArrayRef<const GpuTask> gpuTasksOnThisRank,
+                          int                     numRanksOnThisNode,
+                          MPI_Comm                communicator);
 
-    std::uint64_t addr1 = reinterpret_cast<std::uint64_t>(&r1);
-    std::uint64_t addr2 = reinterpret_cast<std::uint64_t>(&r2);
-    std::uint64_t addr3 = reinterpret_cast<std::uint64_t>(&r3);
+} // namespace
 
-    EXPECT_EQ(0, addr1 % 2);
-    EXPECT_EQ(0, addr2 % 4);
-    EXPECT_EQ(0, addr3 % 8);
-
-    GMX_ALIGNED(int, 2)   i1;
-    GMX_ALIGNED(int, 4)   i2;
-    GMX_ALIGNED(int, 8)   i3;
-
-    addr1 = reinterpret_cast<std::uint64_t>(&i1);
-    addr2 = reinterpret_cast<std::uint64_t>(&i2);
-    addr3 = reinterpret_cast<std::uint64_t>(&i3);
-
-    EXPECT_EQ(0, addr1 % 2);
-    EXPECT_EQ(0, addr2 % 4);
-    EXPECT_EQ(0, addr3 % 8);
-}
-
-}
+#endif

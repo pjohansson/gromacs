@@ -52,6 +52,8 @@
 #include <string>
 #include <vector>
 
+#include "gromacs/utility/arrayref.h"
+
 struct gmx_gpu_info_t;
 
 namespace gmx
@@ -60,7 +62,7 @@ namespace gmx
 /*! \brief Parse a GPU ID string into a container describing the task types and associated device IDs.
  *
  * \param[in]   gpuIdString  String like "013" or "0,1,3" typically
- *                           supplied by the user to mdrun -gpu_id.
+ *                           supplied by the user to mdrun -gpu_id or -gputasks.
  *                           Must contain only decimal digits, or only decimal
  *                           digits separated by comma delimiters. A terminal
  *                           comma is accceptable (and required to specify a
@@ -82,20 +84,21 @@ parseUserGpuIds(const std::string &gpuIdString);
  * length matches that of the number of GPU tasks required.
  */
 std::vector<int>
-makeGpuIds(const std::vector<int> &compatibleGpus,
-           size_t                  numGpuTasks);
+makeGpuIds(ArrayRef<const int> compatibleGpus,
+           size_t              numGpuTasks);
 
 /*! \brief Convert a container of GPU deviced IDs to a string that
- * can be used by gmx tune_pme as input to mdrun -gpu_id.
+ * can be used by gmx tune_pme as input to mdrun -gputasks.
  *
- * Produce a valid input for mdrun -gpu_id that refers to the device
+ * Produce a valid input for mdrun -gputasks that refers to the device
  * IDs in \c gpuIds but produces a mapping for \c
- * totalNumberOfTasks tasks.
+ * totalNumberOfTasks tasks. Note that gmx tune_pme does not
+ * currently support filling mdrun -gputasks.
  *
  * \param[in]   gpuIds              Container of device IDs
  * \param[in]   totalNumberOfTasks  Total number of tasks for the output mapping produced by the returned string.
  *
- * \returns  A string that is suitable to pass to mdrun -gpu_id.
+ * \returns  A string that is suitable to pass to mdrun -gputasks.
  *
  * \throws   std::bad_alloc     If out of memory.
  */

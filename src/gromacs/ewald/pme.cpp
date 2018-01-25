@@ -518,9 +518,9 @@ gmx_pme_t *gmx_pme_init(const t_commrec     *cr,
                         real                 ewaldcoeff_lj,
                         int                  nthread,
                         PmeRunMode           runMode,
-                        PmeGpu              *pmeGPU,
+                        PmeGpu              *pmeGpu,
                         gmx_device_info_t   *gpuInfo,
-                        const gmx::MDLogger &mdlog)
+                        const gmx::MDLogger  & /*mdlog*/)
 {
     int               use_threads, sum_use_threads, i;
     ivec              ndata;
@@ -749,7 +749,7 @@ gmx_pme_t *gmx_pme_init(const t_commrec     *cr,
     snew(pme->bsp_mod[YY], pme->nky);
     snew(pme->bsp_mod[ZZ], pme->nkz);
 
-    pme->gpu     = pmeGPU; /* Carrying over the single GPU structure */
+    pme->gpu     = pmeGpu; /* Carrying over the single GPU structure */
     pme->runMode = runMode;
 
     /* The required size of the interpolation grid, including overlap.
@@ -816,10 +816,11 @@ gmx_pme_t *gmx_pme_init(const t_commrec     *cr,
                           pme->overlap[0].s2g1[pme->nodeid_major]-pme->overlap[0].s2g0[pme->nodeid_major+1],
                           pme->overlap[1].s2g1[pme->nodeid_minor]-pme->overlap[1].s2g0[pme->nodeid_minor+1]);
             /* This routine will allocate the grid data to fit the FFTs */
+            const auto allocateRealGridForGpu = (pme->runMode == PmeRunMode::Mixed) ? gmx::PinningPolicy::CanBePinned : gmx::PinningPolicy::CannotBePinned;
             gmx_parallel_3dfft_init(&pme->pfft_setup[i], ndata,
                                     &pme->fftgrid[i], &pme->cfftgrid[i],
                                     pme->mpi_comm_d,
-                                    bReproducible, pme->nthread);
+                                    bReproducible, pme->nthread, allocateRealGridForGpu);
 
         }
     }
@@ -852,7 +853,7 @@ gmx_pme_t *gmx_pme_init(const t_commrec     *cr,
     pme->lb_buf2       = nullptr;
     pme->lb_buf_nalloc = 0;
 
-    pme_gpu_reinit(pme.get(), gpuInfo, mdlog, cr);
+    pme_gpu_reinit(pme.get(), gpuInfo);
 
     pme_init_all_work(&pme->solve_work, pme->nthread, pme->nkx);
 

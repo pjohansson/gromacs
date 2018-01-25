@@ -315,6 +315,12 @@ option(GMX_BUILD_SHARED_EXE
     ON)
 mark_as_advanced(GMX_BUILD_SHARED_EXE)
 
+option(GMX_PHYSICAL_VALIDATION
+       "Include physical validation tests in ctest environment. These can then be called using 'make check-phys' or
+       'make check-all'. Warning: Running the physical validation tests takes significantly more time than other tests!"
+       OFF)
+mark_as_advanced(GMX_PHYSICAL_VALIDATION)
+
 ######################################################################
 # Detect OpenMP support
 ######################################################################
@@ -851,13 +857,18 @@ else()
     # RPATHs), and makes the binaries in the build tree relocatable.
     if(GMX_LIB_INSTALL_DIR STREQUAL "lib")
         set(CMAKE_BUILD_WITH_INSTALL_RPATH TRUE)
+        if(POLICY CMP0068)
+            cmake_policy(SET CMP0068 NEW) # From CMake-3.9
+            set(CMAKE_BUILD_WITH_INSTALL_NAME_DIR TRUE)
+        endif()
     endif()
     # Set the RPATH as relative to the executable location to make the
     # binaries relocatable.
-    if(NOT CMAKE_SYSTEM_NAME STREQUAL "Darwin") #Assume OS X >=10.5
-        set(CMAKE_INSTALL_RPATH "\$ORIGIN/../${GMX_LIB_INSTALL_DIR}")
-    else()
+    if(CMAKE_SYSTEM_NAME STREQUAL "Darwin") #Assume OS X >=10.5
         set(CMAKE_INSTALL_RPATH "@executable_path/../${GMX_LIB_INSTALL_DIR}")
+        set(CMAKE_INSTALL_NAME_DIR ${CMAKE_INSTALL_RPATH})
+    else()
+        set(CMAKE_INSTALL_RPATH "\$ORIGIN/../${GMX_LIB_INSTALL_DIR}")
     endif()
     set(CMAKE_INSTALL_RPATH_USE_LINK_PATH TRUE)
     set(CMAKE_MACOSX_RPATH 1)

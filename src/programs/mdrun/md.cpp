@@ -3,7 +3,7 @@
  *
  * Copyright (c) 1991-2000, University of Groningen, The Netherlands.
  * Copyright (c) 2001-2004, The GROMACS development team.
- * Copyright (c) 2011,2012,2013,2014,2015,2016,2017, by the GROMACS development team, led by
+ * Copyright (c) 2011,2012,2013,2014,2015,2016,2017,2018, by the GROMACS development team, led by
  * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
  * and including many others, as listed in the AUTHORS file in the
  * top-level source directory and at http://www.gromacs.org.
@@ -50,7 +50,9 @@
 
 #include "thread_mpi/threads.h"
 
+#include "gromacs/awh/awh.h"
 #include "gromacs/commandline/filenm.h"
+#include "gromacs/compat/make_unique.h"
 #include "gromacs/domdec/domdec.h"
 #include "gromacs/domdec/domdec_network.h"
 #include "gromacs/domdec/domdec_struct.h"
@@ -92,6 +94,7 @@
 #include "gromacs/mdlib/update.h"
 #include "gromacs/mdlib/vcm.h"
 #include "gromacs/mdlib/vsite.h"
+#include "gromacs/mdtypes/awh-history.h"
 #include "gromacs/mdtypes/commrec.h"
 #include "gromacs/mdtypes/df_history.h"
 #include "gromacs/mdtypes/energyhistory.h"
@@ -390,8 +393,19 @@ double gmx::do_md(FILE *fplog, t_commrec *cr, const gmx::MDLogger &mdlog,
     // signals, and will use this object to achieve that.
     SimulationSignaller nullSignaller(nullptr, nullptr, false, false);
 
+    if (!mdrunOptions.writeConfout)
+    {
+        // This is on by default, and the main known use case for
+        // turning it off is for convenience in benchmarking, which is
+        // something that should not show up in the general user
+        // interface.
+        GMX_LOG(mdlog.info).asParagraph().
+            appendText("The -noconfout functionality is deprecated, and may be removed in a future version.");
+    }
     if (mdrunOptions.timingOptions.resetHalfway)
     {
+        GMX_LOG(mdlog.info).asParagraph().
+            appendText("The -resethway functionality is deprecated, and may be removed in a future version.");
         if (ir->nsteps > 0)
         {
             /* Signal to reset the counters half the simulation steps. */
@@ -483,6 +497,10 @@ double gmx::do_md(FILE *fplog, t_commrec *cr, const gmx::MDLogger &mdlog,
     {
         gmx_fatal(FARGS, "Shell particles are not implemented with domain decomposition, use a single rank");
     }
+    if (shellfc && ir->bDoAwh)
+    {
+        gmx_fatal(FARGS, "AWH biasing does not support shell particles.");
+    }
 
     if (inputrecDeform(ir))
     {
@@ -511,7 +529,7 @@ double gmx::do_md(FILE *fplog, t_commrec *cr, const gmx::MDLogger &mdlog,
     {
         top = dd_init_local_top(top_global);
 
-        stateInstance = std::unique_ptr<t_state>(new t_state);
+        stateInstance = gmx::compat::make_unique<t_state>();
         state         = stateInstance.get();
         dd_init_local_state(cr->dd, state_global, state);
     }
@@ -595,6 +613,23 @@ double gmx::do_md(FILE *fplog, t_commrec *cr, const gmx::MDLogger &mdlog,
     if (constr && !DOMAINDECOMP(cr))
     {
         set_constraints(constr, top, ir, mdatoms, cr);
+    }
+
+    /* Initialize AWH and restore state from history in checkpoint if needed. */
+    if (ir->bDoAwh)
+    {
+        ir->awh = new gmx::Awh(fplog, *ir, cr, *ir->awhParams, opt2fn("-awh", nfile, fnm), ir->pull_work);
+
+        if (startingFromCheckpoint)
+        {
+            /* Restore the AWH history read from checkpoint */
+            ir->awh->restoreStateFromHistory(MASTER(cr) ? state_global->awhHistory.get() : nullptr);
+        }
+        else if (MASTER(cr))
+        {
+            /* Initialize the AWH history here */
+            state_global->awhHistory = ir->awh->initHistoryFromState();
+        }
     }
 
     const bool useReplicaExchange = (replExParams.exchangeInterval > 0);
@@ -682,7 +717,7 @@ double gmx::do_md(FILE *fplog, t_commrec *cr, const gmx::MDLogger &mdlog,
         restore_ekinstate_from_state(cr, ekind, &state_global->ekinstate);
     }
 
-    cglo_flags = (CGLO_TEMPERATURE | CGLO_GSTAT
+    cglo_flags = (CGLO_INITIALIZATION | CGLO_TEMPERATURE | CGLO_GSTAT
                   | (EI_VV(ir->eI) ? CGLO_PRESSURE : 0)
                   | (EI_VV(ir->eI) ? CGLO_CONSTRAINT : 0)
                   | (continuationOptions.haveReadEkin ? CGLO_READEKIN : 0));
@@ -691,7 +726,7 @@ double gmx::do_md(FILE *fplog, t_commrec *cr, const gmx::MDLogger &mdlog,
     /* To minimize communication, compute_globals computes the COM velocity
      * and the kinetic energy for the velocities without COM motion removed.
      * Thus to get the kinetic energy without the COM contribution, we need
-     * to calls compute_globals twice.
+     * to call compute_globals twice.
      */
     for (int cgloIteration = 0; cgloIteration < (bStopCM ? 2 : 1); cgloIteration++)
     {
@@ -699,6 +734,7 @@ double gmx::do_md(FILE *fplog, t_commrec *cr, const gmx::MDLogger &mdlog,
         if (bStopCM && cgloIteration == 0)
         {
             cglo_flags_iteration |= CGLO_STOPCM;
+            cglo_flags_iteration &= ~CGLO_TEMPERATURE;
         }
         compute_globals(fplog, gstat, cr, ir, fr, ekind, state, mdatoms, nrnb, vcm,
                         nullptr, enerd, force_vir, shake_vir, total_vir, pres, mu_tot,
@@ -1197,14 +1233,27 @@ double gmx::do_md(FILE *fplog, t_commrec *cr, const gmx::MDLogger &mdlog,
         }
         else
         {
+            /* The AWH history need to be saved _before_ doing force calculations where the AWH bias is updated
+               (or the AWH update will be performed twice for one step when continuing). It would be best to
+               call this update function from do_md_trajectory_writing but that would occur after do_force.
+               One would have to divide the update_awh function into one function applying the AWH force
+               and one doing the AWH bias update. The update AWH bias function could then be called after
+               do_md_trajectory_writing (then containing update_awh_history).
+               The checkpointing will in the future probably moved to the start of the md loop which will
+               rid of this issue. */
+            if (ir->bDoAwh && bCPT && MASTER(cr))
+            {
+                ir->awh->updateHistory(state_global->awhHistory.get());
+            }
+
             /* The coordinates (x) are shifted (to get whole molecules)
              * in do_force.
              * This is parallellized as well, and does communication too.
              * Check comments in sim_util.c
              */
             do_force(fplog, cr, ir, step, nrnb, wcycle, top, groups,
-                     state->box, &state->x, &state->hist,
-                     &f, force_vir, mdatoms, enerd, fcd,
+                     state->box, state->x, &state->hist,
+                     f, force_vir, mdatoms, enerd, fcd,
                      state->lambda, graph,
                      fr, vsite, mu_tot, t, ed, bBornRadii,
                      (bNS ? GMX_FORCE_NS : 0) | force_flags,
@@ -1234,7 +1283,7 @@ double gmx::do_md(FILE *fplog, t_commrec *cr, const gmx::MDLogger &mdlog,
                 trotter_update(ir, step, ekind, enerd, state, total_vir, mdatoms, &MassQ, trotter_seq, ettTSEQ1);
             }
 
-            update_coords(fplog, step, ir, mdatoms, state, &f, fcd,
+            update_coords(fplog, step, ir, mdatoms, state, f, fcd,
                           ekind, M, upd, etrtVELOCITY1,
                           cr, constr);
 
@@ -1242,7 +1291,7 @@ double gmx::do_md(FILE *fplog, t_commrec *cr, const gmx::MDLogger &mdlog,
             {
                 wallcycle_stop(wcycle, ewcUPDATE);
                 update_constraints(fplog, step, nullptr, ir, mdatoms,
-                                   state, fr->bMolPBC, graph, &f,
+                                   state, fr->bMolPBC, graph, f,
                                    &top->idef, shake_vir,
                                    cr, nrnb, wcycle, upd, constr,
                                    TRUE, bCalcVir);
@@ -1389,7 +1438,7 @@ double gmx::do_md(FILE *fplog, t_commrec *cr, const gmx::MDLogger &mdlog,
         do_md_trajectory_writing(fplog, cr, nfile, fnm, step, step_rel, t,
                                  ir, state, state_global, observablesHistory,
                                  top_global, fr,
-                                 outf, mdebin, ekind, &f,
+                                 outf, mdebin, ekind, f,
                                  &nchkpt,
                                  bCPT, bRerunMD, bLastStep,
                                  mdrunOptions.writeConfout,
@@ -1418,13 +1467,22 @@ double gmx::do_md(FILE *fplog, t_commrec *cr, const gmx::MDLogger &mdlog,
             /* this just makes signals[].sig compatible with the hack
                of sending signals around by MPI_Reduce together with
                other floats */
-            if (gmx_get_stop_condition() == gmx_stop_cond_next_ns)
+            if ((gmx_get_stop_condition() == gmx_stop_cond_next_ns) ||
+                (mdrunOptions.reproducible &&
+                 gmx_get_stop_condition() == gmx_stop_cond_next))
             {
+                /* We need at least two global communication steps to pass
+                 * around the signal. We stop at a pair-list creation step
+                 * to allow for exact continuation, when possible.
+                 */
                 signals[eglsSTOPCOND].sig = 1;
                 nsteps_stop               = std::max(ir->nstlist, 2*nstglobalcomm);
             }
-            if (gmx_get_stop_condition() == gmx_stop_cond_next)
+            else if (gmx_get_stop_condition() == gmx_stop_cond_next)
             {
+                /* Stop directly after the next global communication step.
+                 * This breaks exact continuation.
+                 */
                 signals[eglsSTOPCOND].sig = -1;
                 nsteps_stop               = nstglobalcomm + 1;
             }
@@ -1488,7 +1546,7 @@ double gmx::do_md(FILE *fplog, t_commrec *cr, const gmx::MDLogger &mdlog,
             if (constr && bIfRandomize)
             {
                 update_constraints(fplog, step, nullptr, ir, mdatoms,
-                                   state, fr->bMolPBC, graph, &f,
+                                   state, fr->bMolPBC, graph, f,
                                    &top->idef, tmp_vir,
                                    cr, nrnb, wcycle, upd, constr,
                                    TRUE, bCalcVir);
@@ -1527,7 +1585,7 @@ double gmx::do_md(FILE *fplog, t_commrec *cr, const gmx::MDLogger &mdlog,
             if (EI_VV(ir->eI))
             {
                 /* velocity half-step update */
-                update_coords(fplog, step, ir, mdatoms, state, &f, fcd,
+                update_coords(fplog, step, ir, mdatoms, state, f, fcd,
                               ekind, M, upd, etrtVELOCITY2,
                               cr, constr);
             }
@@ -1548,12 +1606,12 @@ double gmx::do_md(FILE *fplog, t_commrec *cr, const gmx::MDLogger &mdlog,
                 copy_rvecn(as_rvec_array(state->x.data()), cbuf, 0, state->natoms);
             }
 
-            update_coords(fplog, step, ir, mdatoms, state, &f, fcd,
+            update_coords(fplog, step, ir, mdatoms, state, f, fcd,
                           ekind, M, upd, etrtPOSITION, cr, constr);
             wallcycle_stop(wcycle, ewcUPDATE);
 
             update_constraints(fplog, step, &dvdl_constr, ir, mdatoms, state,
-                               fr->bMolPBC, graph, &f,
+                               fr->bMolPBC, graph, f,
                                &top->idef, shake_vir,
                                cr, nrnb, wcycle, upd, constr,
                                FALSE, bCalcVir);
@@ -1573,7 +1631,7 @@ double gmx::do_md(FILE *fplog, t_commrec *cr, const gmx::MDLogger &mdlog,
                 /* now we know the scaling, we can compute the positions again again */
                 copy_rvecn(cbuf, as_rvec_array(state->x.data()), 0, state->natoms);
 
-                update_coords(fplog, step, ir, mdatoms, state, &f, fcd,
+                update_coords(fplog, step, ir, mdatoms, state, f, fcd,
                               ekind, M, upd, etrtPOSITION, cr, constr);
                 wallcycle_stop(wcycle, ewcUPDATE);
 
@@ -1583,7 +1641,7 @@ double gmx::do_md(FILE *fplog, t_commrec *cr, const gmx::MDLogger &mdlog,
                  * physically? I'm thinking they are just errors, but not completely sure.
                  * For now, will call without actually constraining, constr=NULL*/
                 update_constraints(fplog, step, nullptr, ir, mdatoms,
-                                   state, fr->bMolPBC, graph, &f,
+                                   state, fr->bMolPBC, graph, f,
                                    &top->idef, tmp_vir,
                                    cr, nrnb, wcycle, upd, nullptr,
                                    FALSE, bCalcVir);
@@ -1759,7 +1817,7 @@ double gmx::do_md(FILE *fplog, t_commrec *cr, const gmx::MDLogger &mdlog,
 
             print_ebin(mdoutf_get_fp_ene(outf), do_ene, do_dr, do_or, do_log ? fplog : nullptr,
                        step, t,
-                       eprNORMAL, mdebin, fcd, groups, &(ir->opts));
+                       eprNORMAL, mdebin, fcd, groups, &(ir->opts), ir->awh);
 
             if (ir->bPull)
             {
@@ -1966,7 +2024,7 @@ double gmx::do_md(FILE *fplog, t_commrec *cr, const gmx::MDLogger &mdlog,
         if (ir->nstcalcenergy > 0 && !bRerunMD)
         {
             print_ebin(mdoutf_get_fp_ene(outf), FALSE, FALSE, FALSE, fplog, step, t,
-                       eprAVER, mdebin, fcd, groups, &(ir->opts));
+                       eprAVER, mdebin, fcd, groups, &(ir->opts), ir->awh);
         }
     }
 
@@ -1982,6 +2040,11 @@ double gmx::do_md(FILE *fplog, t_commrec *cr, const gmx::MDLogger &mdlog,
     if (useReplicaExchange && MASTER(cr))
     {
         print_replica_exchange_statistics(fplog, repl_ex);
+    }
+
+    if (ir->bDoAwh)
+    {
+        delete ir->awh;
     }
 
     // Clean up swapcoords

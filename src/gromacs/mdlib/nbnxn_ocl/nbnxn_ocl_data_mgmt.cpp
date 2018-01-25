@@ -764,10 +764,8 @@ void nbnxn_gpu_init(gmx_nbnxn_ocl_t          **p_nb,
 
     init_plist(nb->plist[eintLocal]);
 
-    /* OpenCL timing disabled if GMX_DISABLE_OCL_TIMING is defined. */
-    /* TODO deprecate the first env var in the 2017 release. */
-    nb->bDoTime = (getenv("GMX_DISABLE_OCL_TIMING") == NULL &&
-                   getenv("GMX_DISABLE_GPU_TIMING") == NULL);
+    /* OpenCL timing disabled if GMX_DISABLE_GPU_TIMING is defined. */
+    nb->bDoTime = (getenv("GMX_DISABLE_GPU_TIMING") == NULL);
 
     /* Create queues only after bDoTime has been initialized */
     if (nb->bDoTime)
@@ -1141,10 +1139,13 @@ static void free_gpu_device_runtime_data(gmx_device_runtime_data_t *runData)
 //! This function is documented in the header file
 void nbnxn_gpu_free(gmx_nbnxn_ocl_t *nb)
 {
-    int    kernel_count;
+    if (nb == NULL)
+    {
+        return;
+    }
 
     /* Free kernels */
-    kernel_count = sizeof(nb->kernel_ener_noprune_ptr) / sizeof(nb->kernel_ener_noprune_ptr[0][0]);
+    int kernel_count = sizeof(nb->kernel_ener_noprune_ptr) / sizeof(nb->kernel_ener_noprune_ptr[0][0]);
     free_kernels((cl_kernel*)nb->kernel_ener_noprune_ptr, kernel_count);
 
     kernel_count = sizeof(nb->kernel_ener_prune_ptr) / sizeof(nb->kernel_ener_prune_ptr[0][0]);

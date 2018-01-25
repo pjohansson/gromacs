@@ -43,6 +43,7 @@
 #include <cstring>
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <memory>
 #include <string>
@@ -113,7 +114,7 @@ static void gmx_detect_gpus(const gmx::MDLogger &mdlog, const t_commrec *cr)
     int              rank_world;
     MPI_Comm         physicalnode_comm;
 #endif
-    int              rank_local;
+    bool             isMasterRankOfNode;
 
     hwinfo_g->gpu_info.bDetectGPUs =
         (bGPUBinary && getenv("GMX_DISABLE_GPU_DETECTION") == nullptr);
@@ -141,38 +142,43 @@ static void gmx_detect_gpus(const gmx::MDLogger &mdlog, const t_commrec *cr)
     MPI_Comm_rank(MPI_COMM_WORLD, &rank_world);
     MPI_Comm_split(MPI_COMM_WORLD, gmx_physicalnode_id_hash(),
                    rank_world, &physicalnode_comm);
-    MPI_Comm_rank(physicalnode_comm, &rank_local);
+    {
+        int rankOnNode = -1;
+        MPI_Comm_rank(physicalnode_comm, &rankOnNode);
+        isMasterRankOfNode = (rankOnNode == 0);
+    }
     GMX_UNUSED_VALUE(cr);
 #else
-    /* Here there should be only one process, check this */
+    // Here there should be only one process, because if we are using
+    // thread-MPI, only one thread is active so far. So we check this.
     GMX_RELEASE_ASSERT(cr->nnodes == 1 && cr->sim_nodeid == 0, "Only a single (master) process should execute here");
-
-    rank_local = 0;
+    isMasterRankOfNode = true;
 #endif
 
     /*  With CUDA detect only on one rank per host, with OpenCL need do
      *  the detection on all PP ranks */
     bool isOpenclPpRank = ((GMX_GPU == GMX_GPU_OPENCL) && thisRankHasDuty(cr, DUTY_PP));
 
-    if (rank_local == 0 || isOpenclPpRank)
+    bool gpusCanBeDetected = false;
+    if (isMasterRankOfNode || isOpenclPpRank)
     {
-        char detection_error[STRLEN] = "", sbuf[STRLEN];
-
-        if (detect_gpus(&hwinfo_g->gpu_info, detection_error) != 0)
+        std::string errorMessage;
+        gpusCanBeDetected = canDetectGpus(&errorMessage);
+        if (!gpusCanBeDetected)
         {
-            if (detection_error[0] != '\0')
-            {
-                sprintf(sbuf, ":\n      %s\n", detection_error);
-            }
-            else
-            {
-                sprintf(sbuf, ".");
-            }
             GMX_LOG(mdlog.warning).asParagraph().appendTextFormatted(
-                    "NOTE: Error occurred during GPU detection%s"
+                    "NOTE: GPUs cannot be detected:\n"
+                    "      %s\n"
                     "      Can not use GPU acceleration, will fall back to CPU kernels.",
-                    sbuf);
+                    errorMessage.c_str());
         }
+    }
+
+    if (gpusCanBeDetected)
+    {
+        findGpus(&hwinfo_g->gpu_info);
+        // No need to tell the user anything at this point, they get a
+        // hardware report later.
     }
 
 #if GMX_LIB_MPI
@@ -187,7 +193,7 @@ static void gmx_detect_gpus(const gmx::MDLogger &mdlog, const t_commrec *cr)
 
             dev_size = hwinfo_g->gpu_info.n_dev*sizeof_gpu_dev_info();
 
-            if (rank_local > 0)
+            if (!isMasterRankOfNode)
             {
                 hwinfo_g->gpu_info.gpu_dev =
                     (struct gmx_device_info_t *)malloc(dev_size);
@@ -206,7 +212,11 @@ static void gmx_detect_gpus(const gmx::MDLogger &mdlog, const t_commrec *cr)
 //! Reduce the locally collected \p hwinfo_g over MPI ranks
 static void gmx_collect_hardware_mpi(const gmx::CpuInfo &cpuInfo)
 {
-    const int ncore = hwinfo_g->hardwareTopology->numberOfCores();
+    const int  ncore        = hwinfo_g->hardwareTopology->numberOfCores();
+    /* Zen has family=23, for now we treat future AMD CPUs like Zen */
+    const bool cpuIsAmdZen  = (cpuInfo.vendor() == CpuInfo::Vendor::Amd &&
+                               cpuInfo.family() >= 23);
+
 #if GMX_LIB_MPI
     int       rank_id;
     int       nrank, rank, nhwthread, ngpu, i;
@@ -269,53 +279,57 @@ static void gmx_collect_hardware_mpi(const gmx::CpuInfo &cpuInfo)
     sfree(buf);
     sfree(all);
 
-    int sum[4], maxmin[10];
-
+    constexpr int                          numElementsCounts =  4;
+    std::array<int, numElementsCounts>     countsReduced;
     {
-        int buf[4];
-
+        std::array<int, numElementsCounts> countsLocal;
         /* Sum values from only intra-rank 0 so we get the sum over all nodes */
-        buf[0] = nnode0;
-        buf[1] = ncore0;
-        buf[2] = nhwthread0;
-        buf[3] = ngpu0;
+        countsLocal[0] = nnode0;
+        countsLocal[1] = ncore0;
+        countsLocal[2] = nhwthread0;
+        countsLocal[3] = ngpu0;
 
-        MPI_Allreduce(buf, sum, 4, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
+        MPI_Allreduce(countsLocal.data(), countsReduced.data(), countsLocal.size(),
+                      MPI_INT, MPI_SUM, MPI_COMM_WORLD);
     }
 
+    constexpr int                       numElementsMax = 11;
+    std::array<int, numElementsMax>     maxMinReduced;
     {
-        int buf[10];
-
+        std::array<int, numElementsMax> maxMinLocal;
         /* Store + and - values for all ranks,
          * so we can get max+min with one MPI call.
          */
-        buf[0] = ncore;
-        buf[1] = nhwthread;
-        buf[2] = ngpu;
-        buf[3] = static_cast<int>(gmx::simdSuggested(cpuInfo));
-        buf[4] = gpu_hash;
-        buf[5] = -buf[0];
-        buf[6] = -buf[1];
-        buf[7] = -buf[2];
-        buf[8] = -buf[3];
-        buf[9] = -buf[4];
+        maxMinLocal[0]  = ncore;
+        maxMinLocal[1]  = nhwthread;
+        maxMinLocal[2]  = ngpu;
+        maxMinLocal[3]  = static_cast<int>(gmx::simdSuggested(cpuInfo));
+        maxMinLocal[4]  = gpu_hash;
+        maxMinLocal[5]  = -maxMinLocal[0];
+        maxMinLocal[6]  = -maxMinLocal[1];
+        maxMinLocal[7]  = -maxMinLocal[2];
+        maxMinLocal[8]  = -maxMinLocal[3];
+        maxMinLocal[9]  = -maxMinLocal[4];
+        maxMinLocal[10] = (cpuIsAmdZen ? 1 : 0);
 
-        MPI_Allreduce(buf, maxmin, 10, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
+        MPI_Allreduce(maxMinLocal.data(), maxMinReduced.data(), maxMinLocal.size(),
+                      MPI_INT, MPI_MAX, MPI_COMM_WORLD);
     }
 
-    hwinfo_g->nphysicalnode       = sum[0];
-    hwinfo_g->ncore_tot           = sum[1];
-    hwinfo_g->ncore_min           = -maxmin[5];
-    hwinfo_g->ncore_max           = maxmin[0];
-    hwinfo_g->nhwthread_tot       = sum[2];
-    hwinfo_g->nhwthread_min       = -maxmin[6];
-    hwinfo_g->nhwthread_max       = maxmin[1];
-    hwinfo_g->ngpu_compatible_tot = sum[3];
-    hwinfo_g->ngpu_compatible_min = -maxmin[7];
-    hwinfo_g->ngpu_compatible_max = maxmin[2];
-    hwinfo_g->simd_suggest_min    = -maxmin[8];
-    hwinfo_g->simd_suggest_max    = maxmin[3];
-    hwinfo_g->bIdenticalGPUs      = (maxmin[4] == -maxmin[9]);
+    hwinfo_g->nphysicalnode       = countsReduced[0];
+    hwinfo_g->ncore_tot           = countsReduced[1];
+    hwinfo_g->ncore_min           = -maxMinReduced[5];
+    hwinfo_g->ncore_max           = maxMinReduced[0];
+    hwinfo_g->nhwthread_tot       = countsReduced[2];
+    hwinfo_g->nhwthread_min       = -maxMinReduced[6];
+    hwinfo_g->nhwthread_max       = maxMinReduced[1];
+    hwinfo_g->ngpu_compatible_tot = countsReduced[3];
+    hwinfo_g->ngpu_compatible_min = -maxMinReduced[7];
+    hwinfo_g->ngpu_compatible_max = maxMinReduced[2];
+    hwinfo_g->simd_suggest_min    = -maxMinReduced[8];
+    hwinfo_g->simd_suggest_max    = maxMinReduced[3];
+    hwinfo_g->bIdenticalGPUs      = (maxMinReduced[4] == -maxMinReduced[9]);
+    hwinfo_g->haveAmdZenCpu       = (maxMinReduced[10] > 0);
 #else
     /* All ranks use the same pointer, protected by a mutex in the caller */
     hwinfo_g->nphysicalnode       = 1;
@@ -331,6 +345,7 @@ static void gmx_collect_hardware_mpi(const gmx::CpuInfo &cpuInfo)
     hwinfo_g->simd_suggest_min    = static_cast<int>(simdSuggested(cpuInfo));
     hwinfo_g->simd_suggest_max    = static_cast<int>(simdSuggested(cpuInfo));
     hwinfo_g->bIdenticalGPUs      = TRUE;
+    hwinfo_g->haveAmdZenCpu       = cpuIsAmdZen;
 #endif
 }
 
@@ -496,7 +511,6 @@ gmx_hw_info_t *gmx_detect_hardware(const gmx::MDLogger &mdlog, const t_commrec *
 
         gmx_detect_gpus(mdlog, cr);
         gmx_collect_hardware_mpi(*hwinfo_g->cpuInfo);
-        hwinfo_g->compatibleGpus = getCompatibleGpus(hwinfo_g->gpu_info);
     }
     /* increase the reference counter */
     n_hwinfo++;

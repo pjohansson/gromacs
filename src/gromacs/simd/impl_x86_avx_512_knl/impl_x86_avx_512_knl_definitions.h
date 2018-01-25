@@ -1,7 +1,7 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2014,2015,2016, by the GROMACS development team, led by
+ * Copyright (c) 2014,2015,2016,2017, by the GROMACS development team, led by
  * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
  * and including many others, as listed in the AUTHORS file in the
  * top-level source directory and at http://www.gromacs.org.
@@ -73,6 +73,8 @@
 #define GMX_SIMD_HAVE_GATHER_LOADU_BYSIMDINT_TRANSPOSE_DOUBLE   1
 #define GMX_SIMD_HAVE_HSIMD_UTIL_FLOAT             1
 #define GMX_SIMD_HAVE_HSIMD_UTIL_DOUBLE            1
+#define GMX_SIMD_HAVE_4NSIMD_UTIL_FLOAT            1
+#define GMX_SIMD_HAVE_4NSIMD_UTIL_DOUBLE           1
 
 #define GMX_SIMD4_HAVE_FLOAT                       1
 #define GMX_SIMD4_HAVE_DOUBLE                      1
@@ -83,6 +85,7 @@
 #define GMX_SIMD_FINT32_WIDTH                     16
 #define GMX_SIMD_DINT32_WIDTH                      8
 #define GMX_SIMD4_WIDTH                            4
+#define GMX_SIMD_ALIGNMENT                        64 // Bytes (16*single or 8*double)
 #define GMX_SIMD_RSQRT_BITS                       28
 #define GMX_SIMD_RCP_BITS                         28
 
