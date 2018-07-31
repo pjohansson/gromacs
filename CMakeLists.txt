@@ -110,6 +110,9 @@ set(GMX_COMMON_LIBRARIES "")
 #    (i.e., something that is exposed in installed headers).
 set(GMX_PUBLIC_LIBRARIES "")
 
+list(APPEND ${GMX_EXTRA_LIBRARIES} "qhull_r")
+list(APPEND ${GMX_EXTRA_LIBRARIES} "qhullcpp")
+
 ########################################################################
 # Check and warn if cache generated on a different host is being reused
 ########################################################################
