@@ -413,8 +413,7 @@ static void calc_potential_diff(const char                *fntraj,
                                 const std::vector<size_t> &indices,
                                 const rvec                 r0,
                                 const rvec                 r1,
-                                const gmx_output_env_t    *oenv,
-                                const int                  ePBC)
+                                const gmx_output_env_t    *oenv)
 {
     rvec        *x;
     real         t;
@@ -435,11 +434,8 @@ static void calc_potential_diff(const char                *fntraj,
             const auto d1 = sqrt(distance2(r1, x[i]));
             const auto q = top->atoms.atom[i].q;
 
-            if (q != 0.0)
-            {
-                V0 += q / d0;
-                V1 += q / d1;
-            }
+            V0 += q / d0;
+            V1 += q / d1;
         }
 
         diffs.push_back(static_cast<real>((V1 - V0)) * to_si_factor);
@@ -573,7 +569,11 @@ int gmx_potential(int argc, char *argv[])
 
         for (size_t i = 0; i < static_cast<size_t>(natoms); ++i)
         {
-            indices.push_back(inds[i]);
+            // Only charged atoms matter for the calculation
+            if (top->atoms.atom[inds[i]].q != 0.0)
+            {
+                indices.push_back(inds[i]);
+            }
         }
 
         std::vector<real> diffs, times;
@@ -582,7 +582,7 @@ int gmx_potential(int argc, char *argv[])
             ftp2fn(efTRX, NFILE, fnm), top,
             diffs, times,
             indices, r0, r1,
-            oenv, ePBC
+            oenv
         );
 
         const auto mean = calc_mean(diffs);
