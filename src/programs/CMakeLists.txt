@@ -70,6 +70,8 @@ else()
         $<TARGET_OBJECTS:mdrun_objlib>
         $<TARGET_OBJECTS:view_objlib>)
     target_link_libraries(gmx libgromacs
+        "qhull_r"
+        "qhullcpp"
         ${GMX_COMMON_LIBRARIES}
         ${GMX_EXE_LINKER_FLAGS}
         ${GMX_STDLIB_LIBRARIES})

@@ -282,6 +282,9 @@ gmx_sans(int argc, char *argv[]);
 int
 gmx_saxs(int argc, char *argv[]);
 
+int
+gmx_3d_analysis(int argc, char *argv[]);
+
 #ifdef __cplusplus
 }
 #endif

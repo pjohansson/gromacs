@@ -39,6 +39,7 @@
 #include <cctype>
 #include <cmath>
 #include <cstring>
+#include <numeric>
 
 #include "gromacs/commandline/pargs.h"
 #include "gromacs/commandline/viewit.h"
@@ -47,6 +48,7 @@
 #include "gromacs/gmxana/gmx_ana.h"
 #include "gromacs/gmxana/princ.h"
 #include "gromacs/math/functions.h"
+#include "gromacs/math/units.h"
 #include "gromacs/math/utilities.h"
 #include "gromacs/math/vec.h"
 #include "gromacs/pbcutil/rmpbc.h"
@@ -404,6 +406,65 @@ static void plot_potential(double *potential[], double *charge[], double *field[
     xvgrclose(fie);
 }
 
+static void calc_potential_diff(const char                *fntraj,
+                                const t_topology          *top,
+                                std::vector<real>         &diffs,
+                                std::vector<real>         &times,
+                                const std::vector<size_t> &indices,
+                                const rvec                 r0,
+                                const rvec                 r1,
+                                const gmx_output_env_t    *oenv)
+{
+    rvec        *x;
+    real         t;
+    matrix       box;
+    t_trxstatus *status;
+
+    read_first_x(oenv, &status, fntraj, &t, &x, box);
+
+    constexpr real to_si_factor = (E_CHARGE/NANO) / (4.0*M_PI*EPSILON0_SI);
+
+    do
+    {
+        double V0 = 0.0, V1 = 0.0;
+
+        for (const auto i : indices)
+        {
+            const auto d0 = sqrt(distance2(r0, x[i]));
+            const auto d1 = sqrt(distance2(r1, x[i]));
+            const auto q = top->atoms.atom[i].q;
+
+            V0 += q / d0;
+            V1 += q / d1;
+        }
+
+        diffs.push_back(static_cast<real>((V1 - V0)) * to_si_factor);
+        times.push_back(t);
+    }
+    while (read_next_x(oenv, status, &t, x, box));
+}
+
+static real calc_mean(const std::vector<real> &values)
+{
+    return std::accumulate(values.cbegin(), values.cend(), 0.0)
+        / static_cast<real>(values.size());
+}
+
+static real calc_stderr(const real               mean,
+                        const std::vector<real> &values)
+{
+    double diffsq = 0.0;
+
+    for (const auto v : values)
+    {
+        diffsq += std::pow(static_cast<double>(v - mean), 2.0);
+    }
+
+    const auto N = values.size();
+
+    return sqrt(diffsq / static_cast<real>(N - 1) / static_cast<real>(N));
+}
+
 int gmx_potential(int argc, char *argv[])
 {
     const char        *desc[] = {
@@ -414,7 +475,12 @@ int gmx_potential(int argc, char *argv[])
         "the box. It is also possible to calculate the potential in spherical",
         "coordinates as function of r by calculating a charge distribution in",
         "spherical slices and twice integrating them. epsilon_r is taken as 1,",
-        "but 2 is more appropriate in many cases."
+        "but 2 is more appropriate in many cases.",
+        "[PAR]",
+        "Alternatively the potential difference between two points can be",
+        "calculated with the command [TT]-diff[tt]. Supply the points with",
+        "[TT]-r0[tt] and [TT]-r1[tt]. The difference DV = V(r1) - V(r0) is",
+        "returned."
     };
     gmx_output_env_t  *oenv;
     static int         axis       = 2;       /* normal to memb. default z  */
@@ -423,8 +489,16 @@ int gmx_potential(int argc, char *argv[])
     static int         ngrps      = 1;
     static gmx_bool    bSpherical = FALSE;   /* default is bilayer types   */
     static real        fudge_z    = 0;       /* translate coordinates      */
-    static gmx_bool    bCorrect   = 0;
+    static gmx_bool    bCorrect   = 0, bDiff = FALSE;
+    static rvec        r0 = { -1.0, -1.0, -1.0 },
+                       r1 = { -1.0, -1.0, -1.0 };
     t_pargs            pa []      = {
+        { "-diff", FALSE, etBOOL, { &bDiff },
+          "Calculate the potential difference between -r0 and -r1" },
+        { "-r0",  FALSE, etRVEC, { &r0 },
+          "Calculate potential difference from this point to -r1" },
+        { "-r1",  FALSE, etRVEC, { &r1 },
+          "Calculate potential difference from -r0 to this point" },
         { "-d",   FALSE, etSTR, {&axtitle},
           "Take the normal on the membrane in direction X, Y or Z." },
         { "-sl",  FALSE, etINT, {&nslices},
@@ -483,21 +557,69 @@ int gmx_potential(int argc, char *argv[])
     snew(index, ngrps);
     snew(ngx, ngrps);
 
-    rd_index(ftp2fn(efNDX, NFILE, fnm), ngrps, ngx, index, grpname);
 
+    if (bDiff)
+    {
+        get_index(&top->atoms, ftp2fn_null(efNDX, NFILE, fnm), 1, ngx, index, grpname);
+        const auto natoms = ngx[0];
+        const auto inds = index[0];
 
-    calc_potential(ftp2fn(efTRX, NFILE, fnm), index, ngx,
-                   &potential, &charge, &field,
-                   &nslices, top, ePBC, axis, ngrps, &slWidth, fudge_z,
-                   bSpherical, bCorrect, oenv);
+        std::vector<size_t> indices;
+        indices.reserve(natoms);
 
-    plot_potential(potential, charge, field, opt2fn("-o", NFILE, fnm),
-                   opt2fn("-oc", NFILE, fnm), opt2fn("-of", NFILE, fnm),
-                   nslices, ngrps, (const char**)grpname, slWidth, oenv);
+        for (size_t i = 0; i < static_cast<size_t>(natoms); ++i)
+        {
+            // Only charged atoms matter for the calculation
+            if (top->atoms.atom[inds[i]].q != 0.0)
+            {
+                indices.push_back(inds[i]);
+            }
+        }
 
-    do_view(oenv, opt2fn("-o", NFILE, fnm), nullptr);  /* view xvgr file */
-    do_view(oenv, opt2fn("-oc", NFILE, fnm), nullptr); /* view xvgr file */
-    do_view(oenv, opt2fn("-of", NFILE, fnm), nullptr); /* view xvgr file */
+        std::vector<real> diffs, times;
+
+        calc_potential_diff(
+            ftp2fn(efTRX, NFILE, fnm), top,
+            diffs, times,
+            indices, r0, r1,
+            oenv
+        );
+
+        const auto mean = calc_mean(diffs);
+        const auto std = calc_stderr(mean, diffs);
+
+        FILE *fp = xvgropen_type(
+            opt2fn("-o", NFILE, fnm),
+            "Potential difference", "t (ps)", "\\DeltaV (V)",
+            exvggtNONE, oenv
+        );
+
+        for (size_t i = 0; i < times.size(); ++i)
+        {
+            fprintf(fp, "%12g  %12g\n", times.at(i), diffs.at(i));
+        }
+
+        xvgrclose(fp);
+
+        fprintf(stderr, "Mean difference: %12g +/- %-6g V\n", mean, std);
+        do_view(oenv, opt2fn("-o", NFILE, fnm), nullptr);
+    }
+    else
+    {
+        rd_index(ftp2fn(efNDX, NFILE, fnm), ngrps, ngx, index, grpname);
+        calc_potential(ftp2fn(efTRX, NFILE, fnm), index, ngx,
+                       &potential, &charge, &field,
+                       &nslices, top, ePBC, axis, ngrps, &slWidth, fudge_z,
+                       bSpherical, bCorrect, oenv);
+
+        plot_potential(potential, charge, field, opt2fn("-o", NFILE, fnm),
+                       opt2fn("-oc", NFILE, fnm), opt2fn("-of", NFILE, fnm),
+                       nslices, ngrps, (const char**)grpname, slWidth, oenv);
+
+        do_view(oenv, opt2fn("-o", NFILE, fnm), nullptr);  /* view xvgr file */
+        do_view(oenv, opt2fn("-oc", NFILE, fnm), nullptr); /* view xvgr file */
+        do_view(oenv, opt2fn("-of", NFILE, fnm), nullptr); /* view xvgr file */
+    }
 
     return 0;
 }

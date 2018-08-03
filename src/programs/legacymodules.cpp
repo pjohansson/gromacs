@@ -361,6 +361,9 @@ void registerLegacyModules(gmx::CommandLineModuleManager *manager)
                    "Perform weighted histogram analysis after umbrella sampling");
     registerModule(manager, &gmx_wheel, "wheel",
                    "Plot helical wheels");
+    // PETTER 
+    registerModule(manager, &gmx_3d_analysis, "3d",
+                   "Calculate 2D planar or axial-radial density maps");
     registerModuleNoNice(manager, &gmx_view, "view",
                          "View a trajectory on an X-Windows terminal");
 
