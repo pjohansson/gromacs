@@ -82,9 +82,9 @@ using Point = Vec3<double>;
 using VecIndices = std::vector<size_t>;
 
 struct SphericalCap {
-    SphericalCap(const real a,
-                 const real h,
-                 const real R,
+    SphericalCap(const real a, // base radius
+                 const real h, // height above base
+                 const real R, // sphere radius
                  const Vec3<real> center_input)
     :base_radius { a },
      height { h },
@@ -95,7 +95,7 @@ struct SphericalCap {
     real base_radius,
          height,
          sphere_radius,
-         bottom;
+         bottom; // z position of the cap bottom in system coordinates
     Vec3<real> center;
 };
 
@@ -120,7 +120,7 @@ static real get_x_in_box(real x, const real box)
     return x;
 }
 
-static VecIndices hit_and_count(const rvec       *x0,
+static VecIndices hit_and_count(const rvec       *x,
                                 const VecIndices &all_indices,
                                 const matrix      box,
                                 const real        bin_size,
@@ -135,9 +135,9 @@ static VecIndices hit_and_count(const rvec       *x0,
 
         for (const auto i : indices)
         {
-            const auto x = get_x_in_box(x0[i][e], box[e][e]);
+            const auto x0 = get_x_in_box(x[i][e], box[e][e]);
             const auto bin = static_cast<size_t>(
-                floor(x / box[e][e] * static_cast<real>(nbins)));
+                floor(x0 / box[e][e] * static_cast<real>(nbins)));
             ++counts[bin];
         }
 
@@ -191,9 +191,9 @@ static VecIndices hit_and_count(const rvec       *x0,
 
         for (const auto i : indices)
         {
-            const auto x = get_x_in_box(x0[i][e], box[e][e]);
+            const auto x1 = get_x_in_box(x[i][e], box[e][e]);
 
-            if ((x >= xmin) && (x < xmax))
+            if ((x1 >= xmin) && (x1 < xmax))
             {
                 keep.push_back(i);
             }
@@ -205,39 +205,39 @@ static VecIndices hit_and_count(const rvec       *x0,
     return indices;
 }
 
-static SphericalCap fit_spherical_cap(const rvec       *x0,
+static SphericalCap fit_spherical_cap(const rvec       *x,
                                       const VecIndices &indices)
 {
     auto it = indices.cbegin();
-    auto xmin = x0[*it][XX], xmax = x0[*it][XX],
-         ymin = x0[*it][YY], ymax = x0[*it][YY],
-         zmin = x0[*it][ZZ], zmax = x0[*it][ZZ];
+    auto xmin = x[*it][XX], xmax = x[*it][XX],
+         ymin = x[*it][YY], ymax = x[*it][YY],
+         zmin = x[*it][ZZ], zmax = x[*it][ZZ];
 
     for (++it; it != indices.cend(); ++it)
     {
-        if (x0[*it][XX] < xmin)
+        if (x[*it][XX] < xmin)
         {
-            xmin = x0[*it][XX];
+            xmin = x[*it][XX];
         }
-        if (x0[*it][XX] > xmax)
+        if (x[*it][XX] > xmax)
         {
-            xmax = x0[*it][XX];
+            xmax = x[*it][XX];
         }
-        if (x0[*it][YY] < ymin)
+        if (x[*it][YY] < ymin)
         {
-            ymin = x0[*it][YY];
+            ymin = x[*it][YY];
         }
-        if (x0[*it][YY] > ymax)
+        if (x[*it][YY] > ymax)
         {
-            ymax = x0[*it][YY];
+            ymax = x[*it][YY];
         }
-        if (x0[*it][ZZ] < zmin)
+        if (x[*it][ZZ] < zmin)
         {
-            zmin = x0[*it][ZZ];
+            zmin = x[*it][ZZ];
         }
-        if (x0[*it][ZZ] > zmax)
+        if (x[*it][ZZ] > zmax)
         {
-            zmax = x0[*it][ZZ];
+            zmax = x[*it][ZZ];
         }
     }
 
@@ -245,20 +245,19 @@ static SphericalCap fit_spherical_cap(const rvec       *x0,
     const real h = zmax - zmin;
     const real R = (a * a + h * h) / (2.0 * h); // spherical cap radius
 
-    const real x = (xmax + xmin) / 2.0;
-    const real y = (ymax + ymin) / 2.0;
-    const real z = zmax - R;
-    const Vec3<real> center {x, y, z};
+    const real x0 = (xmax + xmin) / 2.0;
+    const real y0 = (ymax + ymin) / 2.0;
+    const real z0 = zmax - R;
+    const Vec3<real> center {x0, y0, z0};
 
     return SphericalCap(a, h, R, center);
 }
 
-static VecIndices __attribute__ ((noinline)) fine_tuning(const rvec         *x0,
+static VecIndices fine_tuning(const rvec         *x,
                               const VecIndices   &indices,
                               const SphericalCap &cap,
                               const real          boundary_width,
                               const real          dr,
-                              // const int        num)
                               const size_t        num)
 {
     const auto& R = cap.sphere_radius;
@@ -285,7 +284,7 @@ static VecIndices __attribute__ ((noinline)) fine_tuning(const rvec         *x0,
 
     for (const auto& i : indices)
     {
-        const real d2 = distance2(x0[i], cap.center.data());
+        const real d2 = distance2(x[i], cap.center.data());
 
         if (d2 <= R2_min)
         {
@@ -312,20 +311,21 @@ static VecIndices __attribute__ ((noinline)) fine_tuning(const rvec         *x0,
 #pragma omp parallel for
     for (size_t i = 0; i < boundary.size(); ++i)
     {
-        size_t count = 0;
+        size_t count = num;
         const auto n = boundary.at(i);
-        const auto x1 = x0[n];
+        const auto x0 = x[n];
 
         for (const auto& j : boundary_neighbour_space)
         {
-            const real d2 = distance2(x1, x0[j]);
+            const real d2 = distance2(x0, x[j]);
 
             if (d2 <= dr2)
             {
-                ++count;
+                --count;
 
-                if (count == num)
+                if (count == 0)
                 {
+// Ensure that only one thread is pushing to the vector at any point
 #pragma omp critical
                     droplet.push_back(n);
                     break;
@@ -337,7 +337,7 @@ static VecIndices __attribute__ ((noinline)) fine_tuning(const rvec         *x0,
     return droplet;
 }
 
-static std::vector<FacetInfo> get_convex_hull(const rvec       *x0,
+static std::vector<FacetInfo> get_convex_hull(const rvec       *x,
                                               const VecIndices &indices)
 {
 
@@ -348,7 +348,7 @@ static std::vector<FacetInfo> get_convex_hull(const rvec       *x0,
     {
         for (size_t e = 0; e < DIM; ++e)
         {
-            points.push_back(static_cast<coordT>(x0[i][e]));
+            points.push_back(static_cast<coordT>(x[i][e]));
         }
     }
 
@@ -363,7 +363,7 @@ static std::vector<FacetInfo> get_convex_hull(const rvec       *x0,
 
     std::vector<FacetInfo> facets;
 
-    for (auto face : convex_hull.facetList())
+    for (auto& face : convex_hull.facetList())
     {
         const auto area = face.facetArea();
         const auto n = face.hyperplane().coordinates();
@@ -389,7 +389,10 @@ static std::vector<FacetInfo> get_convex_hull(const rvec       *x0,
     return facets;
 }
 
-static std::vector<real> calc_angle_hist(const std::vector<FacetInfo>& facets,
+// For every facet, calculate the contact angle from its normal.
+// If bZmax is true, use only facets which have any vertex point
+// below zmax (in system absolute units).
+static std::vector<real> calc_angle_hist(const std::vector<FacetInfo> &facets,
                                          const size_t                  nangles,
                                          const real                    amin,
                                          const real                    amax,
@@ -399,7 +402,7 @@ static std::vector<real> calc_angle_hist(const std::vector<FacetInfo>& facets,
 {
     std::vector<real> hist (nangles, 0.0);
 
-    for (const auto face : facets)
+    for (const auto& face : facets)
     {
         bool include_face = !bZmax;
 
@@ -445,16 +448,17 @@ static void add_angles_to_hist(std::vector<real>       &final_hist,
     }
 }
 
-static std::vector<real> hist_rolling_average(const std::vector<real>& hist,
+static std::vector<real> hist_rolling_average(const std::vector<real> &hist,
                                               const size_t             nwin)
 {
     std::vector<real> result (hist.size(), 0.0);
 
     for (size_t i = nwin; i < hist.size() - nwin; ++i)
     {
-        for (int j = -nwin; j <= static_cast<int>(nwin); ++j)
+        // Total window size is 2*n + 1, nwin is in a single direction
+        for (int k = -static_cast<int>(nwin); k <= static_cast<int>(nwin); ++k)
         {
-            result.at(i) += hist.at(i + j);
+            result.at(i) += hist.at(i + k);
         }
         result.at(i) /= (2 * nwin + 1);
     }
