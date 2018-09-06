@@ -63,10 +63,30 @@
 /* directions.                                                              */
 /****************************************************************************/
 
+// Optionally limit the dipole measurements to molecules within a cylinder,
+// specified in this struct
+struct Cylinder {
+    bool bRmax, // activate the limit 
+         bXmin, // limit also along z
+         bXmax;  
+    real rmax, // cylinder radius
+         xmin, // min and max values along z
+         xmax;
+    rvec center; // cylinder center (only the radial position is used)
+};
+
+// Initialize without any limits what so ever if they are not wanted
+constexpr Cylinder NoCylinder = Cylinder {
+    false, false, false, 
+    -1.0, -1.0, -1.0,
+    {-1.0, -1.0, -1.0}
+};
+
 static void calc_h2order(const char *fn, int index[], int ngx, rvec **slDipole,
                          real **slOrder, real *slWidth, int *nslices,
                          const t_topology *top, int ePBC,
                          int axis, gmx_bool bMicel, int micel[], int nmic,
+                         const Cylinder &cylinder,
                          const gmx_output_env_t *oenv)
 {
     rvec *x0,            /* coordinates with pbc */
@@ -84,6 +104,9 @@ static void calc_h2order(const char *fn, int index[], int ngx, rvec **slDipole,
         slice = 0,       /* current slice number */
     *count;              /* nr. of atoms in one slice */
     gmx_rmpbc_t  gpbc = nullptr;
+
+    const auto& r0 = cylinder.center;
+    const auto rmax2 = std::pow(cylinder.rmax, 2);
 
     if ((natoms = read_first_x(oenv, &status, fn, &t, &x0, box)) == 0)
     {
@@ -155,6 +178,29 @@ static void calc_h2order(const char *fn, int index[], int ngx, rvec **slDipole,
                     x0[index[3*i]][j]   -= box[j][j];
                     x0[index[3*i+1]][j] -= box[j][j];
                     x0[index[3*i+2]][j] -= box[j][j];
+                }
+            }
+
+            /* if we are only including coordinates within a cylinder, check the oxygen
+               atom and move on (continue) if it lies outside 
+             */
+            if (cylinder.bRmax)
+            {
+                const auto x = x0[index[3 * i]];
+
+                if (std::pow(x[XX] - r0[XX], 2) + std::pow(x[YY] - r0[YY], 2) > rmax2)
+                {
+                    continue;
+                }
+
+                if (cylinder.bXmin && (x[ZZ] < cylinder.xmin))
+                {
+                    continue;
+                }
+
+                if (cylinder.bXmax && (x[ZZ] > cylinder.xmax))
+                {
+                    continue;
                 }
             }
 
@@ -267,23 +313,39 @@ int gmx_h2order(int argc, char *argv[])
         "Each water molecule is assigned to a slice, per time frame, based on the",
         "position of the oxygen. When [TT]-nm[tt] is used, the angle between the water",
         "dipole and the axis from the center of mass to the oxygen is calculated",
-        "instead of the angle between the dipole and a box axis."
+        "instead of the angle between the dipole and a box axis.",
+        "[PAR]",
+        "(Petter mod.) Use [TT]-center[tt] and [TT]-rmax[tt] to include only molecules",
+        "that lie within a cylinder placed at the center coordinate. Use [TT]-xmin[tt]",
+        "and [TT]-xmax[tt] to control the z coordinate. Note that these are only used",
+        "when [TT]-center[tt] is set."
     };
     static int         axis    = 2;           /* normal to memb. default z  */
     static const char *axtitle = "Z";
     static int         nslices = 0;           /* nr of slices defined       */
+    static rvec        center = { -1.0, -1.0, -1.0 };
+    static real        rmax = -1.0, xmin = -1.0, xmax = -1.0;
     t_pargs            pa[]    = {
         { "-d",   FALSE, etSTR, {&axtitle},
           "Take the normal on the membrane in direction X, Y or Z." },
         { "-sl",  FALSE, etINT, {&nslices},
           "Calculate order parameter as function of boxlength, dividing the box"
-          " in this number of slices."}
+          " in this number of slices."},
+        { "-center", FALSE, etRVEC, {&center},
+          "Center point of cylinder to include around" },
+        { "-rmax", FALSE, etREAL, {&rmax},
+          "Maximum distance from center point to include" },
+        { "-xmin", FALSE, etREAL, {&xmin},
+          "Minimum coordinate along the normal axis to include" },
+        { "-xmax", FALSE, etREAL, {&xmax},
+          "Maximums coordinate along the normal axis to include" }
     };
     const char        *bugs[] = {
         "The program assigns whole water molecules to a slice, based on the first "
         "atom of three in the index file group. It assumes an order O,H,H. "
         "Name is not important, but the order is. If this demand is not met, "
-        "assigning molecules to slices is different."
+        "assigning molecules to slices is different.",
+        "Cylinders work only for their center axis to lie along z."
     };
 
     gmx_output_env_t  *oenv;
@@ -326,9 +388,23 @@ int gmx_h2order(int argc, char *argv[])
         rd_index(opt2fn("-nm", NFILE, fnm), 1, &nmic, &micelle, &micname);
     }
 
+    Cylinder cylinder = NoCylinder;
+
+    if (opt2parg_bSet("-center", asize(pa), pa))
+    {
+        const bool bXmin = opt2parg_bSet("-xmin", asize(pa), pa);
+        const bool bXmax = opt2parg_bSet("-xmax", asize(pa), pa);
+
+        cylinder = Cylinder {
+            true, bXmin, bXmax,
+            rmax, xmin, xmax,
+            { center[XX], center[YY], center[ZZ] }
+        };
+    }
+
     calc_h2order(ftp2fn(efTRX, NFILE, fnm), index, ngx, &slDipole, &slOrder,
                  &slWidth, &nslices, top, ePBC, axis, bMicel, micelle, nmic,
-                 oenv);
+                 cylinder, oenv);
 
     h2order_plot(slDipole, slOrder, opt2fn("-o", NFILE, fnm), nslices,
                  slWidth, oenv);
