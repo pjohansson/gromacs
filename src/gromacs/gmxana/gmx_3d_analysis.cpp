@@ -79,6 +79,7 @@ template <typename T>
 using Vec3 = std::array<T, DIM>;
 using Normal = Vec3<double>;
 using Point = Vec3<double>;
+using UVec = Vec3<size_t>;
 using VecIndices = std::vector<size_t>;
 
 struct SphericalCap {
@@ -105,6 +106,17 @@ struct FacetInfo {
     double area;
 };
 
+struct XLim {
+    XLim (void)
+    :bMin { false },
+     bMax { false },
+     min { -1 },
+     max { -1 } {}
+
+    bool bMin, bMax;
+    real min, max;
+};
+
 static real get_x_in_box(real x, const real box)
 {
     while (x >= box)
@@ -120,11 +132,42 @@ static real get_x_in_box(real x, const real box)
     return x;
 }
 
+static VecIndices cut_system(const rvec       *x,
+                             const VecIndices &all_indices,
+                             const Vec3<XLim> &xlims)
+{
+    VecIndices indices;
+    indices.reserve(all_indices.size());
+
+    for (const auto i : all_indices)
+    {
+        const auto x0 = x[i];
+
+        bool keep = true;
+
+        for (size_t e = 0; e < DIM; ++e)
+        {
+            if (!((!xlims[e].bMin || (x0[e] >= xlims[e].min))
+                && (!xlims[e].bMax || (x0[e] <= xlims[e].max))))
+            {
+                keep = false;
+            }
+        }
+
+        if (keep)
+        {
+            indices.push_back(i);
+        }
+    }
+
+    return indices;
+}
+
 static VecIndices hit_and_count(const rvec       *x,
                                 const VecIndices &all_indices,
                                 const matrix      box,
                                 const real        bin_size,
-                                const size_t      mincount)
+                                const UVec       &min_counts)
 {
     VecIndices indices {all_indices};
 
@@ -133,12 +176,34 @@ static VecIndices hit_and_count(const rvec       *x,
         const auto nbins = static_cast<size_t>(ceil(box[e][e] / bin_size));
         std::vector<size_t> counts (nbins, 0);
 
-        for (const auto i : indices)
+        // Assert that if we are limiting the coordinates in this direction,
+        // that it is within the set limit
+        // if (xlims[e].bMin || xlims[e].bMax)
+        // {
+        //     const auto xmax = xlims[e].bMax ? xlims[e].max : box[e][e];
+        //
+        //     for (const auto i : indices)
+        //     {
+        //         const auto x0 = get_x_in_box(x[i][e], box[e][e]);
+        //
+        //         if ((x0 >= xlims[e].min) && (x0 <= xmax))
+        //         {
+        //             const auto bin = static_cast<size_t>(
+        //                 floor(x0 / box[e][e] * static_cast<real>(nbins)));
+        //             ++counts[bin];
+        //         }
+        //     }
+        // }
+        // else
         {
-            const auto x0 = get_x_in_box(x[i][e], box[e][e]);
-            const auto bin = static_cast<size_t>(
-                floor(x0 / box[e][e] * static_cast<real>(nbins)));
-            ++counts[bin];
+            for (const auto i : indices)
+            {
+                const auto x0 = get_x_in_box(x[i][e], box[e][e]);
+
+                const auto bin = static_cast<size_t>(
+                    floor(x0 / box[e][e] * static_cast<real>(nbins)));
+                ++counts[bin];
+            }
         }
 
         // Select the range of indices to keep by looking for the largest
@@ -149,7 +214,7 @@ static VecIndices hit_and_count(const rvec       *x,
 
         for (size_t i = 0; i < counts.size(); ++i)
         {
-            if (counts.at(i) >= mincount)
+            if (counts.at(i) >= min_counts[e])
             {
                 // Found a new section: initialize measurements
                 if (!in_connected)
@@ -539,12 +604,17 @@ int gmx_3d_analysis(int argc, char *argv[])
                 hmax = 2.0;
     static gmx_bool bZmax = true;
     static int min_count = 20, min_neighbours = 5, nwin = 2;
+    static rvec counts_dir_rvec = { 20, 20, 20 },
+                rmin = { -1, -1, -1 },
+                rmax = { -1, -1, -1 };
 
     t_pargs pa[] = {
         { "-bin", FALSE, etREAL, {&bin_size},
           "Grid size for hit-and-count binning (nm)" },
         { "-count", FALSE, etINT, {&min_count},
           "Minimum count in (1D) bins to include" },
+        { "-cdir",  FALSE, etRVEC, { &counts_dir_rvec },
+          "Minimum count in (1D) bins per direction" },
         { "-dr", FALSE, etREAL, {&boundary_width},
           "Width of boundary identifaction step (nm)" },
         { "-d", FALSE, etREAL, {&dr_neighbours},
@@ -562,7 +632,11 @@ int gmx_3d_analysis(int argc, char *argv[])
         { "-hmax", FALSE, etREAL, {&hmax},
           "Maximum height above bottom to include vertices from (nm)" },
         { "-nwin", FALSE, etINT, {&nwin},
-          "Factor to smooth distribution with" }
+          "Factor to smooth distribution with" },
+        { "-rmin", FALSE, etRVEC, { &rmin },
+          "Minimum limit of droplet search (-1 disables per axis)" },
+        { "-rmax", FALSE, etRVEC, { &rmax },
+          "Maximum limit of droplet search (-1 disables per axis)" }
     };
 
     FILE              *fp;
@@ -575,12 +649,13 @@ int gmx_3d_analysis(int argc, char *argv[])
     char             **grpname;
     int                ngrps, anagrp, *gnx = nullptr, nindex;
     int              **ind = nullptr, *index;
+    UVec               counts_dir { 0, 0, 0 };
     gmx_output_env_t  *oenv;
     t_filenm           fnm[]   = {
         { efTRX, "-f",   nullptr,       ffREAD },
         { efTPS, nullptr,   nullptr,       ffOPTRD },
         { efNDX, nullptr,   nullptr,       ffOPTRD },
-        { efXVG, "-od", "angledist", ffWRITE },
+        { efXVG, "-od", "distangles", ffWRITE },
         { efXVG, "-oa", "angles", ffWRITE },
         { efXVG, "-or", "radius", ffWRITE }
     };
@@ -599,6 +674,37 @@ int gmx_3d_analysis(int argc, char *argv[])
     {
         read_tps_conf(ftp2fn(efTPS, NFILE, fnm), &top, &ePBC, &x, nullptr, box,
                       false);
+    }
+
+    if (opt2parg_bSet("-cdir", npargs, pa))
+    {
+        for (size_t e = 0; e < DIM; ++e)
+        {
+            counts_dir[e] = static_cast<size_t>(counts_dir_rvec[e]);
+        }
+    }
+    else
+    {
+        for (size_t e = 0; e < DIM; ++e)
+        {
+            counts_dir[e] = min_count;
+        }
+    }
+
+    Vec3<XLim> xlims;
+    for (size_t e = 0; e < DIM; ++e)
+    {
+        if (rmin[e] >= 0.0)
+        {
+            xlims[e].bMin = true;
+            xlims[e].min = rmin[e];
+        }
+
+        if (rmax[e] >= 0.0)
+        {
+            xlims[e].bMax = true;
+            xlims[e].max = rmax[e];
+        }
     }
 
     ngrps = 1;
@@ -640,10 +746,56 @@ int gmx_3d_analysis(int argc, char *argv[])
 
     do
     {
+        const auto lim_indices = cut_system(x, group_indices, xlims);
         const auto boxed_indices = hit_and_count(
-            x, group_indices, box,
-            bin_size, static_cast<size_t>(min_count)
+            x, lim_indices, box,
+            bin_size, counts_dir
         );
+        // real xmin = box[XX][XX];
+        // real ymin = box[YY][YY];
+        // real zmin = box[ZZ][ZZ];
+        //
+        // real xmax = 0.0;
+        // real ymax = 0.0;
+        // real zmax = 0.0;
+        //
+        // for (const auto i : boxed_indices)
+        // {
+        //     const auto x0 = x[i];
+        //
+        //     if (x0[XX] < xmin)
+        //     {
+        //         xmin = x0[XX];
+        //     }
+        //     if (x0[XX] > xmax)
+        //     {
+        //         xmax = x0[XX];
+        //     }
+        //
+        //     if (x0[YY] < ymin)
+        //     {
+        //         ymin = x0[YY];
+        //     }
+        //     if (x0[YY] > ymax)
+        //     {
+        //         ymax = x0[YY];
+        //     }
+        //
+        //     if (x0[ZZ] < zmin)
+        //     {
+        //         zmin = x0[ZZ];
+        //     }
+        //     if (x0[ZZ] > zmax)
+        //     {
+        //         zmax = x0[ZZ];
+        //     }
+        // }
+        //
+        // fprintf(stderr, "\nxmin: %g, xmax: %g\n", xmin, xmax);
+        // fprintf(stderr, "ymin: %g, ymax: %g\n", ymin, ymax);
+        // fprintf(stderr, "zmin: %g, zmax: %g\n", zmin, zmax);
+        //
+        // exit(1);
 
         const auto fitted_cap = fit_spherical_cap(x, boxed_indices);
 
@@ -693,7 +845,8 @@ int gmx_3d_analysis(int argc, char *argv[])
     const auto hist_smooth = hist_rolling_average(histogram, nwin);
     const auto final_best_angle = get_most_probable_angle(angles, hist_smooth);
 
-    fprintf(stderr, "\nMeaured contact angle: %12g (deg.)\n", final_best_angle);
+    fprintf(stderr, "\nMeasured contact angle (deg.):\n");
+    fprintf(stdout, "%-12g\n", final_best_angle);
 
     /* Angle distribution output */
     fp = xvgropen_type(
