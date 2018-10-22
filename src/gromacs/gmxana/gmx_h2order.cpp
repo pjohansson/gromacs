@@ -392,8 +392,8 @@ int gmx_h2order(int argc, char *argv[])
 
     if (opt2parg_bSet("-center", asize(pa), pa))
     {
-        const bool bXmin = opt2parg_bSet("-xmin", asize(pa), pa);
-        const bool bXmax = opt2parg_bSet("-xmax", asize(pa), pa);
+        const auto bXmin = static_cast<bool>(opt2parg_bSet("-xmin", asize(pa), pa));
+        const auto bXmax = static_cast<bool>(opt2parg_bSet("-xmax", asize(pa), pa));
 
         cylinder = Cylinder {
             true, bXmin, bXmax,
