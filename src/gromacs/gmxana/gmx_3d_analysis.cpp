@@ -306,16 +306,54 @@ static SphericalCap fit_spherical_cap(const rvec       *x,
         }
     }
 
-    const real a = std::max(xmax - xmin, ymax - ymin) / 2.0; // base radius
+    // Calculate the (halved) maximum extent of the droplet, use the max along x and y.
+    const real dx_max_half = std::max(xmax - xmin, ymax - ymin) / 2.0;
+
+    // The height of the spherical cap.
     const real h = zmax - zmin;
-    const real R = (a * a + h * h) / (2.0 * h); // spherical cap radius
+
+    // If the contact angle is larger than 90 degrees, the droplet extent
+    // along x or y represents the (double) radius r of a spherical cap. Meanwhile,
+    // if the contact angle is smaller it represents the (double) base radius a.
+    //
+    // The former condition corresponds to the height h >= r, and the latter to h < r.
+    // Thus to get the base radius a of our spherical cap-fitted droplet we check 
+    // which of these holds true and read off or calculate a and r.
+
+    real a, // spherical cap base radius 
+         r; // spherical cap radius
+
+    // First check as a safe guard if the values make sense: 
+    // h should not be larger than 2 * r!
+    if (h > 2.0 * dx_max_half)
+    {
+        r = h / 2.0;
+        a = sqrt(h * (2 * r - h));
+
+        gmx_warning(
+            "When fitting a spherical cap, the height h = %f > 2 * r = %f, "
+            "which is not valid for a cap. Assuming that h = 2 * r.", h, 2.0 * r
+            );
+    }
+    // Contact angle > 90
+    else if (h > dx_max_half)
+    {
+        r = dx_max_half;
+        a = sqrt(h * (2 * r - h));
+    }
+    // Contact angle < 90
+    else 
+    {
+        a = dx_max_half;
+        r = (a * a + h * h) / (2.0 * h);
+    }
 
     const real x0 = (xmax + xmin) / 2.0;
     const real y0 = (ymax + ymin) / 2.0;
-    const real z0 = zmax - R;
+    const real z0 = zmax - r;
     const Vec3<real> center {x0, y0, z0};
 
-    return SphericalCap(a, h, R, center);
+    return SphericalCap(a, h, r, center);
 }
 
 static VecIndices fine_tuning(const rvec         *x,
