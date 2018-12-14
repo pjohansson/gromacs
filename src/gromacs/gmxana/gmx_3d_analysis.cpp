@@ -76,6 +76,8 @@
 #include "gromacs/utility/smalloc.h"
 
 template <typename T>
+using Vec2 = std::array<T, 2>;
+template <typename T>
 using Vec3 = std::array<T, DIM>;
 using Normal = Vec3<double>;
 using Point = Vec3<double>;
@@ -440,6 +442,106 @@ static VecIndices fine_tuning(const rvec         *x,
     return droplet;
 }
 
+struct DensMap {
+    Vec3<double> bin_size;
+    Vec2<double> origin,
+                 droplet_center;
+    Vec2<uint64_t> shape;
+    std::vector<double> densmap;
+};
+
+static DensMap get_densmap(const rvec         *xs,
+                           const VecIndices   &indices,
+                           const SphericalCap &spherical_cap,
+                           const t_topology   *top)
+{
+    const auto x0 = spherical_cap.center[XX];
+    const auto y0 = spherical_cap.center[YY];
+    const auto a = spherical_cap.base_radius;
+
+    // Include indices in a small set around the center point, using a buffer
+    // to include some atoms which fall outside of the base radius by a bit.
+    const auto buffer = a + 3.0;
+    const auto xmin = x0 - buffer;
+    const auto xmax = x0 + buffer;
+    const auto ymin = y0 - buffer;
+    const auto ymax = y0 + buffer;
+
+    // Include only indices in a thin slice from the minimum z point
+    constexpr double dz = 0.75;
+    const auto zmin = spherical_cap.center[ZZ] 
+        + spherical_cap.sphere_radius 
+        - spherical_cap.height;
+    const auto zmax = zmin + dz;
+
+    constexpr double bin_size = 0.1;
+    const auto dx = xmax - xmin;
+    const auto dy = ymax - ymin;
+
+    const auto nx = static_cast<uint64_t>(ceil(dx / bin_size));
+    const auto ny = static_cast<uint64_t>(ceil(dy / bin_size));
+
+    const Vec2<double> origin { x0 - (0.5 * dx), y0 - (0.5 * dy) };
+    const Vec2<double> center { x0, y0 };
+    const Vec2<uint64_t> shape { nx, ny };
+
+    std::vector<double> densmap(nx * ny, 0.0);
+
+    for (const auto i : indices)
+    {
+        const auto z = xs[i][ZZ];
+
+        if ((z >= zmin) && (z < zmax))
+        {
+            const auto x = xs[i][XX];
+            const auto y = xs[i][YY];
+            const auto mass = top->atoms.atom[i].m;
+
+            if ((x >= xmin) && (x < xmax) && (y >= ymin) && (y < ymax))
+            {
+                const auto ix = static_cast<uint64_t>(floor((x - xmin) / bin_size));
+                const auto iy = static_cast<uint64_t>(floor((y - ymin) / bin_size));
+                const auto index = static_cast<size_t>((iy * nx) + ix);
+
+                densmap.at(index) += mass;
+            }
+        }
+    }
+
+    return DensMap {
+        {bin_size, bin_size, dz},
+        origin,
+        center,
+        shape,
+        densmap
+    };
+}
+
+// In order, write the density map to an input file:
+// 1. bin_size (3x double)
+// 2. origin (2x double)
+// 3. shape (2x uint64)
+// 4. center of spherical cap (2x double)
+// 5. simulation time (double)
+// 6. data (NX * NY double)
+static void write_densmap(const std::string &fnout,
+                          const DensMap densmap,
+                          const double t)
+{
+    auto fp = gmx_ffopen(fnout.data(), "wb");
+
+    fwrite(densmap.bin_size.data(), sizeof(double), 3, fp);
+    fwrite(densmap.origin.data(), sizeof(double), 2, fp);
+    fwrite(densmap.shape.data(), sizeof(uint64_t), 2, fp);
+    fwrite(densmap.droplet_center.data(), sizeof(double), 2, fp);
+    fwrite(&t, sizeof(double), 1, fp);
+
+    const auto num = static_cast<size_t>(densmap.shape[XX] * densmap.shape[YY]);
+    fwrite(densmap.densmap.data(), sizeof(double), num, fp);
+
+    gmx_ffclose(fp);
+}
+
 static std::vector<FacetInfo> get_convex_hull(const rvec       *x,
                                               const VecIndices &indices)
 {
@@ -695,7 +797,8 @@ int gmx_3d_analysis(int argc, char *argv[])
         { efNDX, nullptr,   nullptr,       ffOPTRD },
         { efXVG, "-od", "distangles", ffWRITE },
         { efXVG, "-oa", "angles", ffWRITE },
-        { efXVG, "-or", "radius", ffWRITE }
+        { efXVG, "-or", "radius", ffWRITE },
+        { efDAT, "-dens", "densmap", ffWRITE }
     };
 #define NFILE asize(fnm)
     int                npargs;
@@ -745,6 +848,19 @@ int gmx_3d_analysis(int argc, char *argv[])
         }
     }
 
+    // Get the base filename for density map output, ie. without the extension.
+    // We need this since we will write a separate file for every output time,
+    // with the time as part of the filename.
+    std::string fndensmap_begin { opt2fn("-dens", NFILE, fnm) };
+    const std::string ext { ftp2ext_with_dot(efDAT) };
+    const auto base_length = fndensmap_begin.size() - ext.size();
+    fndensmap_begin.resize(base_length);
+
+    // Construct the final initial name, including a separator, and the final
+    // string that is appended after the time. 
+    fndensmap_begin.append("_");
+    const std::string fndensmap_end { "ps" + ext };
+
     ngrps = 1;
     fprintf(stderr, "\nSelect an analysis group\n");
     snew(gnx, ngrps);
@@ -789,51 +905,6 @@ int gmx_3d_analysis(int argc, char *argv[])
             x, lim_indices, box,
             bin_size, counts_dir
         );
-        // real xmin = box[XX][XX];
-        // real ymin = box[YY][YY];
-        // real zmin = box[ZZ][ZZ];
-        //
-        // real xmax = 0.0;
-        // real ymax = 0.0;
-        // real zmax = 0.0;
-        //
-        // for (const auto i : boxed_indices)
-        // {
-        //     const auto x0 = x[i];
-        //
-        //     if (x0[XX] < xmin)
-        //     {
-        //         xmin = x0[XX];
-        //     }
-        //     if (x0[XX] > xmax)
-        //     {
-        //         xmax = x0[XX];
-        //     }
-        //
-        //     if (x0[YY] < ymin)
-        //     {
-        //         ymin = x0[YY];
-        //     }
-        //     if (x0[YY] > ymax)
-        //     {
-        //         ymax = x0[YY];
-        //     }
-        //
-        //     if (x0[ZZ] < zmin)
-        //     {
-        //         zmin = x0[ZZ];
-        //     }
-        //     if (x0[ZZ] > zmax)
-        //     {
-        //         zmax = x0[ZZ];
-        //     }
-        // }
-        //
-        // fprintf(stderr, "\nxmin: %g, xmax: %g\n", xmin, xmax);
-        // fprintf(stderr, "ymin: %g, ymax: %g\n", ymin, ymax);
-        // fprintf(stderr, "zmin: %g, zmax: %g\n", zmin, zmax);
-        //
-        // exit(1);
 
         const auto fitted_cap = fit_spherical_cap(x, boxed_indices);
 
@@ -841,6 +912,12 @@ int gmx_3d_analysis(int argc, char *argv[])
             x, boxed_indices, fitted_cap,
             boundary_width, dr_neighbours, static_cast<size_t>(min_neighbours)
         );
+
+        char buf[16];
+        snprintf(buf, 16, "%09.3f", t);
+        std::string fnmap_current { fndensmap_begin + buf + fndensmap_end };
+        const auto densmap = get_densmap(x, final_indices, fitted_cap, &top);
+        write_densmap(fnmap_current, densmap, t);
 
         if (bZmax)
         {
