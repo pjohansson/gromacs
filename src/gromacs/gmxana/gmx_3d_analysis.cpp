@@ -75,7 +75,7 @@
 #include "gromacs/utility/gmxomp.h"
 #include "gromacs/utility/smalloc.h"
 
-// #define DEBUG3D
+#define DEBUG3D
 
 template <typename T>
 using Vec2 = std::array<T, 2>;
@@ -275,7 +275,8 @@ static VecIndices hit_and_count(const rvec       *x,
 }
 
 static SphericalCap fit_spherical_cap(const rvec       *x,
-                                      const VecIndices &indices)
+                                      const VecIndices &indices,
+                                      const bool       &is_spheroid)
 {
     auto it = indices.cbegin();
     auto xmin = x[*it][XX], xmax = x[*it][XX],
@@ -319,50 +320,71 @@ static SphericalCap fit_spherical_cap(const rvec       *x,
 
     // Calculate the (halved) maximum extent of the droplet, use the max along x and y.
     const real dx_max_half = std::max(xmax - xmin, ymax - ymin) / 2.0;
+#ifdef DEBUG3D
+    std::cerr << "bottom_extent_radius: " << dx_max_half << '\n';
+#endif
 
     // The height of the spherical cap.
     const real h = zmax - zmin;
 
-    // If the contact angle is larger than 90 degrees, the droplet extent
-    // along x or y represents the (double) radius r of a spherical cap. Meanwhile,
-    // if the contact angle is smaller it represents the (double) base radius a.
-    //
-    // The former condition corresponds to the height h >= r, and the latter to h < r.
-    // Thus to get the base radius a of our spherical cap-fitted droplet we check 
-    // which of these holds true and read off or calculate a and r.
-
     real a, // spherical cap base radius 
          r; // spherical cap radius
 
-    // First check as a safe guard if the values make sense: 
-    // h should not be larger than 2 * r!
-    if (h > 2.0 * dx_max_half)
+    if (is_spheroid)
     {
-        r = h / 2.0;
-        a = sqrt(h * (2 * r - h));
+        /*******************************
+        * DROPLET IS (MOSTLY) SPHEROID *
+        ********************************/
 
-        gmx_warning(
-            "When fitting a spherical cap, the height h = %f > 2 * r = %f, "
-            "which is not valid for a cap. Assuming that h = 2 * r.", h, 2.0 * r
-            );
-    }
-    // Contact angle > 90
-    else if (h > dx_max_half)
-    {
+        // If the contact angle is larger than 90 degrees, the droplet extent
+        // along x or y represents the (double) radius r of a spherical cap. Meanwhile,
+        // if the contact angle is smaller it represents the (double) base radius a.
+        //
+        // The former condition corresponds to the height h >= r, and the latter to h < r.
+        // Thus to get the base radius a of our spherical cap-fitted droplet we check 
+        // which of these holds true and read off or calculate a and r.
+
+
+        // First check as a safe guard if the values make sense: 
+        // h should not be larger than 2 * r!
+        if (h > 2.0 * dx_max_half)
+        {
+            r = h / 2.0;
+            a = sqrt(h * (2 * r - h));
+
+            gmx_warning(
+                "When fitting a spherical cap, the height h = %f > 2 * r = %f, "
+                "which is not valid for a cap. Assuming that h = 2 * r.", h, 2.0 * r
+                );
+        }
+        // Contact angle > 90
+        else if (h > dx_max_half)
+        {
 #ifdef DEBUG3D
-        std::cerr << "theta >= 90 deg.\n"; 
+        std::cerr << "theta > 90 deg.\n"; 
 #endif
-        r = dx_max_half;
-        a = sqrt(h * (2 * r - h));
-    }
-    // Contact angle < 90
-    else 
-    {
+            r = dx_max_half;
+            a = sqrt(h * (2 * r - h));
+        }
+        // Contact angle < 90
+        else 
+        {
 #ifdef DEBUG3D
         std::cerr << "theta < 90 deg.\n"; 
 #endif
+            a = dx_max_half;
+            r = (a * a + h * h) / (2.0 * h);
+        }
+    }
+    else
+    {
+#ifdef DEBUG3D
+        std::cerr << "droplet is non-spheroid, fitting bottom edges as spherical cap base.\n"; 
+#endif
+
         a = dx_max_half;
         r = (a * a + h * h) / (2.0 * h);
+
     }
 
     const real x0 = (xmax + xmin) / 2.0;
@@ -716,7 +738,8 @@ int gmx_3d_analysis(int argc, char *argv[])
         "of triangular facets, where each facet has a normal. This normal",
         "is used to calculate its angle to the surface, which yields a",
         "histogram of probabilities of each angle. The most probable angle",
-        "is taken as the contact angle.",
+        "is taken as the contact angle. The substrate is assumed to lie in",
+        "the XY plane, ie. with its normal pointing along the Z axis."
         "[PAR]",
         "Atoms which make up the droplet in each frame are identified in two",
         "steps. The first step is binning the system separately along each",
@@ -759,13 +782,32 @@ int gmx_3d_analysis(int argc, char *argv[])
         "distribution with a center-average of size (2n + 1) and taking the",
         "maximum. The window size is set using [TT]-nwin[tt]. Finally, the",
         "base radius is taken from the fitted spherical cap and saved per time",
-        "to [TT]-or[tt]."
+        "to [TT]-or[tt].",
+        "[PAR]",
+        "By default the droplet is treated as being very close to a spherical cap.",
+        "The above detailed algorithm uses this to efficiently detect the contained",
+        "liquid molecules while ignoring those outside of it. However, if the droplet",
+        "is not shaped as a spherical cap this detection will not work as well. For",
+        "example, if the droplet forms a large liquid wedge that struts out from",
+        "a fitted center spherical cap, this complicates the process: these wedge molecules"
+        "have to be included in the contained molecules since the contact angle should",
+        "be calculated from them. The algorithm allows for some adjustment here by searching",
+        "for molecules in the boundary of size [TT]-dr[tt], but this is an expensive search.",
+        "For large droplets and a large boundary width this may be prohibitively expensive.",
+        "[PAR]",
+        "In this case, it may be better to not treat the droplet as a spheroid. The",
+        "[TT]-spheroid[tt] option sets whether or not it will be. By setting this to",
+        "false the detected lowest liquid layer will be treated as the outermost base",
+        "from which the spherical cap extends, instead of having the cap fitted to",
+        "the droplet. This removes the need for a large boundary layer, but molecules",
+        "which are between (for example) a liquid wedge (foot) and the droplet may be",
+        "included as liquid molecules. Use with caution."
     };
     static real bin_size = 0.05,
                 dr_neighbours = 0.30, boundary_width = 0.50,
                 amin = 0.0, amax = 150.0, da = 1.0,
                 hmax = 2.0;
-    static gmx_bool bZmax = true;
+    static gmx_bool bZmax = true, bSpheroid = true;
     static int min_count = 20, min_neighbours = 5, nwin = 2;
     static rvec counts_dir_rvec = { 20, 20, 20 },
                 rmin = { -1, -1, -1 },
@@ -794,6 +836,8 @@ int gmx_3d_analysis(int argc, char *argv[])
           "Include only facets which have a point below the maximum height" },
         { "-hmax", FALSE, etREAL, {&hmax},
           "Maximum height above bottom to include vertices from (nm)" },
+        { "-spheroid", FALSE, etBOOL, {&bSpheroid},
+          "Whether or not to treat the droplet as a spheroid" },
         { "-nwin", FALSE, etINT, {&nwin},
           "Factor to smooth distribution with" },
         { "-rmin", FALSE, etRVEC, { &rmin },
@@ -802,7 +846,6 @@ int gmx_3d_analysis(int argc, char *argv[])
           "Maximum limit of droplet search (-1 disables per axis)" }
     };
 
-    FILE              *fp;
     t_trxstatus       *status;
     t_topology         top;
     int                ePBC = -1;
@@ -878,6 +921,7 @@ int gmx_3d_analysis(int argc, char *argv[])
     const std::string ext { ftp2ext_with_dot(efDAT) };
     const auto base_length = fndensmap_begin.size() - ext.size();
     fndensmap_begin.resize(base_length);
+    const auto output_density_maps = static_cast<bool>(opt2bSet("-dens", NFILE, fnm));
 
     // Construct the final initial name, including a separator, and the final
     // string that is appended after the time. 
@@ -921,6 +965,18 @@ int gmx_3d_analysis(int argc, char *argv[])
     std::vector<real> histogram (nangles, 0.0),
                       times, angles_per_time, radius_per_time;
 
+    /* Angles and radius per time output */
+    auto fpangles = xvgropen_type(
+        opt2fn("-oa", NFILE, fnm),
+        "Contact angle", "t (ps)", "Angle (deg.)",
+        exvggtNONE, oenv
+    ); 
+    auto fpradius = xvgropen_type(
+        opt2fn("-or", NFILE, fnm),
+        "Base radius", "t (ps)", "r (nm)",
+        exvggtNONE, oenv
+    );
+
     do
     {
 #ifdef DEBUG3D
@@ -933,7 +989,7 @@ int gmx_3d_analysis(int argc, char *argv[])
             bin_size, counts_dir
         );
 
-        const auto fitted_cap = fit_spherical_cap(x, boxed_indices);
+        const auto fitted_cap = fit_spherical_cap(x, boxed_indices, bSpheroid);
 
         const auto final_indices = fine_tuning(
             x, boxed_indices, fitted_cap,
@@ -943,8 +999,12 @@ int gmx_3d_analysis(int argc, char *argv[])
         char buf[16];
         snprintf(buf, 16, "%09.3f", t);
         std::string fnmap_current { fndensmap_begin + buf + fndensmap_end };
-        const auto densmap = get_densmap(x, final_indices, fitted_cap, &top);
-        write_densmap(fnmap_current, densmap, t);
+
+        if (output_density_maps) 
+        {
+            const auto densmap = get_densmap(x, final_indices, fitted_cap, &top);
+            write_densmap(fnmap_current, densmap, t);
+        }
 
         if (bZmax)
         {
@@ -965,9 +1025,17 @@ int gmx_3d_analysis(int argc, char *argv[])
         times.push_back(t);
         angles_per_time.push_back(best_angle);
         radius_per_time.push_back(fitted_cap.base_radius);
+
+        fprintf(fpangles, "%12.3g  %12.3g\n", times.back(), angles_per_time.back());
+        fprintf(fpradius, "%12.3g  %12g.3\n", times.back(), radius_per_time.back());
+        fflush(fpangles);
+        fflush(fpradius);
     }
     while (read_next_x(oenv, status, &t, x, box));
     close_trx(status);
+
+    xvgrclose(fpangles);
+    xvgrclose(fpradius);
 
     const auto total_weight = std::accumulate(
         histogram.cbegin(), histogram.cend(), 0.0
@@ -991,52 +1059,24 @@ int gmx_3d_analysis(int argc, char *argv[])
     fprintf(stdout, "%-12g\n", final_best_angle);
 
     /* Angle distribution output */
-    fp = xvgropen_type(
+    auto fpdist = xvgropen_type(
         opt2fn("-od", NFILE, fnm),
         "Angle distribution", "Angle (deg.)", "Probability (%)",
         exvggtXNY, oenv
     );
 
-    xvgr_world(fp, amin, 0.0, amax, pmax * 1.25, oenv);
-    xvgrLegend(fp, { "Measured", "Smoothed" }, oenv);
+    xvgr_world(fpdist, amin, 0.0, amax, pmax * 1.25, oenv);
+    xvgrLegend(fpdist, { "Measured", "Smoothed" }, oenv);
 
     for (size_t i = 0; i < histogram.size(); ++i)
     {
         fprintf(
-            fp, "%12g  %12g  %12g\n",
+            fpdist, "%12g  %12g  %12g\n",
             angles.at(i), histogram.at(i), hist_smooth.at(i)
         );
     }
 
-    xvgrclose(fp);
-
-    /* Radius per time output */
-    fp = xvgropen_type(
-        opt2fn("-or", NFILE, fnm),
-        "Base radius", "t (ps)", "r (nm)",
-        exvggtNONE, oenv
-    );
-
-    for (size_t i = 0; i < times.size(); ++i)
-    {
-        fprintf(fp, "%12g  %12g\n", times.at(i), radius_per_time.at(i));
-    }
-
-    xvgrclose(fp);
-
-    /* Angles per time output */
-    fp = xvgropen_type(
-        opt2fn("-oa", NFILE, fnm),
-        "Contact angle", "t (ps)", "Angle (deg.)",
-        exvggtNONE, oenv
-    );
-
-    for (size_t i = 0; i < times.size(); ++i)
-    {
-        fprintf(fp, "%12g  %12g\n", times.at(i), angles_per_time.at(i));
-    }
-
-    xvgrclose(fp);
+    xvgrclose(fpdist);
 
     do_view(oenv, opt2fn("-od", NFILE, fnm), nullptr);
 
