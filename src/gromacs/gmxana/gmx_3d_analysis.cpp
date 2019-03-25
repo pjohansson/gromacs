@@ -75,6 +75,8 @@
 #include "gromacs/utility/gmxomp.h"
 #include "gromacs/utility/smalloc.h"
 
+// #define DEBUG3D
+
 template <typename T>
 using Vec2 = std::array<T, 2>;
 template <typename T>
@@ -308,6 +310,13 @@ static SphericalCap fit_spherical_cap(const rvec       *x,
         }
     }
 
+#ifdef DEBUG3D
+    std::cerr 
+        << "xmin: " << xmin << ", xmax: " << xmax << '\n'
+        << "ymin: " << ymin << ", ymax: " << ymax << '\n'
+        << "zmin: " << zmin << ", zmax: " << zmax << '\n';
+#endif
+
     // Calculate the (halved) maximum extent of the droplet, use the max along x and y.
     const real dx_max_half = std::max(xmax - xmin, ymax - ymin) / 2.0;
 
@@ -340,12 +349,18 @@ static SphericalCap fit_spherical_cap(const rvec       *x,
     // Contact angle > 90
     else if (h > dx_max_half)
     {
+#ifdef DEBUG3D
+        std::cerr << "theta >= 90 deg.\n"; 
+#endif
         r = dx_max_half;
         a = sqrt(h * (2 * r - h));
     }
     // Contact angle < 90
     else 
     {
+#ifdef DEBUG3D
+        std::cerr << "theta < 90 deg.\n"; 
+#endif
         a = dx_max_half;
         r = (a * a + h * h) / (2.0 * h);
     }
@@ -354,6 +369,14 @@ static SphericalCap fit_spherical_cap(const rvec       *x,
     const real y0 = (ymax + ymin) / 2.0;
     const real z0 = zmax - r;
     const Vec3<real> center {x0, y0, z0};
+
+#ifdef DEBUG3D
+    std::cerr 
+        << "a: " << a << '\n'
+        << "h: " << h << '\n'
+        << "R: " << r << '\n'
+        << "center: " << x0 << ' ' << y0 << ' ' << z0 << '\n';
+#endif
 
     return SphericalCap(a, h, r, center);
 }
@@ -900,6 +923,10 @@ int gmx_3d_analysis(int argc, char *argv[])
 
     do
     {
+#ifdef DEBUG3D
+        std::cerr << '\n';
+#endif
+
         const auto lim_indices = cut_system(x, group_indices, xlims);
         const auto boxed_indices = hit_and_count(
             x, lim_indices, box,
