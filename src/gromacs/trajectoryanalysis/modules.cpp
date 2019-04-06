@@ -89,15 +89,15 @@ void registerModule(CommandLineModuleManager *manager,
 void registerTrajectoryAnalysisModules(CommandLineModuleManager *manager)
 {
     using namespace gmx::analysismodules;
-    CommandLineModuleGroup group = manager->addModuleGroup("Trajectory analysis");
-    registerModule<AngleInfo>(manager, group);
-    registerModule<DistanceInfo>(manager, group);
-    registerModule<FreeVolumeInfo>(manager, group);
-    registerModule<PairDistanceInfo>(manager, group);
-    registerModule<RdfInfo>(manager, group);
-    registerModule<SasaInfo>(manager, group);
-    registerModule<SelectInfo>(manager, group);
-    registerModule<TrajectoryInfo>(manager, group);
+    // CommandLineModuleGroup group = manager->addModuleGroup("Trajectory analysis");
+    // registerModule<AngleInfo>(manager, group);
+    // registerModule<DistanceInfo>(manager, group);
+    // registerModule<FreeVolumeInfo>(manager, group);
+    // registerModule<PairDistanceInfo>(manager, group);
+    // registerModule<RdfInfo>(manager, group);
+    // registerModule<SasaInfo>(manager, group);
+    // registerModule<SelectInfo>(manager, group);
+    // registerModule<TrajectoryInfo>(manager, group);
 }
 //! \endcond
 

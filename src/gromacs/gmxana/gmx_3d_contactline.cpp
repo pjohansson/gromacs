@@ -725,7 +725,7 @@ static double get_most_probable_angle(const std::vector<real> &angles,
     return angles.at(imax);
 }
 
-int gmx_3d_analysis(int argc, char *argv[])
+int gmx_3d_contactline(int argc, char *argv[])
 {
     const char        *desc[] = {
         "[THISMODULE] computes contact angles and base radii of (3D) droplets.",
