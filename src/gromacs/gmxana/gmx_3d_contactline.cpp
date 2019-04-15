@@ -40,18 +40,11 @@
 #include <array>
 #include <cmath>
 #include <cstring>
+#include <iostream>
 #include <numeric>
-
-#include <libqhullcpp/RboxPoints.h>
-#include <libqhullcpp/QhullError.h>
-#include <libqhullcpp/QhullQh.h>
-#include <libqhullcpp/QhullFacet.h>
-#include <libqhullcpp/QhullFacetList.h>
-#include <libqhullcpp/QhullLinkedList.h>
-#include <libqhullcpp/QhullPoint.h>
-#include <libqhullcpp/QhullVertex.h>
-#include <libqhullcpp/QhullVertexSet.h>
-#include <libqhullcpp/Qhull.h>
+#include <set>
+#include <utility> // pair
+#include <tuple> // tie
 
 #include "gromacs/commandline/pargs.h"
 #include "gromacs/commandline/viewit.h"
@@ -75,654 +68,959 @@
 #include "gromacs/utility/gmxomp.h"
 #include "gromacs/utility/smalloc.h"
 
+// Debug mode toggle
 #define DEBUG3D
+
+// Wrapper for debug mode-only execution (eg logging)
+#ifdef DEBUG3D
+    #define DEBUGLOG(x) x
+#else
+    #define DEBUGLOG(x)
+#endif
+
+constexpr double PI = 3.141592653589793;
+constexpr double PI2 = 2.0 * 3.141592653589793;
 
 template <typename T>
 using Vec2 = std::array<T, 2>;
 template <typename T>
 using Vec3 = std::array<T, DIM>;
-using Normal = Vec3<double>;
-using Point = Vec3<double>;
-using UVec = Vec3<size_t>;
-using VecIndices = std::vector<size_t>;
 
-struct SphericalCap {
-    SphericalCap(const real a, // base radius
-                 const real h, // height above base
-                 const real R, // sphere radius
-                 const Vec3<real> center_input)
-    :base_radius { a },
-     height { h },
-     sphere_radius { R },
-     bottom { center_input[ZZ] + R - h },
-     center { center_input } {}
+using RVec2 = Vec2<double>;
+using RVec3 = Vec3<double>;
+using Shape = Vec2<size_t>;
 
-    real base_radius,
-         height,
-         sphere_radius,
-         bottom; // z position of the cap bottom in system coordinates
-    Vec3<real> center;
+using Indices = std::vector<size_t>;
+
+enum class DensityType {
+    Mass,
+    Number
 };
 
-struct FacetInfo {
-    Normal normal;
-    std::vector<Point> vertex_points;
-    double area;
+enum class Dimensionality {
+    Three,
+    Two
 };
 
-struct XLim {
-    XLim (void)
-    :bMin { false },
-     bMax { false },
-     min { -1 },
-     max { -1 } {}
-
-    bool bMin, bMax;
-    real min, max;
+struct DensMapBin {
+    // Total mass in bin
+    double mass;
+    // Indices of atoms inside bin
+    Indices indices;
 };
-
-static real get_x_in_box(real x, const real box)
-{
-    while (x >= box)
-    {
-        x -= box;
-    }
-
-    while (x < 0.0)
-    {
-        x += box;
-    }
-
-    return x;
-}
-
-static VecIndices cut_system(const rvec       *x,
-                             const VecIndices &all_indices,
-                             const Vec3<XLim> &xlims)
-{
-    VecIndices indices;
-    indices.reserve(all_indices.size());
-
-    for (const auto i : all_indices)
-    {
-        const auto x0 = x[i];
-
-        bool keep = true;
-
-        for (size_t e = 0; e < DIM; ++e)
-        {
-            if (!((!xlims[e].bMin || (x0[e] >= xlims[e].min))
-                && (!xlims[e].bMax || (x0[e] <= xlims[e].max))))
-            {
-                keep = false;
-            }
-        }
-
-        if (keep)
-        {
-            indices.push_back(i);
-        }
-    }
-
-    return indices;
-}
-
-static VecIndices hit_and_count(const rvec       *x,
-                                const VecIndices &all_indices,
-                                const matrix      box,
-                                const real        bin_size,
-                                const UVec       &min_counts)
-{
-    VecIndices indices {all_indices};
-
-    for (size_t e = 0; e < DIM; ++e)
-    {
-        const auto nbins = static_cast<size_t>(ceil(box[e][e] / bin_size));
-        std::vector<size_t> counts (nbins, 0);
-
-        // Assert that if we are limiting the coordinates in this direction,
-        // that it is within the set limit
-        // if (xlims[e].bMin || xlims[e].bMax)
-        // {
-        //     const auto xmax = xlims[e].bMax ? xlims[e].max : box[e][e];
-        //
-        //     for (const auto i : indices)
-        //     {
-        //         const auto x0 = get_x_in_box(x[i][e], box[e][e]);
-        //
-        //         if ((x0 >= xlims[e].min) && (x0 <= xmax))
-        //         {
-        //             const auto bin = static_cast<size_t>(
-        //                 floor(x0 / box[e][e] * static_cast<real>(nbins)));
-        //             ++counts[bin];
-        //         }
-        //     }
-        // }
-        // else
-        {
-            for (const auto i : indices)
-            {
-                const auto x0 = get_x_in_box(x[i][e], box[e][e]);
-
-                const auto bin = static_cast<size_t>(
-                    floor(x0 / box[e][e] * static_cast<real>(nbins)));
-                ++counts[bin];
-            }
-        }
-
-        // Select the range of indices to keep by looking for the largest
-        // connected set of filled bins in this direction
-        size_t ibegin_best = 0, ibegin_cur = 0,
-               nmax = 0, ncur = 0;
-        bool in_connected = false;
-
-        for (size_t i = 0; i < counts.size(); ++i)
-        {
-            if (counts.at(i) >= min_counts[e])
-            {
-                // Found a new section: initialize measurements
-                if (!in_connected)
-                {
-                    in_connected = true;
-                    ibegin_cur = i;
-                    ncur = 1;
-                }
-                // Found the next connected cell: increase counter for section
-                else
-                {
-                    ++ncur;
-                }
-            }
-            else
-            {
-                // Found the end of the current section: check and update max
-                if (in_connected)
-                {
-                    in_connected = false;
-                    if (ncur > nmax)
-                    {
-                        nmax = ncur;
-                        ibegin_best = ibegin_cur;
-                    }
-                }
-            }
-        }
-
-        GMX_RELEASE_ASSERT(nmax > 0, "could not detect droplet");
-
-        const size_t imin = ibegin_best,
-                     imax = ibegin_best + nmax;
-        const auto xmin = bin_size * static_cast<real>(imin);
-        const auto xmax = bin_size * static_cast<real>(imax);
-
-        VecIndices keep;
-        keep.reserve(indices.size());
-
-        for (const auto i : indices)
-        {
-            const auto x1 = get_x_in_box(x[i][e], box[e][e]);
-
-            if ((x1 >= xmin) && (x1 < xmax))
-            {
-                keep.push_back(i);
-            }
-        }
-
-        indices = keep;
-    }
-
-    return indices;
-}
-
-static SphericalCap fit_spherical_cap(const rvec       *x,
-                                      const VecIndices &indices,
-                                      const bool       &is_spheroid)
-{
-    auto it = indices.cbegin();
-    auto xmin = x[*it][XX], xmax = x[*it][XX],
-         ymin = x[*it][YY], ymax = x[*it][YY],
-         zmin = x[*it][ZZ], zmax = x[*it][ZZ];
-
-    for (++it; it != indices.cend(); ++it)
-    {
-        if (x[*it][XX] < xmin)
-        {
-            xmin = x[*it][XX];
-        }
-        if (x[*it][XX] > xmax)
-        {
-            xmax = x[*it][XX];
-        }
-        if (x[*it][YY] < ymin)
-        {
-            ymin = x[*it][YY];
-        }
-        if (x[*it][YY] > ymax)
-        {
-            ymax = x[*it][YY];
-        }
-        if (x[*it][ZZ] < zmin)
-        {
-            zmin = x[*it][ZZ];
-        }
-        if (x[*it][ZZ] > zmax)
-        {
-            zmax = x[*it][ZZ];
-        }
-    }
-
-#ifdef DEBUG3D
-    std::cerr 
-        << "xmin: " << xmin << ", xmax: " << xmax << '\n'
-        << "ymin: " << ymin << ", ymax: " << ymax << '\n'
-        << "zmin: " << zmin << ", zmax: " << zmax << '\n';
-#endif
-
-    // Calculate the (halved) maximum extent of the droplet, use the max along x and y.
-    const real dx_max_half = std::max(xmax - xmin, ymax - ymin) / 2.0;
-#ifdef DEBUG3D
-    std::cerr << "bottom_extent_radius: " << dx_max_half << '\n';
-#endif
-
-    // The height of the spherical cap.
-    const real h = zmax - zmin;
-
-    real a, // spherical cap base radius 
-         r; // spherical cap radius
-
-    if (is_spheroid)
-    {
-        /*******************************
-        * DROPLET IS (MOSTLY) SPHEROID *
-        ********************************/
-
-        // If the contact angle is larger than 90 degrees, the droplet extent
-        // along x or y represents the (double) radius r of a spherical cap. Meanwhile,
-        // if the contact angle is smaller it represents the (double) base radius a.
-        //
-        // The former condition corresponds to the height h >= r, and the latter to h < r.
-        // Thus to get the base radius a of our spherical cap-fitted droplet we check 
-        // which of these holds true and read off or calculate a and r.
-
-
-        // First check as a safe guard if the values make sense: 
-        // h should not be larger than 2 * r!
-        if (h > 2.0 * dx_max_half)
-        {
-            r = h / 2.0;
-            a = sqrt(h * (2 * r - h));
-
-            gmx_warning(
-                "When fitting a spherical cap, the height h = %f > 2 * r = %f, "
-                "which is not valid for a cap. Assuming that h = 2 * r.", h, 2.0 * r
-                );
-        }
-        // Contact angle > 90
-        else if (h > dx_max_half)
-        {
-#ifdef DEBUG3D
-        std::cerr << "theta > 90 deg.\n"; 
-#endif
-            r = dx_max_half;
-            a = sqrt(h * (2 * r - h));
-        }
-        // Contact angle < 90
-        else 
-        {
-#ifdef DEBUG3D
-        std::cerr << "theta < 90 deg.\n"; 
-#endif
-            a = dx_max_half;
-            r = (a * a + h * h) / (2.0 * h);
-        }
-    }
-    else
-    {
-#ifdef DEBUG3D
-        std::cerr << "droplet is non-spheroid, fitting bottom edges as spherical cap base.\n"; 
-#endif
-
-        a = dx_max_half;
-        r = (a * a + h * h) / (2.0 * h);
-
-    }
-
-    const real x0 = (xmax + xmin) / 2.0;
-    const real y0 = (ymax + ymin) / 2.0;
-    const real z0 = zmax - r;
-    const Vec3<real> center {x0, y0, z0};
-
-#ifdef DEBUG3D
-    std::cerr 
-        << "a: " << a << '\n'
-        << "h: " << h << '\n'
-        << "R: " << r << '\n'
-        << "center: " << x0 << ' ' << y0 << ' ' << z0 << '\n';
-#endif
-
-    return SphericalCap(a, h, r, center);
-}
-
-static VecIndices fine_tuning(const rvec         *x,
-                              const VecIndices   &indices,
-                              const SphericalCap &cap,
-                              const real          boundary_width,
-                              const real          dr,
-                              const size_t        num)
-{
-    const auto& R = cap.sphere_radius;
-
-    const real Rmax = R + boundary_width;
-    const real Rmin = std::max(R - boundary_width, static_cast<real>(0.0));
-    const real R2_max = Rmax * Rmax;
-    const real R2_min = Rmin * Rmin;
-
-    // Include all atoms that can be reached by the boundary layer
-    // when looping through it: its search space
-    const real Rmin_search_space = std::max(Rmin - dr, static_cast<real>(0.0));
-    const real Rmax_search_space = Rmax + dr;
-    const real R2_min_search_space = Rmin_search_space * Rmin_search_space;
-    const real R2_max_search_space = Rmax_search_space * Rmax_search_space;
-
-    const real dr2 = dr * dr;
-
-    VecIndices droplet, boundary, boundary_neighbour_space;
-
-    droplet.reserve(indices.size());
-    boundary.reserve(droplet.size());
-    boundary_neighbour_space.reserve(boundary.size());
-
-    for (const auto& i : indices)
-    {
-        const real d2 = distance2(x[i], cap.center.data());
-
-        if (d2 <= R2_min)
-        {
-            droplet.push_back(i);
-
-            if (d2 >= R2_min_search_space)
-            {
-                boundary_neighbour_space.push_back(i);
-            }
-        }
-        else if (d2 <= R2_max)
-        {
-            boundary.push_back(i);
-            boundary_neighbour_space.push_back(i);
-        }
-        else if (d2 <= R2_max_search_space)
-        {
-            boundary_neighbour_space.push_back(i);
-        }
-    }
-
-    // NOTE: This is O(N^2). Can it be improved, preferably without
-    // doing domain decompositioning?
-#pragma omp parallel for
-    for (size_t i = 0; i < boundary.size(); ++i)
-    {
-        size_t count = num;
-        const auto n = boundary.at(i);
-        const auto x0 = x[n];
-
-        for (const auto& j : boundary_neighbour_space)
-        {
-            const real d2 = distance2(x0, x[j]);
-
-            if (d2 <= dr2)
-            {
-                --count;
-
-                if (count == 0)
-                {
-// Ensure that only one thread is pushing to the vector at any point
-#pragma omp critical
-                    droplet.push_back(n);
-                    break;
-                }
-            }
-        }
-    }
-
-    return droplet;
-}
 
 struct DensMap {
-    Vec3<double> bin_size;
-    Vec2<double> origin,
-                 droplet_center;
-    Vec2<uint64_t> shape;
-    std::vector<double> densmap;
+    RVec3 bin_size;
+    Shape shape;
+    std::vector<DensMapBin> bins;
 };
 
-static DensMap get_densmap(const rvec         *xs,
-                           const VecIndices   &indices,
-                           const SphericalCap &spherical_cap,
-                           const t_topology   *top)
+struct GraphXY {
+    std::vector<double> x, y;
+};
+
+/*********************
+ * Density Map Tools *
+ *********************/
+
+static size_t get_1d_index(const size_t ix, const size_t iy, const Shape &shape)
 {
-    const auto x0 = spherical_cap.center[XX];
-    const auto y0 = spherical_cap.center[YY];
-    const auto a = spherical_cap.base_radius;
+    return static_cast<size_t>((iy * shape[XX]) + ix);
+}
 
-    // Include indices in a small set around the center point, using a buffer
-    // to include some atoms which fall outside of the base radius by a bit.
-    const auto buffer = a + 3.0;
-    const auto xmin = x0 - buffer;
-    const auto xmax = x0 + buffer;
-    const auto ymin = y0 - buffer;
-    const auto ymax = y0 + buffer;
+static std::pair<size_t, size_t> get_2d_indices(const size_t i, const DensMap &densmap)
+{
+    const auto ix = i % densmap.shape[XX];
+    const auto iy = static_cast<size_t>(
+        floor(static_cast<double>(i) / static_cast<double>(densmap.shape[XX]))
+    );
 
-    // Include only indices in a thin slice from the minimum z point
-    constexpr double dz = 0.75;
-    const auto zmin = spherical_cap.center[ZZ] 
-        + spherical_cap.sphere_radius 
-        - spherical_cap.height;
-    const auto zmax = zmin + dz;
+    return std::pair<size_t, size_t>{ix, iy};
+}
 
-    constexpr double bin_size = 0.1;
-    const auto dx = xmax - xmin;
-    const auto dy = ymax - ymin;
+static std::pair<size_t, size_t> get_2d_indices_from_pos(const real   x, 
+                                                         const real   y,
+                                                         const RVec3 &bin_size)
+{
+    return std::pair<size_t, size_t> { 
+        static_cast<uint64_t>(floor(x / bin_size[XX])),
+        static_cast<uint64_t>(floor(y / bin_size[YY]))
+    };
+}
 
-    const auto nx = static_cast<uint64_t>(ceil(dx / bin_size));
-    const auto ny = static_cast<uint64_t>(ceil(dy / bin_size));
+static double get_1d_position(const size_t i, const double bin_size)
+{
+    return (static_cast<double>(i) + 0.5) * bin_size;
+}
 
-    const Vec2<double> origin { x0 - (0.5 * dx), y0 - (0.5 * dy) };
-    const Vec2<double> center { x0, y0 };
-    const Vec2<uint64_t> shape { nx, ny };
+static std::pair<double, double> get_2d_position(const size_t   ix, 
+                                                 const size_t   iy,
+                                                 const DensMap &densmap)
+{
+    return std::pair<double, double> {
+        get_1d_position(ix, densmap.bin_size[XX]),
+        get_1d_position(iy, densmap.bin_size[YY])
+    };
+}
 
-    std::vector<double> densmap(nx * ny, 0.0);
 
-    for (const auto i : indices)
+/****************************
+ * Density Map Construction *
+ ****************************/
+
+static DensMap get_densmap(const rvec        *xs,
+                           const real         bin_size,
+                           const real         z0,
+                           const RVec3       &box_size,
+                           const Indices     &indices,
+                           const DensityType  type,
+                           const t_topology  *top)
+{
+    constexpr double dz = 0.5;
+    const double z1 = z0 + dz;
+
+    const auto bin_sizes = RVec3 { bin_size, bin_size, dz };
+
+    const auto nx = static_cast<uint64_t>(ceil(box_size[XX] / bin_size));
+    const auto ny = static_cast<uint64_t>(ceil(box_size[YY] / bin_size));
+    const auto shape = Shape {nx, ny};
+
+    std::vector<DensMapBin> bins(nx * ny, DensMapBin {0.0, Indices()});
+
+    size_t ix, iy;
+
+    for (const auto i : indices) 
     {
         const auto z = xs[i][ZZ];
 
-        if ((z >= zmin) && (z < zmax))
+        if ((z >= z0) && (z <= z1))
         {
             const auto x = xs[i][XX];
             const auto y = xs[i][YY];
-            const auto mass = top->atoms.atom[i].m;
 
-            if ((x >= xmin) && (x < xmax) && (y >= ymin) && (y < ymax))
+            std::tie(ix, iy) = get_2d_indices_from_pos(x, y, bin_sizes);
+            const auto index = get_1d_index(ix, iy, shape);
+
+            switch (type)
             {
-                const auto ix = static_cast<uint64_t>(floor((x - xmin) / bin_size));
-                const auto iy = static_cast<uint64_t>(floor((y - ymin) / bin_size));
-                const auto index = static_cast<size_t>((iy * nx) + ix);
+                case DensityType::Mass:
+                    {
+                        const auto mass = top->atoms.atom[i].m;
+                        bins[index].mass += mass;
+                    }
+                    break;
 
-                densmap.at(index) += mass;
+                case DensityType::Number:
+                    bins[index].mass += 1.0;
+                    break;
             }
+
+            bins[index].indices.push_back(i);
         }
     }
 
     return DensMap {
-        {bin_size, bin_size, dz},
-        origin,
-        center,
+        bin_sizes,
         shape,
-        densmap
+        bins
     };
 }
 
 // In order, write the density map to an input file:
+// (The data format has been reused from `gmx_3d_analysis` which also 
+// stores some data for a fitted spherical cap, these are blank here)
 // 1. bin_size (3x double)
-// 2. origin (2x double)
+// 2. origin (2x double) (*blank*: always (0.0, 0.0))
 // 3. shape (2x uint64)
-// 4. center of spherical cap (2x double)
+// 4. center of spherical cap (2x double) (*blank*, always (0.0, 0.0))
 // 5. simulation time (double)
 // 6. data (NX * NY double)
 static void write_densmap(const std::string &fnout,
-                          const DensMap densmap,
-                          const double t)
+                          const DensMap     &densmap,
+                          const double       t)
 {
     auto fp = gmx_ffopen(fnout.data(), "wb");
 
+    const auto blank = RVec2 { 0.0, 0.0 };
+
     fwrite(densmap.bin_size.data(), sizeof(double), 3, fp);
-    fwrite(densmap.origin.data(), sizeof(double), 2, fp);
+    fwrite(blank.data(), sizeof(double), 2, fp);
     fwrite(densmap.shape.data(), sizeof(uint64_t), 2, fp);
-    fwrite(densmap.droplet_center.data(), sizeof(double), 2, fp);
+    fwrite(blank.data(), sizeof(double), 2, fp);
     fwrite(&t, sizeof(double), 1, fp);
 
-    const auto num = static_cast<size_t>(densmap.shape[XX] * densmap.shape[YY]);
-    fwrite(densmap.densmap.data(), sizeof(double), num, fp);
+    for (const auto& bin : densmap.bins)
+    {
+        fwrite(&bin.mass, sizeof(double), 1, fp);
+    }
 
     gmx_ffclose(fp);
 }
 
-static std::vector<FacetInfo> get_convex_hull(const rvec       *x,
-                                              const VecIndices &indices)
+static Indices get_indices_pbc(const size_t i, 
+                               const size_t nsmooth, 
+                               const size_t nx)
 {
+    const auto imin = static_cast<int>(i) - static_cast<int>(nsmooth);
+    const auto imax = static_cast<int>(i + nsmooth);
 
-    std::vector<coordT> points;
-    points.reserve(DIM * indices.size());
+    Indices indices;
 
-    for (const auto i : indices)
+    for (int i = imin; i <= imax; ++i)
     {
-        for (size_t e = 0; e < DIM; ++e)
+        auto j = i;
+
+        while (j < 0)
         {
-            points.push_back(static_cast<coordT>(x[i][e]));
-        }
-    }
-
-    orgQhull::Qhull convex_hull (
-        "",
-        static_cast<int>(DIM),
-        static_cast<int>(indices.size()),
-        points.data(),
-        "Qt G"
-    );
-    // convex_hull.outputQhull();
-
-    std::vector<FacetInfo> facets;
-
-    for (auto& face : convex_hull.facetList())
-    {
-        const auto area = face.facetArea();
-        const auto n = face.hyperplane().coordinates();
-        const auto normal = Normal {
-            static_cast<double>(n[XX]),
-            static_cast<double>(n[YY]),
-            static_cast<double>(n[ZZ])
-        };
-
-        std::vector<Point> points;
-        for (const auto& v : face.vertices())
-        {
-            points.push_back(Point {
-                v.point().coordinates()[XX],
-                v.point().coordinates()[YY],
-                v.point().coordinates()[ZZ]
-            });
+            j += nx;
         }
 
-        facets.push_back(FacetInfo {normal, points, area});
+        while (static_cast<size_t>(j) >= nx)
+        {
+            j -= nx;
+        }
+
+        indices.push_back(j);
     }
 
-    return facets;
+    return indices;
 }
 
-// For every facet, calculate the contact angle from its normal.
-// If bZmax is true, use only facets which have any vertex point
-// below zmax (in system absolute units).
-static std::vector<real> calc_angle_hist(const std::vector<FacetInfo> &facets,
-                                         const size_t                  nangles,
-                                         const real                    amin,
-                                         const real                    amax,
-                                         const real                    da,
-                                         const bool                    bZmax,
-                                         const real                    zmax)
+static DensMap smooth_densmap(const DensMap &densmap, const uint64_t nsmooth)
 {
-    std::vector<real> hist (nangles, 0.0);
+    std::vector<DensMapBin> bins(densmap.bins.size(), {0.0, Indices()});
 
-    for (const auto& face : facets)
+    size_t from_ix, from_iy;
+
+    for (size_t from_index = 0; from_index < bins.size(); ++from_index)
     {
-        bool include_face = !bZmax;
+        std::tie(from_ix, from_iy) = get_2d_indices(from_index, densmap);
+        const auto ixs = get_indices_pbc(from_ix, nsmooth, densmap.shape[XX]);
+        const auto iys = get_indices_pbc(from_iy, nsmooth, densmap.shape[YY]);
 
-        if (bZmax)
+        for (const auto to_ix : ixs) 
         {
-            for (const auto& p : face.vertex_points)
+            for (const auto to_iy : iys)
             {
-                if (p[ZZ] <= zmax)
+                const auto to_index = get_1d_index(to_ix, to_iy, densmap.shape);
+                bins[to_index].mass += densmap.bins[from_index].mass;
+            }
+        }
+    }
+
+    const uint64_t num_smoothing_bins = std::pow(((2 * nsmooth) + 1), 2);
+
+    for (size_t index = 0; index < bins.size(); ++index)
+    {
+        bins[index].mass /= static_cast<double>(num_smoothing_bins);
+        bins[index].indices = densmap.bins[index].indices;
+    }
+
+    return DensMap {
+        densmap.bin_size,
+        densmap.shape,
+        bins
+    };
+}
+
+static RVec2 calc_com(const DensMap &densmap)
+{
+    double xsum = 0.0, ysum = 0.0, sum = 0.0;
+    size_t ix, iy;
+
+    for (size_t i = 0; i < densmap.bins.size(); ++i)
+    {
+        const auto mass = densmap.bins[i].mass;
+
+        if (mass > 0.0)
+        {
+            std::tie(ix, iy) = get_2d_indices(i, densmap);
+            const auto x = static_cast<double>(ix) * densmap.bin_size[XX];
+            const auto y = static_cast<double>(iy) * densmap.bin_size[YY];
+
+            xsum += x * mass;
+            ysum += y * mass;
+            sum += mass;
+        }
+    }
+
+    xsum /= sum;
+    ysum /= sum;
+
+    return RVec2 { xsum, ysum };
+}
+
+static double get_cutoff(const DensMap &densmap, const double frac)
+{
+    double mavg = 0.0;
+    uint64_t n = 0;
+
+    for (const auto& bin : densmap.bins)
+    {
+        if (bin.mass > 0.0)
+        {
+            mavg += bin.mass;
+            n += 1;
+        }
+    }
+
+    mavg /= static_cast<double>(n);
+
+    return frac * mavg;
+}
+
+static DensMap apply_cutoff(const DensMap &densmap, const double cutoff)
+{
+    std::vector<DensMapBin> bins(densmap.bins.size(), {0.0, Indices()});
+
+    for (size_t i = 0; i < bins.size(); ++i)
+    {
+        if (densmap.bins[i].mass >= cutoff)
+        {
+            bins[i].mass = densmap.bins[i].mass;
+            bins[i].indices = densmap.bins[i].indices;
+        }
+    }
+
+    return DensMap {
+        densmap.bin_size,
+        densmap.shape,
+        bins
+    };
+}
+
+
+/*******************************
+ * Contact Line Identification *
+ *******************************/
+
+static double find_initial_radius(const DensMap &densmap, 
+                                  const RVec2   &center, 
+                                  const double   cutoff)
+{
+    const auto x0 = center[XX];
+    const auto y0 = center[YY];
+
+    size_t ix0, iy0;
+    std::tie(ix0, iy0) = get_2d_indices_from_pos(x0, y0, densmap.bin_size);
+    const auto i0 = get_1d_index(ix0, iy0, densmap.shape);
+
+    size_t ix = ix0,
+           i = i0;
+
+    // Move along x until the first filled cell is found,
+    // then find the edge from that point by moving outwards
+    while ((densmap.bins[i].mass < cutoff) && (ix + 1 < densmap.shape[XX]))
+    {
+        ++ix;
+        i = get_1d_index(ix, iy0, densmap.shape);
+    }
+
+    while ((densmap.bins[i].mass >= cutoff) && (ix + 1 < densmap.shape[XX]))
+    {
+        ++ix;
+        i = get_1d_index(ix, iy0, densmap.shape);
+    }
+
+    --ix;
+
+    const auto x = get_1d_position(ix, densmap.bin_size[XX]);
+
+    return x - x0;
+}
+
+static Indices get_neighbouring_bins(const size_t  ix, 
+                                     const size_t  iy,
+                                     const size_t  nx,
+                                     const size_t  ny,
+                                     const Shape  &shape)
+{
+    Indices indices;
+    indices.reserve(nx * ny);
+
+    const auto ixmin = (static_cast<int>(ix) - static_cast<int>(nx) >= 0) ? ix - nx : 0;
+    const auto ixmax = ((ix + nx) < shape[XX]) ? ix + nx : shape[XX] - 1;
+    const auto iymin = (static_cast<int>(iy) - static_cast<int>(ny) >= 0) ? iy - ny : 0;
+    const auto iymax = ((iy + ny) < shape[YY]) ? iy + ny : shape[YY] - 1;
+
+    for (size_t i = ixmin; i <= ixmax; ++i)
+    {
+        for (size_t j = iymin; j <= iymax; ++j)
+        {
+            const auto index = get_1d_index(i, j, shape);
+            indices.push_back(index);
+        }
+    }
+    
+    return indices;
+}
+
+static bool check_collision(const double                   x0,
+                            const double                   y0,
+                            const Indices                 &neighbours,
+                            const std::vector<DensMapBin> &bins,
+                            const double                   dr2_min,
+                            const rvec                    *xs)
+{
+
+    for (const auto n : neighbours)
+    {
+        const auto& bin = bins[n];
+
+        for (const auto i : bin.indices)
+        {
+            const auto x1 = xs[i][XX];
+            const auto y1 = xs[i][YY];
+
+            const auto dr2 = std::pow(x1 - x0, 2) + std::pow(y1 - y0, 2);
+
+            if (dr2 < dr2_min)
+            {
+                return true;
+            }
+        }
+    }
+
+    return false;
+}
+
+static Indices get_collisions(const double                   x0,
+                              const double                   y0,
+                              const Indices                 &neighbours,
+                              const std::vector<DensMapBin> &bins,
+                              const double                   dr2_min,
+                              const rvec                    *xs)
+{
+    Indices indices;
+
+    for (const auto n : neighbours)
+    {
+        const auto& bin = bins[n];
+
+        for (const auto i : bin.indices)
+        {
+            const auto x1 = xs[i][XX];
+            const auto y1 = xs[i][YY];
+
+            const auto dr2 = std::pow(x1 - x0, 2) + std::pow(y1 - y0, 2);
+
+            if (dr2 < dr2_min)
+            {
+                indices.push_back(i);
+            }
+        }
+    }
+
+    return indices;
+}
+
+static std::pair<Indices, GraphXY> 
+get_boundary_atoms(const rvec    *xs,
+                   const DensMap &densmap, 
+                   const RVec2   &center, 
+                   const double   cutoff_mass_fraction,
+                   const double   ball_radius)
+{
+    constexpr double da_precision = 0.1; // Try to revolve around r in increments of 0.1 nm
+    constexpr double dr_precision = 0.1;
+
+    // The boundary atoms are collected like: 
+    //
+    // 1. A cutoff is used to remove atoms in "empty" (below-cutoff) bins. 
+    //    This takes care of loose atoms in the system.
+    //
+    // 2. The initial radius of the ball is determined by detecting the 
+    //    (outer) contact line position.
+    //
+    // 3. The ball is rolled to find r(theta): atoms which hinder it from 
+    //    moving inwards are collected as the contact line atoms.
+
+    const auto cutoff = get_cutoff(densmap, cutoff_mass_fraction);
+    const auto cutoff_densmap = apply_cutoff(densmap, cutoff);
+
+    const auto r0 = find_initial_radius(cutoff_densmap, center, cutoff);
+    const auto x0 = center[XX];
+    const auto y0 = center[YY];
+
+    // We limit the search space to bins within the ball radius from 
+    // the current bin. These are how many extra bins we need to check
+    // in each direction.
+    const auto nx = static_cast<size_t>(ceil(ball_radius / densmap.bin_size[XX]));
+    const auto ny = static_cast<size_t>(ceil(ball_radius / densmap.bin_size[YY]));
+
+    double r = r0,
+           angle = 0.0,
+           dr2_min = std::pow(ball_radius, 2);
+
+    size_t ix, iy,
+           ix_prev, iy_prev;
+
+    const auto xinit = x0 + r * cos(angle);
+    const auto yinit = y0 + r * sin(angle);
+    std::tie(ix_prev, iy_prev) = get_2d_indices_from_pos(xinit, yinit, densmap.bin_size);
+
+    auto neighbours = get_neighbouring_bins(ix_prev, iy_prev, nx, ny, densmap.shape);
+
+    // Control over whether the radius is increasing or decreasing until a collision
+    bool update_angle = true,
+         increase_radius = true;
+
+    std::set<size_t> boundary_indices;
+    std::vector<double> avals, rvals;
+
+    while (angle < 2.0 * PI)
+    {
+        auto x = x0 + r * cos(angle);
+        auto y = y0 + r * sin(angle);
+        std::tie(ix, iy) = get_2d_indices_from_pos(x, y, densmap.bin_size);
+
+        if ((ix != ix_prev) || (iy != iy_prev))
+        {
+            neighbours = get_neighbouring_bins(ix, iy, nx, ny, densmap.shape);
+        }
+
+        const auto collision = check_collision(
+            x, y, neighbours, cutoff_densmap.bins, dr2_min, xs
+        );
+
+        if (update_angle)
+        {
+            increase_radius = collision;
+            update_angle = false;
+        }
+
+        if (increase_radius)
+        {
+            if (!collision)
+            {
+                update_angle = true;
+
+                // The previous radius was the hit since we are increasing
+                r -= dr_precision;
+                x = x0 + r * cos(angle);
+                y = y0 + r * sin(angle);
+            }
+            else 
+            {
+                r += dr_precision;
+            }
+        }
+        else 
+        {
+            if (collision)
+            {
+                update_angle = true;
+            }
+            else 
+            {
+                r -= dr_precision;
+            }
+        }
+
+        if (update_angle)
+        {
+            avals.push_back(angle);
+            rvals.push_back(r);
+
+            const auto colliding_indices = 
+                get_collisions(x, y, neighbours, cutoff_densmap.bins, dr2_min, xs);
+            for (const auto i : colliding_indices)
+            {
+                boundary_indices.insert(i);
+            }
+
+            const double da = (r > 0.0) ? da_precision / r : 0.01;
+            angle += da;
+        }
+
+        ix_prev = ix;
+        iy_prev = iy;
+    }
+
+    Indices boundary(boundary_indices.cbegin(), boundary_indices.cend());
+    std::sort(boundary.begin(), boundary.end());
+
+    const GraphXY boundary_line { avals, rvals };
+
+    return std::pair<Indices, GraphXY> {
+        boundary,
+        boundary_line
+    };
+}
+
+static std::pair<Indices, GraphXY> 
+get_boundary_atoms_2d(const rvec    *xs,
+                      const DensMap &densmap, 
+                      const RVec2   &center, 
+                      const RVec3   &box_size,
+                      const double   cutoff_mass_fraction,
+                      const double   ball_radius)
+{
+    constexpr double dx_precision = 0.05;
+    constexpr double dy_precision = 0.05;
+
+    // The boundary atoms are collected like: 
+    //
+    // 1. A cutoff is used to remove atoms in "empty" (below-cutoff) bins. 
+    //    This takes care of loose atoms in the system.
+    //
+    // 2. The initial x position of the ball is determined by detecting the 
+    //    (outer) contact line position.
+    //
+    // 3. The ball is rolled to find x(y): atoms which hinder it from 
+    //    moving inwards are collected as the contact line atoms.
+
+    const auto cutoff = get_cutoff(densmap, cutoff_mass_fraction);
+    const auto cutoff_densmap = apply_cutoff(densmap, cutoff);
+
+    const double x0 = find_initial_radius(cutoff_densmap, center, cutoff);
+    const auto y0 = 0.0;
+
+    // We limit the search space to bins within the ball radius from 
+    // the current bin. These are how many extra bins we need to check
+    // in each direction.
+    const auto nx = static_cast<size_t>(ceil(ball_radius / densmap.bin_size[XX]));
+    const auto ny = static_cast<size_t>(ceil(ball_radius / densmap.bin_size[YY]));
+
+    double x = x0 + center[XX],
+           y = y0,
+           dr2_min = std::pow(ball_radius, 2);
+
+    size_t ix, iy,
+           ix_prev, iy_prev;
+
+    std::tie(ix_prev, iy_prev) = get_2d_indices_from_pos(x, y, densmap.bin_size);
+    auto neighbours = get_neighbouring_bins(ix_prev, iy_prev, nx, ny, densmap.shape);
+
+    // // Control over whether the position is increasing or decreasing until a collision
+    bool update_y = true,
+         increase_x = true;
+
+    std::set<size_t> boundary_indices;
+    std::vector<double> xvals, yvals;
+
+    while (y <= box_size[YY])
+    {
+        std::tie(ix, iy) = get_2d_indices_from_pos(x, y, densmap.bin_size);
+
+        if ((ix != ix_prev) || (iy != iy_prev))
+        {
+            neighbours = get_neighbouring_bins(ix, iy, nx, ny, densmap.shape);
+        }
+
+        const auto collision = check_collision(
+            x, y, neighbours, cutoff_densmap.bins, dr2_min, xs
+        );
+
+        if (update_y)
+        {
+            increase_x = collision;
+            update_y = false;
+        }
+
+        if (increase_x)
+        {
+            if (!collision)
+            {
+                update_y = true;
+
+                // The previous x was the hit since we are increasing
+                x -= dx_precision;
+            }
+            else 
+            {
+                x += dx_precision;
+            }
+        }
+        else 
+        {
+            if (collision)
+            {
+                update_y = true;
+            }
+            else 
+            {
+                x -= dx_precision;
+            }
+        }
+
+        if (update_y)
+        {
+            xvals.push_back(x);
+            yvals.push_back(y);
+
+            const auto colliding_indices = 
+                get_collisions(x, y, neighbours, cutoff_densmap.bins, dr2_min, xs);
+            for (const auto i : colliding_indices)
+            {
+                boundary_indices.insert(i);
+            }
+
+            y += dy_precision;
+        }
+
+        ix_prev = ix;
+        iy_prev = iy;
+    }
+
+    Indices boundary(boundary_indices.cbegin(), boundary_indices.cend());
+    std::sort(boundary.begin(), boundary.end());
+
+    const GraphXY boundary_line { xvals, yvals };
+
+    return std::pair<Indices, GraphXY> {
+        boundary,
+        boundary_line
+    };
+}
+
+
+/******************
+ * Analysis Tools *
+ ******************/
+
+struct BoundaryAtoms {
+    Indices indices;
+    std::vector<RVec3> positions;
+    double radius, time;
+};
+
+// Assumes that the boundary indices in all sets are sorted
+static GraphXY calc_autocorrelation(const std::vector<BoundaryAtoms> boundary)
+{
+    std::vector<double> times, 
+                        values(boundary.size(), 0.0);
+    double t0 = 0.0;
+
+    if (!boundary.empty())
+    {
+        t0 = boundary[0].time;
+    }
+
+    for (size_t i = 0; i < boundary.size(); ++i)
+    {
+        const auto from = boundary[i].indices;
+        times.push_back(boundary[i].time - t0);
+
+        for (size_t j = i + 1; j < boundary.size(); ++j)
+        {
+            const auto lag = j - i;
+            const auto to = boundary[j].indices;
+
+            Indices intersection;
+            std::set_intersection(
+                from.cbegin(), from.cend(),
+                to.cbegin(), to.cend(),
+                std::back_inserter(intersection)
+            );
+
+            const auto ac = 
+                static_cast<double>(intersection.size()) / static_cast<double>(from.size());
+            
+            values[lag] += ac;
+        }
+    }
+
+    // Take the mean for all correlations
+    for (size_t i = 1; i < values.size(); ++i)
+    {
+        values[i] /= static_cast<double>(values.size() - i);
+    }
+
+    values[0] = 1.0;
+
+    return GraphXY {
+        times,
+        values
+    };
+}
+
+static double calc_mean_radius(const std::vector<RVec3> &positions, 
+                               const RVec2              &center,
+                               const Dimensionality     &dim)
+{
+    double sum = 0.0;
+
+    const auto x0 = center[XX];
+    const auto y0 = center[YY];
+
+    for (const auto pos : positions)
+    {
+        const auto x = pos[XX];
+        const auto y = pos[YY];
+
+        switch (dim)
+        {
+            case Dimensionality::Three:
+                sum += sqrt(std::pow(x - x0, 2) + std::pow(y - y0, 2));
+                break;
+            case Dimensionality::Two:
+                sum += x - x0;
+                break;
+        }
+    }
+
+    return sum / static_cast<double>(positions.size());
+}
+
+static GraphXY 
+calc_advancement_intersections(const std::vector<BoundaryAtoms> &boundary,
+                               const double                      dr_min)
+{
+    std::vector<double> adv_times,
+                        fractions;
+
+    if (boundary.size() > 0)
+    {
+        // For each boundary, get the first next boundary which advances 
+        // the line by the input amount.
+        for (size_t i = 0; i < boundary.size(); ++i)
+        {
+            const auto& previous = boundary[i];
+
+            for (size_t j = i; j < boundary.size(); ++j)
+            {
+                const auto& current = boundary[j];
+                const auto dr = current.radius - previous.radius;   
+
+                if (dr >= dr_min)
                 {
-                    include_face = true;
+                    const auto dt = current.time - previous.time;
+
+                    Indices intersection;
+                    std::set_intersection(
+                        previous.indices.cbegin(), previous.indices.cend(),
+                        current.indices.cbegin(), current.indices.cend(),
+                        std::back_inserter(intersection)
+                    );
+
+                    const auto frac = static_cast<double>(intersection.size()) 
+                        / static_cast<double>(previous.indices.size());
+
+                    adv_times.push_back(dt);
+                    fractions.push_back(frac);
+
                     break;
                 }
             }
         }
-
-        if (include_face)
-        {
-            const auto& n = face.normal;
-            const auto angle = RAD2DEG * acos(n[ZZ] / dnorm(n.data()));
-
-            if ((angle >= amin) && (angle <= amax))
-            {
-                // Use min to make the range inclusive
-                const auto i = std::min(
-                    static_cast<size_t>((angle - amin) / da),
-                    hist.size()
-                );
-
-                hist.at(i) += face.area;
-            }
-        }
     }
 
-    return hist;
+    return GraphXY { 
+        adv_times,
+        fractions
+    };
 }
 
-static void add_angles_to_hist(std::vector<real>       &final_hist,
-                               const std::vector<real> &current_hist)
+static GraphXY count_contact_line_atoms(const std::vector<BoundaryAtoms> boundary)
 {
-    for (size_t i = 0; i < final_hist.size(); ++i)
+    std::vector<double> times, values;
+    double t0 = 0.0;
+
+    if (!boundary.empty())
     {
-        final_hist.at(i) += current_hist.at(i);
+        t0 = boundary[0].time;
     }
-}
 
-static std::vector<real> hist_rolling_average(const std::vector<real> &hist,
-                                              const size_t             nwin)
-{
-    std::vector<real> result (hist.size(), 0.0);
-
-    for (size_t i = nwin; i < hist.size() - nwin; ++i)
+    for (const auto& b : boundary)
     {
-        // Total window size is 2*n + 1, nwin is in a single direction
-        for (int k = -static_cast<int>(nwin); k <= static_cast<int>(nwin); ++k)
-        {
-            result.at(i) += hist.at(i + k);
-        }
-        result.at(i) /= (2 * nwin + 1);
+        times.push_back(b.time - t0);
+        values.push_back(static_cast<double>(b.indices.size()));
     }
 
-    return result;
+    return GraphXY {
+        times,
+        values
+    };
 }
 
-static double get_most_probable_angle(const std::vector<real> &angles,
-                                      const std::vector<real> &hist)
+static double calc_graph_mean(const GraphXY &graph)
 {
-    const auto it = std::max_element(hist.cbegin(), hist.cend());
-    const auto imax = std::distance(hist.cbegin(), it);
+    double sum = 0.0;
 
-    return angles.at(imax);
+    for (const auto& v : graph.y)
+    {
+        sum += v;
+    }
+
+    return sum / static_cast<double>(graph.y.size());
+}
+
+static double calc_graph_median(const GraphXY &graph)
+{
+    auto values = std::vector<double>(graph.y.cbegin(), graph.y.cend());
+    std::sort(values.begin(), values.end());
+
+    const auto i = static_cast<size_t>(floor(values.size() / 2));
+
+    if (values.size() > 0)
+    {
+        return values[i];
+    }
+    else
+    {
+        return 0.0;
+    }
+}
+
+
+/**********************
+ * Main Functionality *
+ **********************/
+
+static std::vector<RVec3> copy_positions(const rvec *xs, const Indices indices)
+{
+    std::vector<RVec3> positions;
+    positions.reserve(indices.size());
+
+    for (const auto i : indices)
+    {
+        positions.push_back(RVec3 { xs[i][XX], xs[i][YY], xs[i][ZZ] });
+    }
+
+    return positions;
+}
+
+static std::string get_fnbase(const char *fnarg, 
+                              const char *sep,
+                              const int fntype, 
+                              const t_filenm fnm[], 
+                              const int nfnm)
+{
+    const std::string ext { ftp2ext_with_dot(fntype) };
+
+    std::string fnbase { opt2fn(fnarg, nfnm, fnm) };
+    fnbase.resize(fnbase.size() - ext.size());
+
+    return std::string { fnbase + sep };
+}
+
+static std::string get_fnend(const char *pre, const int fntype)
+{
+    return std::string { pre + std::string(ftp2ext_with_dot(fntype)) };
+}
+
+static void write_graph_to_xvg(const GraphXY          &graph,
+                               const char             *fn,
+                               const char             *title,
+                               const char             *xlabel,
+                               const char             *ylabel,
+                               const gmx_output_env_t *oenv)
+{
+    auto fp = xvgropen_type(fn, title, xlabel, ylabel, exvggtXNY, oenv);
+
+    auto xiter = graph.x.cbegin();
+    auto yiter = graph.y.cbegin();
+
+    const auto xend = graph.x.cend();
+    const auto yend = graph.y.cend();
+
+    while ((xiter != xend) && (yiter != yend))
+    {
+        fprintf(fp, "%12g %12g\n", *xiter++, *yiter++);
+    }
+
+    xvgrclose(fp);
 }
 
 int gmx_3d_contactline(int argc, char *argv[])
@@ -740,110 +1038,41 @@ int gmx_3d_contactline(int argc, char *argv[])
         "histogram of probabilities of each angle. The most probable angle",
         "is taken as the contact angle. The substrate is assumed to lie in",
         "the XY plane, ie. with its normal pointing along the Z axis."
-        "[PAR]",
-        "Atoms which make up the droplet in each frame are identified in two",
-        "steps. The first step is binning the system separately along each",
-        "dimension and counting the number of atoms in each bin. The longest",
-        "continuous set of bins with a number of atoms equal to or larger",
-        "than a cutoff is taken as the range inside which the droplet lies.",
-        "This step thus identifies all atoms inside a box, the extent of which",
-        "should tightly encapsulate the droplet. The bin resolution is set",
-        "with [TT]-bin[tt] and the minimum count inside each bin with ",
-        "[TT]-count[tt].",
-        "[PAR]",
-        "The second step is removing all sparse gas atoms from the box.",
-        "A spherical cap is fitted to the box dimensions (the droplet is",
-        "assumed to be placed on a substrate whose normal is along the z",
-        "axis). Using its radius R, all atoms inside the box are classified",
-        "as: 1) Outside of the droplet if their distance r to the cap center",
-        "if r > R + DR, where DR is an input approximate width of the",
-        "interface. 2) Inside the droplet if r < R - DR. 3) In a boundary",
-        "region if within [R - DR, R + DR]. Boundary atoms are finally",
-        "classified as belonging to the droplet if they have some number n",
-        "neighbours within a distance d of them. Otherwise they are removed.",
-        "Doing this to boundary atoms only is done purely for computational",
-        "efficiency: for every atom inside the box it would be an O(N^2)",
-        "operation where N is the number of atoms in each box. As long as the",
-        "droplet is roughly matching a spherical cap this identification will",
-        "work. The boundary width is set using [TT]-dr[tt], the neighbouring",
-        "distance with [TT]-d[tt] and the minimum number of neighbours with",
-        "[TT]-nmin[tt].",
-        "[PAR]",
-        "When calculating the angle from the created convex hull, only facets",
-        "which are at (or at least close to) the contact line should be used.",
-        "By default a simple height cutoff is used. Only facets which have a",
-        "vertex point within height [TT]-hmax[tt] from the convex hull bottom",
-        "will be used. This behavior can be turned off using [TT]-cutz[tt].",
-        "[PAR]",
-        "The angle probability distribution is calculated from the remaining",
-        "facets, weighed by the facet area and output averaged over all",
-        "frames as a histogram to [TT]-od[tt]. The contact angle is saved",
-        "per frame to [TT]-oa[tt], calculated by smoothing the individual",
-        "distribution with a center-average of size (2n + 1) and taking the",
-        "maximum. The window size is set using [TT]-nwin[tt]. Finally, the",
-        "base radius is taken from the fitted spherical cap and saved per time",
-        "to [TT]-or[tt].",
-        "[PAR]",
-        "By default the droplet is treated as being very close to a spherical cap.",
-        "The above detailed algorithm uses this to efficiently detect the contained",
-        "liquid molecules while ignoring those outside of it. However, if the droplet",
-        "is not shaped as a spherical cap this detection will not work as well. For",
-        "example, if the droplet forms a large liquid wedge that struts out from",
-        "a fitted center spherical cap, this complicates the process: these wedge molecules"
-        "have to be included in the contained molecules since the contact angle should",
-        "be calculated from them. The algorithm allows for some adjustment here by searching",
-        "for molecules in the boundary of size [TT]-dr[tt], but this is an expensive search.",
-        "For large droplets and a large boundary width this may be prohibitively expensive.",
-        "[PAR]",
-        "In this case, it may be better to not treat the droplet as a spheroid. The",
-        "[TT]-[no]spheroid[tt] option sets whether or not it will be. By setting this to",
-        "false the detected lowest liquid layer will be treated as the outermost base",
-        "from which the spherical cap extends, instead of having the cap fitted to",
-        "the droplet. This removes the need for a large boundary layer, but molecules",
-        "which are between (for example) a liquid wedge (foot) and the droplet may be",
-        "included as liquid molecules. Use with caution."
     };
-    static real bin_size = 0.05,
-                dr_neighbours = 0.30, boundary_width = 0.50,
-                amin = 0.0, amax = 150.0, da = 1.0,
-                hmax = 2.0;
-    static gmx_bool bZmax = true, bSpheroid = true;
-    static int min_count = 20, min_neighbours = 5, nwin = 2;
-    static rvec counts_dir_rvec = { 20, 20, 20 },
-                rmin = { -1, -1, -1 },
-                rmax = { -1, -1, -1 };
+    static real ball_radius = 0.3,
+                bin_size = 0.25,
+                dr_adv = 0.25,
+                mfrac = 0.5,
+                z0 = 0.0;
+    static int nsmooth = 1;
+    static rvec center { -1, -1, -1 };
+
+    enum DimensionalitySel
+    {
+        eDimSel,
+        eDim3d,
+        eDim2d,
+        eDimN
+    };
+    const char *dim_opt[eDimN + 1] = { nullptr, "3d", "2d", nullptr };
 
     t_pargs pa[] = {
         { "-bin", FALSE, etREAL, {&bin_size},
-          "Grid size for hit-and-count binning (nm)" },
-        { "-count", FALSE, etINT, {&min_count},
-          "Minimum count in (1D) bins to include" },
-        { "-cdir",  FALSE, etRVEC, { &counts_dir_rvec },
-          "Minimum count in (1D) bins per direction" },
-        { "-dr", FALSE, etREAL, {&boundary_width},
-          "Width of boundary identifaction step (nm)" },
-        { "-d", FALSE, etREAL, {&dr_neighbours},
-          "Neighbouring search distance (nm)" },
-        { "-nmin", FALSE, etINT, {&min_neighbours},
-          "Minimum neighbours count" },
-        { "-amin", FALSE, etREAL, {&amin},
-          "Minimum angle to include (deg.)" },
-        { "-amax", FALSE, etREAL, {&amax},
-          "Maximum angle to include (deg.)" },
-        { "-da", FALSE, etREAL, {&da},
-          "Precision in angle binning (deg.)" },
-        { "-cutz", FALSE, etBOOL, {&bZmax},
-          "Include only facets which have a point below the maximum height" },
-        { "-hmax", FALSE, etREAL, {&hmax},
-          "Maximum height above bottom to include vertices from (nm)" },
-        { "-spheroid", FALSE, etBOOL, {&bSpheroid},
-          "Whether or not to treat the droplet as a spheroid" },
-        { "-nwin", FALSE, etINT, {&nwin},
-          "Factor to smooth distribution with" },
-        { "-rmin", FALSE, etRVEC, { &rmin },
-          "Minimum limit of droplet search (-1 disables per axis)" },
-        { "-rmax", FALSE, etRVEC, { &rmax },
-          "Maximum limit of droplet search (-1 disables per axis)" }
+          "Grid size for interface search (nm)" },
+        { "-center", FALSE, etRVEC, {&center},
+          "Center of droplet" },
+        { "-mfrac", FALSE, etREAL, {&mfrac},
+          "Fraction of mean bin mass to use as cutoff" },
+        { "-z", FALSE, etREAL, {&z0},
+          "Position along z of bottom interface (nm)" },
+        { "-dr", FALSE, etREAL, {&dr_adv},
+          "Mean distance for contact line advancement (nm)" },
+        { "-br", FALSE, etREAL, {&ball_radius},
+          "Radius of ball used to roll interface (nm)"},
+        { "-nsmooth", FALSE, etINT, {&nsmooth},
+          "Smoothing window size for density map" },
+        { "-dim", FALSE, etENUM, { &dim_opt }, 
+          "Dimensionality of system" }
     };
 
     t_trxstatus       *status;
@@ -851,82 +1080,57 @@ int gmx_3d_contactline(int argc, char *argv[])
     int                ePBC = -1;
     rvec              *x;
     matrix             box;
-    real               t, zmax = 0.0;
+    real               t;
     char             **grpname;
     int                ngrps, anagrp, *gnx = nullptr, nindex;
     int              **ind = nullptr, *index;
-    UVec               counts_dir { 0, 0, 0 };
     gmx_output_env_t  *oenv;
     t_filenm           fnm[]   = {
         { efTRX, "-f",   nullptr,       ffREAD },
         { efTPS, nullptr,   nullptr,       ffOPTRD },
         { efNDX, nullptr,   nullptr,       ffOPTRD },
-        { efXVG, "-od", "distangles", ffWRITE },
-        { efXVG, "-oa", "angles", ffWRITE },
-        { efXVG, "-or", "radius", ffWRITE },
-        { efDAT, "-dens", "densmap", ffWRITE }
+        { efXVG, "-oa", "autocorrelation", ffWRITE },
+        { efXVG, "-on", "number", ffWRITE },
+        { efXVG, "-oi", "histogram", ffWRITE },
+        { efDAT, "-dens", "densmap", ffWRITE },
+        { efDAT, "-smooth", "smooth_densmap", ffWRITE }
     };
+
 #define NFILE asize(fnm)
-    int                npargs;
 
-    npargs = asize(pa);
-
+    const int npargs = asize(pa);
     if (!parse_common_args(&argc, argv, PCA_CAN_TIME | PCA_CAN_VIEW,
                            NFILE, fnm, npargs, pa, asize(desc), desc, 0, nullptr, &oenv))
     {
         return 0;
     }
 
+    // Use number density if we cannot read a topology which will have the masses
+    DensityType type = DensityType::Number;
     if (ftp2bSet(efTPS, NFILE, fnm) || !ftp2bSet(efNDX, NFILE, fnm))
     {
-        read_tps_conf(ftp2fn(efTPS, NFILE, fnm), &top, &ePBC, &x, nullptr, box,
-                      false);
-    }
+        if (read_tps_conf(ftp2fn(efTPS, NFILE, fnm), &top, &ePBC, &x, nullptr, box, false)) 
+        {
+            type = DensityType::Mass;
+        };
+    } 
 
-    if (opt2parg_bSet("-cdir", npargs, pa))
+    // Parse the dimensionality
+    auto dim_enum = Dimensionality::Three;
+    if (nenum(dim_opt) == eDim2d)
     {
-        for (size_t e = 0; e < DIM; ++e)
-        {
-            counts_dir[e] = static_cast<size_t>(counts_dir_rvec[e]);
-        }
-    }
-    else
-    {
-        for (size_t e = 0; e < DIM; ++e)
-        {
-            counts_dir[e] = min_count;
-        }
+        dim_enum = Dimensionality::Two;
     }
 
-    Vec3<XLim> xlims;
-    for (size_t e = 0; e < DIM; ++e)
-    {
-        if (rmin[e] >= 0.0)
-        {
-            xlims[e].bMin = true;
-            xlims[e].min = rmin[e];
-        }
+    const auto bWriteDensmap = static_cast<bool>(opt2bSet("-dens", NFILE, fnm));
+    const auto bWriteSmooth = static_cast<bool>(opt2bSet("-smooth", NFILE, fnm));
+    const auto fnbase_densmap = get_fnbase("-dens", "_", efDAT, fnm, NFILE);
+    const auto fnbase_smooth = get_fnbase("-smooth", "_", efDAT, fnm, NFILE);
+    const auto fndat_end = get_fnend("ps", efDAT);
 
-        if (rmax[e] >= 0.0)
-        {
-            xlims[e].bMax = true;
-            xlims[e].max = rmax[e];
-        }
-    }
-
-    // Get the base filename for density map output, ie. without the extension.
-    // We need this since we will write a separate file for every output time,
-    // with the time as part of the filename.
-    std::string fndensmap_begin { opt2fn("-dens", NFILE, fnm) };
-    const std::string ext { ftp2ext_with_dot(efDAT) };
-    const auto base_length = fndensmap_begin.size() - ext.size();
-    fndensmap_begin.resize(base_length);
-    const auto output_density_maps = static_cast<bool>(opt2bSet("-dens", NFILE, fnm));
-
-    // Construct the final initial name, including a separator, and the final
-    // string that is appended after the time. 
-    fndensmap_begin.append("_");
-    const std::string fndensmap_end { "ps" + ext };
+    /* Either use an input center or the center of mass */
+    const auto use_com_center = !static_cast<bool>(opt2parg_bSet("-center", npargs, pa));
+    RVec2 r0 {center[XX], center[YY]};
 
     ngrps = 1;
     fprintf(stderr, "\nSelect an analysis group\n");
@@ -937,148 +1141,146 @@ int gmx_3d_contactline(int argc, char *argv[])
     anagrp = ngrps - 1;
     nindex = gnx[anagrp];
     index  = ind[anagrp];
+    const Indices indices(index, index + nindex);
 
+    std::vector<BoundaryAtoms> boundaries_traj;
     read_first_x(oenv, &status, ftp2fn(efTRX, NFILE, fnm), &t, &x, box);
-
-    std::vector<size_t> group_indices;
-    group_indices.reserve(nindex);
-    for (int i = 0; i < nindex; ++i)
-    {
-        group_indices.push_back(index[i]);
-    }
-
-    const auto nangles = static_cast<int>((amax - amin) / da);
-    GMX_RELEASE_ASSERT(
-        nangles > 0, "-amin, -amax and -da are set to produce no angles"
-    );
-
-    const auto da_final = (amax - amin) / static_cast<real>(nangles);
-    std::vector<real> angles;
-
-    real a = amin;
-    for (size_t i = 0; i < static_cast<size_t>(nangles); ++i)
-    {
-        angles.push_back(a);
-        a += da_final;
-    }
-
-    std::vector<real> histogram (nangles, 0.0),
-                      times, angles_per_time, radius_per_time;
-
-    /* Angles and radius per time output */
-    auto fpangles = xvgropen_type(
-        opt2fn("-oa", NFILE, fnm),
-        "Contact angle", "t (ps)", "Angle (deg.)",
-        exvggtNONE, oenv
-    ); 
-    auto fpradius = xvgropen_type(
-        opt2fn("-or", NFILE, fnm),
-        "Base radius", "t (ps)", "r (nm)",
-        exvggtNONE, oenv
-    );
 
     do
     {
-#ifdef DEBUG3D
-        std::cerr << '\n';
-#endif
+        const auto box_size = RVec3 { box[XX][XX], box[YY][YY], box[ZZ][ZZ] };
+        const auto densmap = get_densmap(x, bin_size, z0, box_size, indices, type, &top);
+        const auto smooth = smooth_densmap(densmap, static_cast<uint64_t>(nsmooth));
 
-        const auto lim_indices = cut_system(x, group_indices, xlims);
-        const auto boxed_indices = hit_and_count(
-            x, lim_indices, box,
-            bin_size, counts_dir
-        );
-
-        const auto fitted_cap = fit_spherical_cap(x, boxed_indices, bSpheroid);
-
-        const auto final_indices = fine_tuning(
-            x, boxed_indices, fitted_cap,
-            boundary_width, dr_neighbours, static_cast<size_t>(min_neighbours)
-        );
-
-        char buf[16];
-        snprintf(buf, 16, "%09.3f", t);
-        std::string fnmap_current { fndensmap_begin + buf + fndensmap_end };
-
-        if (output_density_maps) 
+        if (use_com_center) 
         {
-            const auto densmap = get_densmap(x, final_indices, fitted_cap, &top);
+            r0 = calc_com(densmap);
+        }
+
+        if (bWriteDensmap)
+        {
+            char buf[16];
+            snprintf(buf, 16, "%09.3f", t);
+            std::string fnmap_current { fnbase_densmap + buf + fndat_end };
             write_densmap(fnmap_current, densmap, t);
         }
 
-        if (bZmax)
+        if (bWriteSmooth)
         {
-            zmax = fitted_cap.bottom + hmax;
+            char buf[16];
+            snprintf(buf, 16, "%09.3f", t);
+            std::string fnmap_current { fnbase_smooth + buf + fndat_end };
+            write_densmap(fnmap_current, smooth, t);
         }
 
-        const auto facets = get_convex_hull(x, final_indices);
+        Indices boundary_indices;
+        GraphXY boundary_line;
 
-        const auto current_hist = calc_angle_hist(
-            facets, nangles, amin, amax, da,
-            bZmax, zmax
+        switch (dim_enum)
+        {
+            case Dimensionality::Three:
+                std::tie(boundary_indices, boundary_line) = 
+                    get_boundary_atoms(x, smooth, r0, mfrac, ball_radius);
+                break;
+
+            case Dimensionality::Two:
+                std::tie(boundary_indices, boundary_line) = 
+                    get_boundary_atoms_2d(x, smooth, r0, box_size, mfrac, ball_radius);
+                break;
+        }
+
+        DEBUGLOG(
+            std::vector<double> xvals; 
+            std::vector<double> yvals;
+
+            char buf[48];
+            snprintf(buf, 48, "debug_boundary_%05.1fps.xvg", t);
+
+            switch (dim_enum)
+            {
+                case Dimensionality::Three:
+                    for (size_t i = 0; i < boundary_line.x.size(); ++i)
+                    {
+                        const auto a = boundary_line.x[i];
+                        const auto r = boundary_line.y[i];
+
+                        const auto x = r * cos(a);
+                        const auto y = r * sin(a);
+
+                        xvals.push_back(x);
+                        yvals.push_back(y);
+                    }
+
+                    break;
+
+                case Dimensionality::Two:
+                    xvals = std::vector<double>(
+                        boundary_line.x.cbegin(), boundary_line.x.cend()
+                    );
+                    yvals = std::vector<double>(
+                        boundary_line.y.cbegin(), boundary_line.y.cend()
+                    );
+                    break;
+            }
+
+            GraphXY tmp_graph;
+            tmp_graph.x = xvals;
+            tmp_graph.y = yvals;
+
+            write_graph_to_xvg(tmp_graph, buf, "Boundary", "x (nm)", "y (nm)", oenv);
+        )
+
+        // const auto boundary_indices = get_boundary_atoms(x, smooth, r0, mfrac, 0.3);
+        const auto positions = copy_positions(x, boundary_indices);
+        const auto mean_radius = calc_mean_radius(positions, r0, dim_enum);
+        boundaries_traj.push_back(
+            BoundaryAtoms { boundary_indices, positions, mean_radius, t }
         );
-        add_angles_to_hist(histogram, current_hist);
 
-        const auto hist_smooth = hist_rolling_average(current_hist, nwin);
-        const auto best_angle = get_most_probable_angle(angles, hist_smooth);
+        // TODO: Figure out a criteria for when the contact line advances 
+        // and how to determine which atom did it
 
-        times.push_back(t);
-        angles_per_time.push_back(best_angle);
-        radius_per_time.push_back(fitted_cap.base_radius);
+        // DEBUGLOG(
+        //     // Write the boundary as a .gro file for debugging
+        //     char buf[20];
+        //     snprintf(buf, 20, "debug_cl_%05.1f.gro", t);
 
-        fprintf(fpangles, "%12.3g  %12.3g\n", times.back(), angles_per_time.back());
-        fprintf(fpradius, "%12.3g  %12g.3\n", times.back(), radius_per_time.back());
-        fflush(fpangles);
-        fflush(fpradius);
+        //     const std::vector<int> boundary_ints(
+        //         boundary_indices.cbegin(), boundary_indices.cend()
+        //     );
+
+        //     write_sto_conf_indexed(buf, "contact_line",
+        //                            &top.atoms, x, NULL, ePBC, box,
+        //                            boundary_ints.size(),
+        //                            boundary_ints.data());
+        // )
     }
     while (read_next_x(oenv, status, &t, x, box));
     close_trx(status);
 
-    xvgrclose(fpangles);
-    xvgrclose(fpradius);
+    const auto autocorrelation = calc_autocorrelation(boundaries_traj);
+    write_graph_to_xvg(autocorrelation, opt2fn("-oa", NFILE, fnm), 
+                       "Autocorrelation", "t (ps)", "Autocorrelation", 
+                       oenv);
 
-    const auto total_weight = std::accumulate(
-        histogram.cbegin(), histogram.cend(), 0.0
-    );
+    const auto adv_fractions = calc_advancement_intersections(boundaries_traj, dr_adv);
+    write_graph_to_xvg(adv_fractions, opt2fn("-oi", NFILE, fnm), 
+                       "Intersection fraction", "t (ps)", "Fraction", 
+                       oenv);
+    
+    const auto fraction_mean = calc_graph_mean(adv_fractions);
+    const auto fraction_median = calc_graph_median(adv_fractions);
 
-    real pmax = 0.0;
-    for (auto& p : histogram)
-    {
-        p *= 100.0 / total_weight;
+    std::cout 
+        << "Advancing jump fraction mean:   " << fraction_mean << '\n'
+        << "Advancing jump fraction median: " << fraction_median << '\n';
 
-        if (p > pmax)
-        {
-            pmax = p;
-        }
-    }
+    const auto num_atoms = count_contact_line_atoms(boundaries_traj);
+    write_graph_to_xvg(num_atoms, opt2fn("-on", NFILE, fnm), 
+                       "Number of contact line atoms", "t (ps)", "N", 
+                       oenv);
 
-    const auto hist_smooth = hist_rolling_average(histogram, nwin);
-    const auto final_best_angle = get_most_probable_angle(angles, hist_smooth);
-
-    fprintf(stderr, "\nMeasured contact angle (deg.):\n");
-    fprintf(stdout, "%-12g\n", final_best_angle);
-
-    /* Angle distribution output */
-    auto fpdist = xvgropen_type(
-        opt2fn("-od", NFILE, fnm),
-        "Angle distribution", "Angle (deg.)", "Probability (%)",
-        exvggtXNY, oenv
-    );
-
-    xvgr_world(fpdist, amin, 0.0, amax, pmax * 1.25, oenv);
-    xvgrLegend(fpdist, { "Measured", "Smoothed" }, oenv);
-
-    for (size_t i = 0; i < histogram.size(); ++i)
-    {
-        fprintf(
-            fpdist, "%12g  %12g  %12g\n",
-            angles.at(i), histogram.at(i), hist_smooth.at(i)
-        );
-    }
-
-    xvgrclose(fpdist);
-
-    do_view(oenv, opt2fn("-od", NFILE, fnm), nullptr);
+    do_view(oenv, opt2fn("-oa", NFILE, fnm), nullptr);
 
     return 0;
 }
