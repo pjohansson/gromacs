@@ -75,7 +75,7 @@
 #include "gromacs/utility/gmxomp.h"
 #include "gromacs/utility/smalloc.h"
 
-#define DEBUG3D
+//#define DEBUG3D
 
 template <typename T>
 using Vec2 = std::array<T, 2>;
@@ -347,7 +347,7 @@ static SphericalCap fit_spherical_cap(const rvec       *x,
 
         // First check as a safe guard if the values make sense: 
         // h should not be larger than 2 * r!
-        if (h > 2.0 * dx_max_half)
+        if (h > (2.0 * dx_max_half + 1e-5))
         {
             r = h / 2.0;
             a = sqrt(h * (2 * r - h));
@@ -384,7 +384,6 @@ static SphericalCap fit_spherical_cap(const rvec       *x,
 
         a = dx_max_half;
         r = (a * a + h * h) / (2.0 * h);
-
     }
 
     const real x0 = (xmax + xmin) / 2.0;

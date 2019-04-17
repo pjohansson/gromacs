@@ -821,13 +821,16 @@ static GraphXY calc_autocorrelation(const std::vector<BoundaryAtoms> boundary)
         }
     }
 
+    if (!values.is_empty())
+    {
+        values[0] = 1.0;
+    }
+
     // Take the mean for all correlations
     for (size_t i = 1; i < values.size(); ++i)
     {
         values[i] /= static_cast<double>(values.size() - i);
     }
-
-    values[0] = 1.0;
 
     return GraphXY {
         times,
