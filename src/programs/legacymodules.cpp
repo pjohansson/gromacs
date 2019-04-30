@@ -361,11 +361,22 @@ void registerLegacyModules(gmx::CommandLineModuleManager *manager)
     //                "Perform weighted histogram analysis after umbrella sampling");
     // registerModule(manager, &gmx_wheel, "wheel",
     //                "Plot helical wheels");
+
     // PETTER
     registerModule(manager, &gmx_3d_analysis, "3d",
-                   "Calculate 2D planar or axial-radial density maps");
+                   "Calculate contact angles and density maps for 3D droplets");
     registerModule(manager, &gmx_3d_contactline, "3dcl",
                    "Analyze the 3D contact line");
+    registerModule(manager, &gmx_dipoles_radial, "rdipole",
+                   "Compute the radial dipole distribution");
+
+    {
+        gmx::CommandLineModuleGroup group =
+            manager->addModuleGroup("Analyze droplet contact lines");
+        group.addModule("3d");
+        group.addModule("3dcl");
+        group.addModule("rdipole");
+    }
 
     // registerModuleNoNice(manager, &gmx_view, "view",
     //                      "View a trajectory on an X-Windows terminal");

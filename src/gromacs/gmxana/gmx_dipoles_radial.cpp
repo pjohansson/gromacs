@@ -40,6 +40,7 @@
 #include <cstring>
 
 #include <algorithm>
+#include <iostream>
 
 #include "gromacs/commandline/pargs.h"
 #include "gromacs/commandline/viewit.h"
@@ -70,6 +71,14 @@
 #include "gromacs/utility/fatalerror.h"
 #include "gromacs/utility/futil.h"
 #include "gromacs/utility/smalloc.h"
+
+#define DEBUG
+
+#ifdef DEBUG
+#define EPRINTLN(x) std::cerr << (#x) << " = " << (x) << '\n';
+#else 
+#define EPRINTLN(X);
+#endif
 
 #define e2d(x) ENM2DEBYE*(x)
 #define EANG2CM  E_CHARGE*1.0e-10       /* e Angstrom to Coulomb meter */
@@ -217,13 +226,15 @@ static Grid<real> do_angle_calc(const ComponentGrid &dipole_grid)
     return angle_grid;
 }
 
-// Calculate the radial components (z, r) of the dipole moment
-// in a grid of input spacing.
+// Calculate the radial components (vz, vr) of the dipole moment
+// in a grid of input spacing. vr is positive along the increasing
+// radial axis.
 static ComponentGrid do_dip(const t_topology *top,
                             int               ePBC,
                             const char       *fn,
                             const int         axis,
                             const rvec        origin,
+                            const bool        bUseOrigin,
                             const real        spacing,
                             int              *gnx,
                             int              *molindex[],
@@ -262,22 +273,38 @@ static ComponentGrid do_dip(const t_topology *top,
         box[e1][e1] > box[e2][e2] ? 0.5 * box[e2][e2] : 0.5 * box[e1][e1];
     const real hmax = box[axis][axis];
 
-    const auto nr = static_cast<int>(ceil(rmax / spacing));
-    const auto nh = static_cast<int>(ceil(hmax / spacing));
+    const auto nr = static_cast<size_t>(ceil(rmax / spacing));
+    const auto nh = static_cast<size_t>(ceil(hmax / spacing));
 
     /* Grid is ordered as: grid[iz][ir]
-       Contains: pairs of [z, r] vector components */
+       Contains: pairs of [z, r] vector components
+       counts of additions are stored separately for averaging */
     ComponentGrid grid(nh, std::vector<std::array<double, 2>> (nr, {0.0, 0.0}));
+    Grid<size_t> counts(nh, std::vector<size_t> (nr, 0));
 
     /* Start while loop over frames */
     gmx_bool bCont;
     int      timecheck = 0;
-    rvec     dipole, dx, xcom;
+    rvec     dipole, dx, r0, xcom;
+
+    if (bUseOrigin) 
+    {
+        r0[XX] = origin[XX];
+        r0[YY] = origin[YY];
+        r0[ZZ] = origin[ZZ];
+    }
 
     do
     {
         set_pbc(&pbc, ePBC, box);
         gmx_rmpbc(gpbc, natom, box, x); // Makes molecules whole
+
+        if (!bUseOrigin)
+        {
+            r0[XX] = 0.5 * box[XX][XX];
+            r0[YY] = 0.5 * box[YY][YY];
+            r0[ZZ] = 0.5 * box[ZZ][ZZ];
+        }
 
         for (int i = 0; i < gnx[0]; i++)
         {
@@ -286,7 +313,7 @@ static ComponentGrid do_dip(const t_topology *top,
 
             // Get the center coordinate and distance from it to the origin
             mol_center_of_mass(i0, i1, x, atom, xcom);
-            pbc_dx(&pbc, xcom, origin, dx);
+            pbc_dx(&pbc, r0, xcom, dx);
             const real r = sqrt(std::pow(dx[e1], 2) + std::pow(dx[e2], 2));
             const real h = xcom[axis];
 
@@ -294,13 +321,17 @@ static ComponentGrid do_dip(const t_topology *top,
             {
                 mol_dip(i0, i1, x, atom, dipole);
 
-                const auto ir = static_cast<int>(floor(r / spacing));
-                const auto ih = static_cast<int>(floor(h / spacing));
+                // Project the dipole onto the radial axis to get the radial component
+                // The negation is due to dx pointing *towards* the center axis while
+                // we want vr to be in the opposite direction
+                const real rcomponent = -(dipole[e1] * dx[e1] + dipole[e2] * dx[e2]) / r;
 
-                const real rcomponent =
-                    sqrt(std::pow(dipole[e1], 2) + std::pow(dipole[e2], 2));
+                const auto ir = static_cast<size_t>(floor(r / spacing));
+                const auto ih = static_cast<size_t>(floor(h / spacing));
+
                 grid[ih][ir][0] += dipole[axis];
                 grid[ih][ir][1] += rcomponent;
+                counts[ih][ir] += 1;
             }
         }
 
@@ -309,20 +340,108 @@ static ComponentGrid do_dip(const t_topology *top,
     }
     while (bCont && (timecheck == 0));
 
+    for (size_t ih = 0; ih < nh; ++ih)
+    {
+        for (size_t ir = 0; ir < nr; ++ir)
+        {
+            const auto count = counts[ih][ir];
+
+            if (count > 0)
+            {
+                auto& bin = grid[ih][ir];
+                bin[0] /= count;
+                bin[1] /= count;
+            }
+        }
+    }
+
     gmx_rmpbc_done(gpbc);
     close_trx(status);
 
     return grid;
 }
 
-static void print_grid(const Grid<real> &grid,
-                       const char*       fn,
-                       const real        spacing)
+template <typename T>
+static Grid<T> downsample_grid_singles(const Grid<T> &grid, size_t n)
 {
-    constexpr int MAXLEN = 256;
+    if ((n <= 1) || grid.empty())
+    {
+        return grid;
+    }
+    
+    const auto ni = static_cast<size_t>(grid.size() / n);
+    const auto nj = static_cast<size_t>(grid[0].size() / n);
+    const auto nsq = std::pow(n, 2);
+
+    Grid<T> final(ni, std::vector<T> (nj, 0.0));
+
+    for (size_t i = 0; i < n * ni; ++i)
+    {
+        for (size_t j = 0; j < n * nj; ++j)
+        {
+            const auto i1 = static_cast<size_t>(i / n);
+            const auto j1 = static_cast<size_t>(j / n);
+
+            final[i1][j1] += grid[i][j];
+        }
+    }
+
+    for (auto& row : final)
+    {
+        for (auto& v : row)
+        {
+            v /= static_cast<double>(nsq);
+        }
+    }
+
+    return final;
+}
+
+static ComponentGrid downsample_grid_components(const ComponentGrid &grid, size_t n)
+{
+    if ((n <= 1) || grid.empty())
+    {
+        return grid;
+    }
+    
+    const auto ni = static_cast<size_t>(grid.size() / n);
+    const auto nj = static_cast<size_t>(grid[0].size() / n);
+    const auto nsq = std::pow(n, 2);
+
+    ComponentGrid final(ni, std::vector<std::array<double, 2>> (nj, {0.0, 0.0}));
+
+    for (size_t i = 0; i < n * ni; ++i)
+    {
+        for (size_t j = 0; j < n * nj; ++j)
+        {
+            const auto i1 = static_cast<size_t>(i / n);
+            const auto j1 = static_cast<size_t>(j / n);
+
+            final[i1][j1][0] += grid[i][j][0];
+            final[i1][j1][1] += grid[i][j][1];
+        }
+    }
+
+    for (auto& row : final)
+    {
+        for (auto& bin : row)
+        {
+            bin[0] /= static_cast<double>(nsq);
+            bin[1] /= static_cast<double>(nsq);
+        }
+    }
+
+    return final;
+}
+
+template <typename T>
+static void print_grid_singles(const Grid<T> &grid,
+                               const char    *fn,
+                               const real     spacing)
+{
     FILE *fp = gmx_ffopen(fn, "w");
 
-    fprintf(fp, "# %6s %8s %12s\n", "h (nm)", "r (nm)", "angle (rad.)");
+    fprintf(fp, "# %6s %8s %12s\n", "r (nm)", "z (nm)", "angle (rad.)");
 
     real h = 0.5 * spacing;
 
@@ -332,8 +451,8 @@ static void print_grid(const Grid<real> &grid,
 
         for (const auto value : column)
         {
+            fprintf(fp, "%8.3f %8.3f %12.6f\n", r, h, value);
             r += spacing;
-            fprintf(fp, "%8.3f %8.3f %12.6f\n", h, r, value);
         }
 
         h += spacing;
@@ -345,48 +464,54 @@ static void print_grid(const Grid<real> &grid,
     return;
 }
 
+static void print_grid_components(const ComponentGrid &grid,
+                                  const char          *fn,
+                                  const real           spacing)
+{
+    FILE *fp = gmx_ffopen(fn, "w");
+
+    fprintf(fp, "# %6s %8s %12s %12s\n", "r (nm)", "z (nm)", "vr (nm)", "vz (nm)");
+
+    real h = 0.5 * spacing;
+
+    for (const auto column : grid)
+    {
+        real r = 0.5 * spacing;
+
+        for (const auto bin : column)
+        {
+            fprintf(fp, "%8.3f %8.3f %12.6f %12.6f\n", r, h, bin[1], bin[0]);
+            r += spacing;
+        }
+
+        h += spacing;
+    }
+
+    gmx_ffclose(fp);
+
+    return;
+}
+
 int gmx_dipoles_radial(int argc, char *argv[])
 {
     const char       *desc[] = {
-        "[THISMODULE] computes the total dipole plus fluctuations of a simulation",
-        "system. From this you can compute e.g. the dielectric constant for",
-        "low-dielectric media.",
-        "For molecules with a net charge, the net charge is subtracted at",
-        "center of mass of the molecule.[PAR]",
-        "The file [TT]Mtot.xvg[tt] contains the total dipole moment of a frame, the",
-        "components as well as the norm of the vector.",
-        "The file [TT]aver.xvg[tt] contains [CHEVRON][MAG][GRK]mu[grk][mag]^2[chevron] and [MAG][CHEVRON][GRK]mu[grk][chevron][mag]^2 during the",
-        "simulation.",
-        "The file [TT]dipdist.xvg[tt] contains the distribution of dipole moments during",
-        "the simulation",
-        "The value of [TT]-mumax[tt] is used as the highest value in the distribution graph.[PAR]",
-        "Furthermore, the dipole autocorrelation function will be computed when",
-        "option [TT]-corr[tt] is used. The output file name is given with the [TT]-c[tt]",
-        "option.",
-        "The correlation functions can be averaged over all molecules",
-        "([TT]mol[tt]), plotted per molecule separately ([TT]molsep[tt])",
-        "or it can be computed over the total dipole moment of the simulation box",
-        "([TT]total[tt]).[PAR]",
-        "Option [TT]-g[tt] produces a plot of the distance dependent Kirkwood",
-        "G-factor, as well as the average cosine of the angle between the dipoles",
-        "as a function of the distance. The plot also includes gOO and hOO",
-        "according to Nymand & Linse, J. Chem. Phys. 112 (2000) pp 6386-6395. In the same plot, ",
-        "we also include the energy per scale computed by taking the inner product of",
-        "the dipoles divided by the distance to the third power.[PAR]",
+        "[THISMODULE] computes the radial density distribution of dipole orientation",
+        "in a simulation.",
         "[PAR]",
-        "EXAMPLES[PAR]",
-        "[TT]gmx dipoles -corr mol -P 1 -o dip_sqr -mu 2.273 -mumax 5.0[tt][PAR]",
-        "This will calculate the autocorrelation function of the molecular",
-        "dipoles using a first order Legendre polynomial of the angle of the",
-        "dipole vector and itself a time t later. For this calculation 1001",
-        "frames will be used. Further, the dielectric constant will be calculated",
-        "using an [TT]-epsilonRF[tt] of infinity (default), temperature of 300 K (default) and",
-        "an average dipole moment of the molecule of 2.273 (SPC). For the",
-        "distribution function a maximum of 5.0 will be used."
+        "The distribution is calculated on a 2D grid along the radius and height from",
+        "a center axis. The position of this axis is by default the center of the",
+        "simulation box. It can be given manually using the [TT]-origin[tt] argument.",
+        "The grid spacing is controlled using the [TT]-spacing[tt] argument.",
+        "[PAR]",
+        "The dipole angle is written to the [TT]-oa[tt] filename as radians on the",
+        "interval [-pi, pi], where 0 points away from the center axis. The average dipole",
+        "components are written to the [TT]-oc[tt] filename."
     };
     const char       *axtitle    = "Z";
     real              spacing    = 0.1;
     rvec              origin     = {-1.0, -1.0, -1.0};
+    int               downsample_angles = 1,
+                      downsample_comps = 1;
     gmx_output_env_t *oenv;
     t_pargs           pa[] = {
         { "-axis",     FALSE, etSTR, {&axtitle},
@@ -394,7 +519,11 @@ int gmx_dipoles_radial(int argc, char *argv[])
         { "-origin",   FALSE, etRVEC, {&origin},
           "Origin of cylinder, only radial component is used" },
         { "-spacing",  FALSE, etREAL, {&spacing},
-          "Spacing of radial distribution function" }
+          "Spacing of radial distribution function (nm)" },
+        { "-na", FALSE, etINT, {&downsample_angles},
+          "Factor to downsample output [TT]-oa[tt] grid with" },
+        { "-nc", FALSE, etINT, {&downsample_comps},
+          "Factor to downsample output [TT]-oc[tt] grid with" }
     };
     int              *gnx;
     int             **grpindex;
@@ -403,7 +532,8 @@ int gmx_dipoles_radial(int argc, char *argv[])
         { efTRX, "-f", nullptr,           ffREAD },
         { efTPR, nullptr, nullptr,           ffREAD },
         { efNDX, nullptr, nullptr,           ffOPTRD },
-        { efDAT, "-o",   "dipole_angle",       ffWRITE }
+        { efDAT, "-oa",   "dipole_angle",       ffWRITE },
+        { efDAT, "-oc",   "dipole_comps",       ffWRITE }
     };
 #define NFILE asize(fnm)
     t_topology       *top;
@@ -412,7 +542,7 @@ int gmx_dipoles_radial(int argc, char *argv[])
     matrix            box;
 
     const int npargs = asize(pa);
-    if (!parse_common_args(&argc, argv, PCA_CAN_TIME | PCA_CAN_VIEW,
+    if (!parse_common_args(&argc, argv, PCA_CAN_TIME,
                            NFILE, fnm, npargs, pa, asize(desc), desc, 0,
                            nullptr, &oenv))
     {
@@ -435,8 +565,20 @@ int gmx_dipoles_radial(int argc, char *argv[])
             axis = ZZ;
             break;
         default:
-            gmx_fatal(FARGS, "invalid axis '%s': must be X, Y or Z", axtitle);
+            gmx_fatal(FARGS, "Invalid axis '%s': must be X, Y or Z", axtitle);
     }
+
+    if (downsample_angles < 1)
+    {
+        gmx_fatal(FARGS, "Downsample factor -na must be at least 1");
+    }
+
+    if (downsample_comps < 1)
+    {
+        gmx_fatal(FARGS, "Downsample factor -nc must be at least 1");
+    }
+
+    const auto bUseOrigin = static_cast<bool>(opt2parg_bSet("-origin", npargs, pa));
 
     snew(top, 1);
     ePBC = read_tpx_top(ftp2fn(efTPR, NFILE, fnm), nullptr, box,
@@ -452,12 +594,25 @@ int gmx_dipoles_radial(int argc, char *argv[])
     neutralize_mols(gnx[0], grpindex[0], &(top->mols), top->atoms.atom);
 
     const auto dipole_radial_components_grid = do_dip(
-        top, ePBC, ftp2fn(efTRX, NFILE, fnm), axis, origin, spacing,
+        top, ePBC, ftp2fn(efTRX, NFILE, fnm), axis, origin, bUseOrigin, spacing,
         gnx, grpindex, oenv);
-
     const auto angle_grid = do_angle_calc(dipole_radial_components_grid);
 
-    print_grid(angle_grid, ftp2fn(efDAT, NFILE, fnm), spacing);
+    const auto final_angles = 
+        downsample_grid_singles(angle_grid, downsample_angles);
+    const auto final_components_grid = 
+        downsample_grid_components(dipole_radial_components_grid, downsample_comps);
+
+    print_grid_singles(
+        final_angles, 
+        opt2fn("-oa", NFILE, fnm), 
+        static_cast<real>(downsample_angles) * spacing
+    );
+    print_grid_components(
+        final_components_grid, 
+        opt2fn("-oc", NFILE, fnm), 
+        static_cast<real>(downsample_comps) * spacing
+    );
 
     return 0;
 }

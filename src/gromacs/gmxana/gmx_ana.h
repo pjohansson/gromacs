@@ -288,8 +288,8 @@ gmx_3d_analysis(int argc, char *argv[]);
 int
 gmx_3d_contactline(int argc, char *argv[]);
 
-// int
-// gmx_dipoles_radial(int argc, char *argv[]);
+int
+gmx_dipoles_radial(int argc, char *argv[]);
 
 #ifdef __cplusplus
 }

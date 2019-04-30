@@ -821,7 +821,7 @@ static GraphXY calc_autocorrelation(const std::vector<BoundaryAtoms> boundary)
         }
     }
 
-    if (!values.is_empty())
+    if (!values.empty())
     {
         values[0] = 1.0;
     }
@@ -1029,18 +1029,7 @@ static void write_graph_to_xvg(const GraphXY          &graph,
 int gmx_3d_contactline(int argc, char *argv[])
 {
     const char        *desc[] = {
-        "[THISMODULE] computes contact angles and base radii of (3D) droplets.",
-        "[PAR]",
-        "The analysis follows the convex hull approach by Khalkhali et al.",
-        "(J. Chem. Phys., vol. 146, pp. 114704, 2017). For each frame in the",
-        "trajectory, the points making up the droplet are identified. The",
-        "smallest hull which contains all points are then found using the",
-        "quickhull algorithm (http://www.qhull.org/). Such a hull consists",
-        "of triangular facets, where each facet has a normal. This normal",
-        "is used to calculate its angle to the surface, which yields a",
-        "histogram of probabilities of each angle. The most probable angle",
-        "is taken as the contact angle. The substrate is assumed to lie in",
-        "the XY plane, ie. with its normal pointing along the Z axis."
+        "[THISMODULE] analyzes the contact line atomic motions of 3D droplets.",
     };
     static real ball_radius = 0.3,
                 bin_size = 0.25,
