@@ -58,6 +58,7 @@
 #include "gromacs/math/units.h"
 #include "gromacs/math/vec.h"
 #include "gromacs/math/vecdump.h"
+#include "gromacs/mdtypes/inputrec.h"
 #include "gromacs/mdtypes/md_enums.h"
 #include "gromacs/pbcutil/pbc.h"
 #include "gromacs/pbcutil/rmpbc.h"
@@ -76,7 +77,7 @@
 
 #ifdef DEBUG
 #define EPRINTLN(x) std::cerr << (#x) << " = " << (x) << '\n';
-#else 
+#else
 #define EPRINTLN(X);
 #endif
 
@@ -229,15 +230,15 @@ static Grid<real> do_angle_calc(const ComponentGrid &dipole_grid)
 // Calculate the radial components (vz, vr) of the dipole moment
 // in a grid of input spacing. vr is positive along the increasing
 // radial axis.
-static ComponentGrid do_dip(const t_topology *top,
-                            int               ePBC,
-                            const char       *fn,
-                            const int         axis,
-                            const rvec        origin,
-                            const bool        bUseOrigin,
-                            const real        spacing,
-                            int              *gnx,
-                            int              *molindex[],
+static ComponentGrid do_dip(const t_topology       *top,
+                            int                     ePBC,
+                            const char             *fn,
+                            const int               axis,
+                            const rvec              origin,
+                            const bool              bUseOrigin,
+                            const real              spacing,
+                            int                    *gnx,
+                            int                    *molindex[],
                             const gmx_output_env_t *oenv)
 {
     const auto atom = top->atoms.atom;
@@ -287,7 +288,7 @@ static ComponentGrid do_dip(const t_topology *top,
     int      timecheck = 0;
     rvec     dipole, dx, r0, xcom;
 
-    if (bUseOrigin) 
+    if (bUseOrigin)
     {
         r0[XX] = origin[XX];
         r0[YY] = origin[YY];
@@ -368,7 +369,7 @@ static Grid<T> downsample_grid_singles(const Grid<T> &grid, size_t n)
     {
         return grid;
     }
-    
+
     const auto ni = static_cast<size_t>(grid.size() / n);
     const auto nj = static_cast<size_t>(grid[0].size() / n);
     const auto nsq = std::pow(n, 2);
@@ -403,7 +404,7 @@ static ComponentGrid downsample_grid_components(const ComponentGrid &grid, size_
     {
         return grid;
     }
-    
+
     const auto ni = static_cast<size_t>(grid.size() / n);
     const auto nj = static_cast<size_t>(grid[0].size() / n);
     const auto nsq = std::pow(n, 2);
@@ -529,11 +530,11 @@ int gmx_dipoles_radial(int argc, char *argv[])
     int             **grpindex;
     char            **grpname = nullptr;
     t_filenm          fnm[] = {
-        { efTRX, "-f", nullptr,           ffREAD },
+        { efTRX, "-f", nullptr,              ffREAD },
         { efTPR, nullptr, nullptr,           ffREAD },
         { efNDX, nullptr, nullptr,           ffOPTRD },
-        { efDAT, "-oa",   "dipole_angle",       ffWRITE },
-        { efDAT, "-oc",   "dipole_comps",       ffWRITE }
+        { efDAT, "-oa",   "dipole_angle",    ffWRITE },
+        { efDAT, "-oc",   "dipole_comps",    ffWRITE }
     };
 #define NFILE asize(fnm)
     t_topology       *top;
@@ -581,7 +582,9 @@ int gmx_dipoles_radial(int argc, char *argv[])
     const auto bUseOrigin = static_cast<bool>(opt2parg_bSet("-origin", npargs, pa));
 
     snew(top, 1);
-    ePBC = read_tpx_top(ftp2fn(efTPR, NFILE, fnm), nullptr, box,
+    t_inputrec irInstance;
+    t_inputrec *ir = &irInstance;
+    ePBC = read_tpx_top(ftp2fn(efTPR, NFILE, fnm), ir, box,
                         &natoms, nullptr, nullptr, top);
 
     snew(gnx, 1);
@@ -598,19 +601,19 @@ int gmx_dipoles_radial(int argc, char *argv[])
         gnx, grpindex, oenv);
     const auto angle_grid = do_angle_calc(dipole_radial_components_grid);
 
-    const auto final_angles = 
+    const auto final_angles =
         downsample_grid_singles(angle_grid, downsample_angles);
-    const auto final_components_grid = 
+    const auto final_components_grid =
         downsample_grid_components(dipole_radial_components_grid, downsample_comps);
 
     print_grid_singles(
-        final_angles, 
-        opt2fn("-oa", NFILE, fnm), 
+        final_angles,
+        opt2fn("-oa", NFILE, fnm),
         static_cast<real>(downsample_angles) * spacing
     );
     print_grid_components(
-        final_components_grid, 
-        opt2fn("-oc", NFILE, fnm), 
+        final_components_grid,
+        opt2fn("-oc", NFILE, fnm),
         static_cast<real>(downsample_comps) * spacing
     );
 
