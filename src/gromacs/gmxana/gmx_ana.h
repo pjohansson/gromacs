@@ -291,6 +291,9 @@ gmx_3d_contactline(int argc, char *argv[]);
 int
 gmx_dipoles_radial(int argc, char *argv[]);
 
+int
+gmx_radial(int argc, char *argv[]);
+
 #ifdef __cplusplus
 }
 #endif

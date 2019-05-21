@@ -369,6 +369,8 @@ void registerLegacyModules(gmx::CommandLineModuleManager *manager)
                    "Analyze the 3D contact line");
     registerModule(manager, &gmx_dipoles_radial, "rdipole",
                    "Compute the radial dipole distribution");
+    registerModule(manager, &gmx_radial, "radial",
+                   "Compute the radial distribution of velocity");
 
     {
         gmx::CommandLineModuleGroup group =
