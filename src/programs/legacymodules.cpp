@@ -173,8 +173,8 @@ void registerLegacyModules(gmx::CommandLineModuleManager *manager)
     //                "Check and compare files");
     // registerModule(manager, &gmx_dump, "dump",
     //                "Make binary files human readable");
-    // registerModule(manager, &gmx_grompp, "grompp",
-    //                "Make a run input file");
+    registerModule(manager, &gmx_grompp, "grompp",
+                   "Make a run input file");
     // registerModule(manager, &gmx_pdb2gmx, "pdb2gmx",
     //                "Convert coordinate files to topology and FF-compliant coordinate files");
     // registerModule(manager, &gmx_convert_tpr, "convert-tpr",
