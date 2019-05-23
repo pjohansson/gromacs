@@ -371,6 +371,8 @@ void registerLegacyModules(gmx::CommandLineModuleManager *manager)
                    "Compute the radial dipole distribution");
     registerModule(manager, &gmx_radial, "radial",
                    "Compute the radial distribution of velocity");
+    registerModule(manager, &gmx_contactline_indices, "indices",
+                   "Get contact line indices");
 
     {
         gmx::CommandLineModuleGroup group =
@@ -378,6 +380,8 @@ void registerLegacyModules(gmx::CommandLineModuleManager *manager)
         group.addModule("3d");
         group.addModule("3dcl");
         group.addModule("rdipole");
+        group.addModule("radial");
+        group.addModule("indices");
     }
 
     // registerModuleNoNice(manager, &gmx_view, "view",

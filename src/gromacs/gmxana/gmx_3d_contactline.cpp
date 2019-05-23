@@ -36,13 +36,14 @@
  */
 #include "gmxpre.h"
 
-#include <algorithm>
+#include <algorithm> // set_difference
 #include <array>
 #include <cmath>
 #include <cstring>
 #include <iostream>
 #include <numeric>
 #include <set>
+#include <string>
 #include <utility> // pair
 #include <tuple> // tie
 
@@ -76,6 +77,12 @@
     #define DEBUGLOG(x) x
 #else
     #define DEBUGLOG(x)
+#endif
+
+#ifdef DEBUG3D
+#define EPRINTLN(x) std::cerr << (#x) << " = " << (x) << '\n'; fflush(stderr);
+#else
+#define EPRINTLN(x);
 #endif
 
 constexpr double PI = 3.141592653589793;
@@ -171,12 +178,12 @@ static std::pair<double, double> get_2d_position(const size_t   ix,
 static DensMap get_densmap(const rvec        *xs,
                            const real         bin_size,
                            const real         z0,
+                           const real         dz,
                            const RVec3       &box_size,
                            const Indices     &indices,
                            const DensityType  type,
                            const t_topology  *top)
 {
-    constexpr double dz = 0.5;
     const double z1 = z0 + dz;
 
     const auto bin_sizes = RVec3 { bin_size, bin_size, dz };
@@ -1035,7 +1042,8 @@ int gmx_3d_contactline(int argc, char *argv[])
                 bin_size = 0.25,
                 dr_adv = 0.25,
                 mfrac = 0.5,
-                z0 = 0.0;
+                z0 = 0.0,
+                dz = 0.25;
     static int nsmooth = 1;
     static rvec center { -1, -1, -1 };
 
@@ -1057,6 +1065,8 @@ int gmx_3d_contactline(int argc, char *argv[])
           "Fraction of mean bin mass to use as cutoff" },
         { "-z", FALSE, etREAL, {&z0},
           "Position along z of bottom interface (nm)" },
+        { "-dz", FALSE, etREAL, {&dz},
+          "Height of bottom interface (nm)" },
         { "-dr", FALSE, etREAL, {&dr_adv},
           "Mean distance for contact line advancement (nm)" },
         { "-br", FALSE, etREAL, {&ball_radius},
@@ -1141,7 +1151,7 @@ int gmx_3d_contactline(int argc, char *argv[])
     do
     {
         const auto box_size = RVec3 { box[XX][XX], box[YY][YY], box[ZZ][ZZ] };
-        const auto densmap = get_densmap(x, bin_size, z0, box_size, indices, type, &top);
+        const auto densmap = get_densmap(x, bin_size, z0, dz, box_size, indices, type, &top);
         const auto smooth = smooth_densmap(densmap, static_cast<uint64_t>(nsmooth));
 
         if (use_com_center) 
@@ -1273,6 +1283,302 @@ int gmx_3d_contactline(int argc, char *argv[])
                        oenv);
 
     do_view(oenv, opt2fn("-oa", NFILE, fnm), nullptr);
+
+    return 0;
+}
+
+
+/*****************
+ * Indices tools *
+ *****************/
+
+static void dipole_atom2molindex(int *n, int *index, const t_block *mols)
+{
+    int nmol, i, j, m;
+
+    nmol = 0;
+    i    = 0;
+    while (i < *n)
+    {
+        m = 0;
+        while (m < mols->nr && index[i] != mols->index[m])
+        {
+            m++;
+        }
+        if (m == mols->nr)
+        {
+            gmx_fatal(FARGS, "index[%d]=%d does not correspond to the first atom of a molecule", i+1, index[i]+1);
+        }
+        for (j = mols->index[m]; j < mols->index[m+1]; j++)
+        {
+            if (i >= *n || index[i] != j)
+            {
+                gmx_fatal(FARGS, "The index group is not a set of whole molecules");
+            }
+            i++;
+        }
+        /* Modify the index in place */
+        index[nmol++] = m;
+    }
+    printf("There are %d molecules in the selection\n", nmol);
+
+    *n = nmol;
+}
+
+static Indices get_molecule_indices_for_atoms(const Indices    &molecule_inds,
+                                              const t_topology *top)
+{
+    const auto mols = &(top->mols);
+    const auto natoms = top->atoms.nr;
+
+    Indices atom2molecule (natoms, 0);
+
+    for (const auto i : molecule_inds)
+    {
+        const auto i0 = static_cast<size_t>(mols->index[i]);
+        const auto i1 = static_cast<size_t>(mols->index[i + 1]);
+
+        for (size_t j = i0; j < i1; ++j)
+        {
+            atom2molecule[j] = i;
+        }
+    }
+
+    return atom2molecule;
+}
+
+static std::set<size_t> get_molecules(const Indices &boundary_indices,
+                                      const Indices &atom2mol)
+{
+    std::set<size_t> indices;
+
+    for (const auto i : boundary_indices)
+    {
+        indices.insert(atom2mol[i]);
+    }
+
+    return indices;
+} 
+
+static Indices molecule_to_atom_indices(const std::set<size_t> &molecule_inds,
+                                        const t_topology       *top)
+{
+    Indices indices;
+    const auto mols = &(top->mols);
+
+    for (const auto i : molecule_inds)
+    {
+        const auto i0 = static_cast<size_t>(mols->index[i]);
+        const auto i1 = static_cast<size_t>(mols->index[i + 1]);
+
+        for (size_t j = i0; j < i1; ++j)
+        {
+            indices.push_back(j);
+        }
+    }
+
+    return indices;
+}
+
+static void write_index_file(const std::string &fn,
+                             const Indices     &inds,
+                             const std::string &grpname)
+{
+    auto fp = gmx_ffopen(fn.data(), "w");
+
+    fprintf(fp, "[ %s ]\n", grpname.c_str());
+
+    size_t n = 0;
+
+    for (const auto i : inds)
+    {
+        fprintf(fp, "%lu ", i + 1);
+
+        if (++n % 15 == 0)
+        {
+            fprintf(fp, "\n");
+        }
+    }
+
+    if (n % 15 != 0)
+    {
+        fprintf(fp, "\n");
+    }
+
+    gmx_ffclose(fp);
+
+    return;
+}
+
+static Indices get_densmap_indices(const DensMap &densmap)
+{
+    Indices inds;
+
+    for (const auto& bin : densmap.bins)
+    {
+        for (const auto i : bin.indices)
+        {
+            inds.push_back(i);
+        }
+    }
+
+    return inds;
+}
+
+int gmx_contactline_indices(int argc, char *argv[])
+{
+    const char        *desc[] = {
+        "[THISMODULE] gets the indices from molecules at the contact line.",
+    };
+    static real ball_radius = 0.3,
+                bin_size = 0.25,
+                dr_adv = 0.25,
+                mfrac = 0.5,
+                z0 = 0.0,
+                dz = 0.25;
+    static int nsmooth = 1;
+    static rvec center { -1, -1, -1 };
+
+    enum DimensionalitySel
+    {
+        eDimSel,
+        eDim3d,
+        eDim2d,
+        eDimN
+    };
+    const char *dim_opt[eDimN + 1] = { nullptr, "3d", "2d", nullptr };
+
+    t_pargs pa[] = {
+        { "-bin", FALSE, etREAL, {&bin_size},
+          "Grid size for interface search (nm)" },
+        { "-center", FALSE, etRVEC, {&center},
+          "Center of droplet" },
+        { "-mfrac", FALSE, etREAL, {&mfrac},
+          "Fraction of mean bin mass to use as cutoff" },
+        { "-z", FALSE, etREAL, {&z0},
+          "Position along z of bottom interface (nm)" },
+        { "-dz", FALSE, etREAL, {&dz},
+          "Height of bottom interface (nm)" },
+        { "-dr", FALSE, etREAL, {&dr_adv},
+          "Mean distance for contact line advancement (nm)" },
+        { "-br", FALSE, etREAL, {&ball_radius},
+          "Radius of ball used to roll interface (nm)"},
+        { "-nsmooth", FALSE, etINT, {&nsmooth},
+          "Smoothing window size for density map" },
+        { "-dim", FALSE, etENUM, { &dim_opt }, 
+          "Dimensionality of system" }
+    };
+
+    t_topology         top;
+    int                ePBC = -1;
+    rvec              *x;
+    matrix             box;
+    char             **grpname;
+    int                ngrps, *gnx = nullptr;
+    int              **ind = nullptr, *grpindex;
+    gmx_output_env_t  *oenv;
+    t_filenm           fnm[]   = {
+        { efTPS, "-f",     nullptr,             ffREAD },
+        { efNDX, nullptr,  nullptr,             ffOPTRD },
+        { efNDX, "-oi",    "index_contactline", ffWRITE },
+        { efNDX, "-ob",    "index_bottom",      ffWRITE }
+    };
+
+#define NFILE asize(fnm)
+
+    const int npargs = asize(pa);
+    if (!parse_common_args(&argc, argv, PCA_CAN_TIME | PCA_CAN_VIEW,
+                           NFILE, fnm, npargs, pa, asize(desc), desc, 0, nullptr, &oenv))
+    {
+        return 0;
+    }
+
+    // Use number density if we cannot read a topology which will have the masses
+    DensityType type = DensityType::Number;
+    if (ftp2bSet(efTPS, NFILE, fnm) || !ftp2bSet(efNDX, NFILE, fnm))
+    {
+        if (read_tps_conf(ftp2fn(efTPS, NFILE, fnm), &top, &ePBC, &x, nullptr, box, false)) 
+        {
+            type = DensityType::Mass;
+        };
+    } 
+
+    // Parse the dimensionality
+    auto dim_enum = Dimensionality::Three;
+    if (nenum(dim_opt) == eDim2d)
+    {
+        dim_enum = Dimensionality::Two;
+    }
+
+    /* Either use an input center or the center of mass */
+    const auto use_com_center = !static_cast<bool>(opt2parg_bSet("-center", npargs, pa));
+    RVec2 r0 {center[XX], center[YY]};
+
+    ngrps = 1;
+    fprintf(stderr, "\nSelect an analysis group\n");
+    snew(gnx, ngrps);
+    snew(grpname, ngrps);
+    snew(ind, ngrps);
+    get_index(&top.atoms, ftp2fn_null(efNDX, NFILE, fnm), ngrps, gnx, ind, grpname);
+    grpindex  = ind[0];
+
+    const Indices atom_indices(grpindex, grpindex + gnx[0]);
+
+    // Get atom index ranges for all molecules and vice versa: 
+    // after getting the boundary atom indices we want to get which molecules
+    // they belong to, then finally write all indices for those molecules to disk.
+    dipole_atom2molindex(&gnx[0], grpindex, &(top.mols));
+    const Indices molecule_indices(grpindex, grpindex + gnx[0]);
+    const auto atom2mol = get_molecule_indices_for_atoms(molecule_indices, &top);
+
+    const auto box_size = RVec3 { box[XX][XX], box[YY][YY], box[ZZ][ZZ] };
+
+    // Bottom substrate-bonded molecules
+    const auto bottom_densmap = get_densmap(x, bin_size, z0, dz, box_size, atom_indices, type, &top);
+    const auto bottom_indices = get_densmap_indices(bottom_densmap);
+    const auto bottom_mols = get_molecules(bottom_indices, atom2mol);
+    const auto final_bottom_indices = molecule_to_atom_indices(bottom_mols, &top);
+
+    // Second layer boundary molecules
+    const auto densmap = get_densmap(x, bin_size, z0 + dz, dz, box_size, atom_indices, type, &top);
+    const auto smooth = smooth_densmap(densmap, static_cast<uint64_t>(nsmooth));
+
+    if (use_com_center) 
+    {
+        r0 = calc_com(densmap);
+    }
+
+    Indices boundary_indices;
+    GraphXY boundary_line;
+
+    switch (dim_enum)
+    {
+        case Dimensionality::Three:
+            std::tie(boundary_indices, boundary_line) = 
+                get_boundary_atoms(x, smooth, r0, mfrac, ball_radius);
+            break;
+
+        case Dimensionality::Two:
+            std::tie(boundary_indices, boundary_line) = 
+                get_boundary_atoms_2d(x, smooth, r0, box_size, mfrac, ball_radius);
+            break;
+    }
+
+    const auto boundary_mols = get_molecules(boundary_indices, atom2mol);
+
+    // Molecules cannot both be at the (upper) boundary and at the bottom: 
+    // Do a set difference for the boundary!
+    std::set<size_t> final_mols;
+    std::set_difference(
+        boundary_mols.cbegin(), boundary_mols.cend(),
+        bottom_mols.cbegin(), bottom_mols.cend(),
+        std::inserter(final_mols, final_mols.begin())
+    );
+
+    const auto all_boundary_indices = molecule_to_atom_indices(final_mols, &top);
+
+    write_index_file(opt2fn("-oi", NFILE, fnm), all_boundary_indices, "contact_line");
+    write_index_file(opt2fn("-ob", NFILE, fnm), final_bottom_indices, "bottom");
 
     return 0;
 }
