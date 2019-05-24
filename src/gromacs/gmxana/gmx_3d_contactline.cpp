@@ -1479,6 +1479,7 @@ int gmx_contactline_indices(int argc, char *argv[])
     gmx_output_env_t  *oenv;
     t_filenm           fnm[]   = {
         { efTPS, "-f",     nullptr,             ffREAD },
+        { efTPS, "-s",     nullptr,             ffOPTRD },
         { efNDX, nullptr,  nullptr,             ffOPTRD },
         { efNDX, "-oi",    "index_contactline", ffWRITE },
         { efNDX, "-ob",    "index_bottom",      ffWRITE }
@@ -1493,15 +1494,21 @@ int gmx_contactline_indices(int argc, char *argv[])
         return 0;
     }
 
-    // Use number density if we cannot read a topology which will have the masses
-    DensityType type = DensityType::Number;
-    if (ftp2bSet(efTPS, NFILE, fnm) || !ftp2bSet(efNDX, NFILE, fnm))
+    auto bTopology = static_cast<bool>(
+        read_tps_conf(opt2fn("-f", NFILE, fnm), &top, &ePBC, &x, nullptr, box, false)
+    );
+
+    if (static_cast<bool>(opt2bSet("-s", NFILE, fnm)))
     {
-        if (read_tps_conf(ftp2fn(efTPS, NFILE, fnm), &top, &ePBC, &x, nullptr, box, false)) 
-        {
-            type = DensityType::Mass;
-        };
-    } 
+        bTopology = static_cast<bool>(
+            read_tps_conf(opt2fn("-s", NFILE, fnm), &top, &ePBC, nullptr, nullptr, box, false)
+        );
+    }
+
+    if (!bTopology)
+    {
+        gmx_fatal(FARGS, "no topology in input files -f or -s");
+    }
 
     // Parse the dimensionality
     auto dim_enum = Dimensionality::Three;
@@ -1534,13 +1541,13 @@ int gmx_contactline_indices(int argc, char *argv[])
     const auto box_size = RVec3 { box[XX][XX], box[YY][YY], box[ZZ][ZZ] };
 
     // Bottom substrate-bonded molecules
-    const auto bottom_densmap = get_densmap(x, bin_size, z0, dz, box_size, atom_indices, type, &top);
+    const auto bottom_densmap = get_densmap(x, bin_size, z0, dz, box_size, atom_indices, DensityType::Mass, &top);
     const auto bottom_indices = get_densmap_indices(bottom_densmap);
     const auto bottom_mols = get_molecules(bottom_indices, atom2mol);
     const auto final_bottom_indices = molecule_to_atom_indices(bottom_mols, &top);
 
     // Second layer boundary molecules
-    const auto densmap = get_densmap(x, bin_size, z0 + dz, dz, box_size, atom_indices, type, &top);
+    const auto densmap = get_densmap(x, bin_size, z0 + dz, dz, box_size, atom_indices, DensityType::Mass, &top);
     const auto smooth = smooth_densmap(densmap, static_cast<uint64_t>(nsmooth));
 
     if (use_com_center) 
