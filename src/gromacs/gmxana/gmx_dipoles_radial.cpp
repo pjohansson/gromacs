@@ -78,7 +78,7 @@
 #ifdef DEBUG
 #define EPRINTLN(x) std::cerr << (#x) << " = " << (x) << '\n';
 #else
-#define EPRINTLN(X);
+#define EPRINTLN(x);
 #endif
 
 #define e2d(x) ENM2DEBYE*(x)
