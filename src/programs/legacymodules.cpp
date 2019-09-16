@@ -255,8 +255,8 @@ void registerLegacyModules(gmx::CommandLineModuleManager *manager)
     //                "Calculate dielectric constants and current autocorrelation function");
     // registerModule(manager, &gmx_density, "density",
     //                "Calculate the density of the system");
-    // registerModule(manager, &gmx_densmap, "densmap",
-    //                "Calculate 2D planar or axial-radial density maps");
+    registerModule(manager, &gmx_densmap, "densmap",
+                   "Calculate 2D planar or axial-radial density maps");
     // registerModule(manager, &gmx_densorder, "densorder",
     //                "Calculate surface fluctuations");
     // registerModule(manager, &gmx_dielectric, "dielectric",

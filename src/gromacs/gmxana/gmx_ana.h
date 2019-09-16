@@ -81,8 +81,8 @@ extern "C" {
 // int
 // gmx_density(int argc, char *argv[]);
 
-// int
-// gmx_densmap(int argc, char *argv[]);
+int
+gmx_densmap(int argc, char *argv[]);
 
 // int
 // gmx_densorder(int argc, char *argv[]);

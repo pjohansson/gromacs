@@ -38,6 +38,7 @@
 
 #include <cmath>
 #include <cstring>
+#include <vector>
 
 #include "gromacs/commandline/pargs.h"
 #include "gromacs/commandline/viewit.h"
@@ -153,6 +154,7 @@ int gmx_densmap(int argc, char *argv[])
         { efTPS, nullptr,   nullptr,       ffOPTRD },
         { efNDX, nullptr,   nullptr,       ffOPTRD },
         { efDAT, "-od",  "densmap",   ffOPTWR },
+        { efDAT, "-ob",  "densmap",   ffOPTWR },
         { efXPM, "-o",   "densmap",   ffWRITE }
     };
 #define NFILE asize(fnm)
@@ -270,11 +272,34 @@ int gmx_densmap(int argc, char *argv[])
         snew(grid[i], n2);
     }
 
+    std::vector<std::vector<real>> massgrid;
+    for (i = 0; i < n1; i++) 
+    {
+        massgrid.push_back(std::vector<real>(n2, 0.0));
+    }
+
+    std::string densmap_base;
+    const char *buf2 = opt2fn_null("-ob", NFILE, fnm);
+
+    if (buf2 != NULL)
+    {   
+        const size_t ext_len = strlen(ftp2ext(efDAT));
+        const size_t base_len = strlen(buf2) - ext_len - 1;
+
+        densmap_base = std::string(buf2);
+        densmap_base.resize(base_len);
+    }
+
     box1 = 0;
     box2 = 0;
     nfr  = 0;
     do
     {
+        for (auto& vs : massgrid)
+        {
+            vs.assign(vs.size(), 0.0);
+        }
+
         if (!bRadial)
         {
             box1      += box[c1][c1];
@@ -312,8 +337,44 @@ int gmx_densmap(int argc, char *argv[])
                     {
                         m2 += 1;
                     }
-                    grid[static_cast<int>(m1*n1)][static_cast<int>(m2*n2)] += invcellvol;
+
+                    const auto i1 = static_cast<int>(m1*n1);
+                    const auto i2 = static_cast<int>(m2*n2);
+
+                    grid[i1][i2] += invcellvol;
+                    massgrid[i1][i2] += invcellvol;
                 }
+            }
+
+            if (opt2bSet("-ob", NFILE, fnm)) 
+            {
+                snprintf(buf, STRLEN, "%s_%05d.%s", densmap_base.c_str(), nfr + 1, ftp2ext(efDAT));       
+
+                fp = gmx_ffopen(buf, "w");
+
+                fprintf(fp, "X Y N T M U V\n");
+
+                const auto dx = box[c1][c1] / static_cast<real>(n1);
+                const auto dy = box[c2][c2] / static_cast<real>(n2);
+                
+                for (i = 0; i < massgrid.size(); ++i)
+                {   
+                    const auto x = dx * static_cast<real>(i);
+
+                    for (j = 0; j < massgrid[i].size(); ++j)
+                    {
+                        const auto y = dy * static_cast<real>(j);
+                        const auto m = massgrid[i][j];
+
+                        fprintf(
+                            fp, 
+                            "%12.8f %12.8f %12d %12.8f %12.8f %12.8f %12.8f\n", 
+                            x, y, 0, 0.0, m, 0.0, 0.0
+                        );
+                    }
+                }
+
+                gmx_ffclose(fp);
             }
         }
         else
@@ -356,16 +417,22 @@ int gmx_densmap(int argc, char *argv[])
                 pbc_dx(&pbc, x[j], center, dx);
                 axial = iprod(dx, direction);
                 r     = std::sqrt(norm2(dx) - axial*axial);
+
                 if (axial >= -amax && axial < amax && r < rmax)
                 {
                     if (bMirror)
                     {
                         r += rmax;
                     }
-                    grid[static_cast<int>((axial + amax)*invspa)][static_cast<int>(r*invspz)] += 1;
+
+                    const auto i1 = static_cast<int>((axial + amax)*invspa);
+                    const auto i2 = static_cast<int>(r*invspz);
+
+                    grid[i1][i2] += 1;
                 }
             }
         }
+
         nfr++;
     }
     while (read_next_x(oenv, status, &t, x, box));
