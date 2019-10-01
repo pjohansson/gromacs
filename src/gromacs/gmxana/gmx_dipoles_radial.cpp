@@ -89,8 +89,8 @@
 template <typename T>
 using Grid = std::vector<std::vector<T>>;
 
-// Contains: pairs of [z, r] vector components
-using ComponentGrid = Grid<std::array<double, 2>>;
+// Contains: tuples of [z, r, cos_angle] vector components
+using ComponentGrid = Grid<std::array<double, 3>>;
 
 static void neutralize_mols(int n, int *index, const t_block *mols, t_atom *atom)
 {
@@ -278,9 +278,9 @@ static ComponentGrid do_dip(const t_topology       *top,
     const auto nh = static_cast<size_t>(ceil(hmax / spacing));
 
     /* Grid is ordered as: grid[iz][ir]
-       Contains: pairs of [z, r] vector components
+       Contains: tuple of [z, r, cos(angle)] vector components
        counts of additions are stored separately for averaging */
-    ComponentGrid grid(nh, std::vector<std::array<double, 2>> (nr, {0.0, 0.0}));
+    ComponentGrid grid(nh, std::vector<std::array<double, 3>> (nr, {0.0, 0.0, 0.0}));
     Grid<size_t> counts(nh, std::vector<size_t> (nr, 0));
 
     /* Start while loop over frames */
@@ -325,13 +325,21 @@ static ComponentGrid do_dip(const t_topology       *top,
                 // Project the dipole onto the radial axis to get the radial component
                 // The negation is due to dx pointing *towards* the center axis while
                 // we want vr to be in the opposite direction
-                const real rcomponent = -(dipole[e1] * dx[e1] + dipole[e2] * dx[e2]) / r;
+                const real rcomponent
+                    = -(dipole[e1] * dx[e1] + dipole[e2] * dx[e2]) / r;
+
+                const real zcomponent = dipole[axis];
+
+                const real total_dipole
+                    = sqrt(std::pow(zcomponent, 2) + std::pow(rcomponent, 2));
+                const real cos_value = zcomponent / total_dipole;
 
                 const auto ir = static_cast<size_t>(floor(r / spacing));
                 const auto ih = static_cast<size_t>(floor(h / spacing));
 
-                grid[ih][ir][0] += dipole[axis];
+                grid[ih][ir][0] += zcomponent;
                 grid[ih][ir][1] += rcomponent;
+                grid[ih][ir][2] += cos_value;
                 counts[ih][ir] += 1;
             }
         }
@@ -352,6 +360,7 @@ static ComponentGrid do_dip(const t_topology       *top,
                 auto& bin = grid[ih][ir];
                 bin[0] /= count;
                 bin[1] /= count;
+                bin[2] /= count;
             }
         }
     }
@@ -409,7 +418,7 @@ static ComponentGrid downsample_grid_components(const ComponentGrid &grid, size_
     const auto nj = static_cast<size_t>(grid[0].size() / n);
     const auto nsq = std::pow(n, 2);
 
-    ComponentGrid final(ni, std::vector<std::array<double, 2>> (nj, {0.0, 0.0}));
+    ComponentGrid final(ni, std::vector<std::array<double, 3>> (nj, {0.0, 0.0, 0.0}));
 
     for (size_t i = 0; i < n * ni; ++i)
     {
@@ -420,6 +429,7 @@ static ComponentGrid downsample_grid_components(const ComponentGrid &grid, size_
 
             final[i1][j1][0] += grid[i][j][0];
             final[i1][j1][1] += grid[i][j][1];
+            final[i1][j1][2] += grid[i][j][2];
         }
     }
 
@@ -429,6 +439,7 @@ static ComponentGrid downsample_grid_components(const ComponentGrid &grid, size_
         {
             bin[0] /= static_cast<double>(nsq);
             bin[1] /= static_cast<double>(nsq);
+            bin[2] /= static_cast<double>(nsq);
         }
     }
 
@@ -471,7 +482,7 @@ static void print_grid_components(const ComponentGrid &grid,
 {
     FILE *fp = gmx_ffopen(fn, "w");
 
-    fprintf(fp, "# %6s %8s %12s %12s\n", "r (nm)", "z (nm)", "vr (nm)", "vz (nm)");
+    fprintf(fp, "# %6s %8s %12s %12s %12s\n", "r (nm)", "z (nm)", "vr (nm)", "vz (nm)", "cos_angle");
 
     real h = 0.5 * spacing;
 
@@ -481,7 +492,7 @@ static void print_grid_components(const ComponentGrid &grid,
 
         for (const auto bin : column)
         {
-            fprintf(fp, "%8.3f %8.3f %12.6f %12.6f\n", r, h, bin[1], bin[0]);
+            fprintf(fp, "%8.3f %8.3f %12.6f %12.6f %12.6f\n", r, h, bin[1], bin[0], bin[2]);
             r += spacing;
         }
 
