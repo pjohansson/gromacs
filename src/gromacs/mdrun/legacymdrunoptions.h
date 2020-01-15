@@ -127,7 +127,9 @@ class LegacyMdrunOptions
           { efTOP, "-mp",       "membed",    ffOPTRD },
           { efNDX, "-mn",       "membed",    ffOPTRD },
           { efXVG, "-if",       "imdforces", ffOPTWR },
-          { efXVG, "-swap",     "swapions",  ffOPTWR }}};
+          { efXVG, "-swap",     "swapions",  ffOPTWR },
+          // PETTER: Flow map file name base
+          { efDAT, "-flow",     "flow",      ffOPTWR }}};
 
         //! Print a warning if any force is larger than this (in kJ/mol nm).
         real                             pforce = -1;

@@ -119,12 +119,14 @@ class CheckpointHandler final
          *     step, or
          *   * the current step is the last step and a the simulation is writing
          *     configurations.
+         * 
+         * PETTER: Add `bExtraCondition` to checkpoint only at flow output steps
          */
-        void decideIfCheckpointingThisStep(bool bNS, bool bFirstStep, bool bLastStep)
+        void decideIfCheckpointingThisStep(bool bNS, bool bFirstStep, bool bLastStep, bool bExtraCondition)
         {
             if (checkpointingIsActive_)
             {
-                decideIfCheckpointingThisStepImpl(bNS, bFirstStep, bLastStep);
+                decideIfCheckpointingThisStepImpl(bNS, bFirstStep, bLastStep, bExtraCondition);
             }
         }
 
@@ -137,7 +139,7 @@ class CheckpointHandler final
     private:
         void setSignalImpl(gmx_walltime_accounting *walltime_accounting) const;
 
-        void decideIfCheckpointingThisStepImpl(bool bNS, bool bFirstStep, bool bLastStep);
+        void decideIfCheckpointingThisStepImpl(bool bNS, bool bFirstStep, bool bLastStep, bool bExtraCondition);
 
         SimulationSignal &signal_;
         bool              checkpointThisStep_;

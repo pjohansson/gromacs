@@ -95,12 +95,12 @@ void CheckpointHandler::setSignalImpl(
 }
 
 void CheckpointHandler::decideIfCheckpointingThisStepImpl(
-        bool bNS, bool bFirstStep, bool bLastStep)
+        bool bNS, bool bFirstStep, bool bLastStep, bool bExtraCondition)
 {
     checkpointThisStep_ = (((convertToCheckpointSignal(signal_.set) == CheckpointSignal::doCheckpoint &&
                              (bNS || neverUpdateNeighborlist_)) ||
                             (bLastStep && writeFinalCheckpoint_)) &&
-                           !bFirstStep);
+                           !bFirstStep && bExtraCondition);
     if (checkpointThisStep_)
     {
         signal_.set = static_cast<signed char>(CheckpointSignal::noSignal);
