@@ -22,187 +22,158 @@
 #include "md_petter.h"
 
 
-t_flow_container*
-get_flow_container(const t_commrec  *cr,
-                   const int         nfile,
-                   const t_filenm    fnm[],
-                   const t_inputrec *ir,
-                   const t_state    *state)
+FlowData
+init_flow_container(const int         nfile,
+                    const t_filenm    fnm[],
+                    const t_inputrec *ir,
+                    const t_state    *state)
 {
-    int     var,
-            step_collect = ir->userint1,
-            step_output  = ir->userint2,
-            num_bins[ni] = {
-                ir->userint3,
-                ir->userint4
-            };
+    const auto step_collect = static_cast<uint64_t>(ir->userint1);
+    auto step_output = static_cast<uint64_t>(ir->userint2);
 
-    float   bin_size[ni] = {
-                state->box[XX][XX]/num_bins[xi],
-                state->box[ZZ][ZZ]/num_bins[zi]
-            },
-            inv_bin[ni] = {
-                1/bin_size[xi],
-                1/bin_size[zi]
-            };
+    const auto nx = static_cast<size_t>(ir->userint3);
+    const auto nz = static_cast<size_t>(ir->userint4);
 
-    t_flow_container *flowcr;
+    const auto dx = static_cast<double>(state->box[XX][XX]) / static_cast<double>(nx);
+    const auto dz = static_cast<double>(state->box[ZZ][ZZ]) / static_cast<double>(nz);
 
     // Control userargs, although this should be done during pre-processing
-    if (num_bins[xi] <= 0 || num_bins[zi] <= 0)
+    if (nx <= 0 || nz <= 0)
     {
         gmx_fatal(FARGS,
-                  "Number of bins in x (userint3, %d) and z (userint4, %d) "
+                  "Number of bins along x (userint3 = %lu) and z (userint4 = %lu) "
                   "for flow data calculation and output must be larger than 0.",
-                  num_bins[xi], num_bins[zi]);
+                  nx, nz);
     }
 
     if (step_collect <= 0 || step_output <= 0)
     {
         gmx_fatal(FARGS,
-                  "Number of steps that elapse between collection (userint1, %d) "
-                  "and output (userint2, %d) of flow data must be larger than 0.",
+                  "Number of steps that elapse between collection (userint1 = %lu) "
+                  "and output (userint2 = %lu) of flow data must be larger than 0.",
                   step_collect, step_output);
     }
     else if (step_collect > step_output)
     {
         gmx_fatal(FARGS,
-                  "Number of steps elapsing between output (userint2, %d) "
-                  "must be larger than steps between collection (userint1, %d).",
-                  step_output, step_collect, step_output);
+                  "Number of steps elapsing between output (userint2 = %lu) "
+                  "must be larger than steps between collection (userint1 = %lu).",
+                  step_output, step_collect);
     }
     else if (step_output % step_collect != 0)
     {
-        int new_step_output = round(step_output/step_collect)*step_collect;
-        gmx_warning("Steps for outputting flow data (userint2, %d) not "
-                    "multiple of steps for collecting (userint1, %d). "
-                    "Setting number of steps that elapse between output to %d.",
+        const auto new_step_output = static_cast<uint64_t>(
+            round(step_output / step_collect) * step_collect
+        );
+
+        gmx_warning("Steps for outputting flow data (userint2 = %lu) not "
+                    "multiple of steps for collecting (userint1 = %lu). "
+                    "Setting number of steps that elapse between output to %lu.",
                     step_output, step_collect, new_step_output);
+
         step_output = new_step_output;
     }
 
-    // Allocate memory for flow data
-    snew(flowcr, sizeof(t_flow_container));
+    // Get name base of output datamaps by stripping the extension and dot (.)
+    std::string fnbase = opt2fn("-flow", nfile, fnm);
 
-    // Print output information to user
-    if (MASTER(cr))
+    const int ext_length = static_cast<int>(strlen(ftp2ext(efDAT)));
+    const int base_length = static_cast<int>(fnbase.size()) - ext_length - 1;
+
+    if (base_length > 0) 
     {
-        fprintf(stderr,
-                "\nData for flow field maps will be collected every %g ps "
-                "(%d steps).\n", step_collect*ir->delta_t, step_collect);
-        fprintf(stderr,
-                "It will be averaged and output to data maps every %g ps "
-                "(%d steps).\n", step_output*ir->delta_t, step_output);
-        fprintf(stderr,
-                "The system has been divided into %d x %d bins "
-                "of size %g x %g nm^2 \nin x and z.\n",
-                num_bins[xi], num_bins[zi], bin_size[xi], bin_size[zi]);
-        fprintf(stderr, "Have a nice day.\n\n");
+        fnbase.resize(static_cast<size_t>(base_length));
     }
 
-    // Set options to allocated struct
-    for (var = 0; var < ni; var++)
-    {
-        flowcr->num_bins[var] = num_bins[var];
-        flowcr->bin_size[var] = bin_size[var];
-        flowcr->inv_bin[var]  = inv_bin[var];
-    }
+    return FlowData(fnbase, {nx , nz}, {dx, dz}, step_collect, step_output);
+}
 
-    flowcr->step_collect = step_collect;
-    flowcr->step_output  = step_output;
-    flowcr->step_ratio   = step_output/step_collect;
 
-    // Allocate memory for data collection
-    snew(flowcr->data, num_bins[xi]*num_bins[zi]*NumVar);
+void 
+print_flow_collection_information(const FlowData &flowcr, const double dt) 
+{
+    fprintf(stderr,
+            "\nData for flow field maps will be collected every %g ps "
+            "(%lu steps).\n", 
+            flowcr.step_collect * dt, flowcr.step_collect);
 
-    // Get name base of output datamaps
-    strcpy(flowcr->fnbase, opt2fn("-flow", nfile, fnm));
-    flowcr->fnbase[strlen(flowcr->fnbase) - strlen(ftp2ext(efDAT)) - 1] = '\0';
+    fprintf(stderr,
+            "It will be averaged and output to data maps every %g ps "
+            "(%lu steps).\n", 
+            flowcr.step_output * dt, flowcr.step_output);
 
-    return flowcr;
+    fprintf(stderr,
+            "The system has been divided into %lu x %lu bins "
+            "of size %g x %g nm^2 \nin x and z.\n",
+            flowcr.nx(), flowcr.nz(), flowcr.dx(), flowcr.dz());
+
+    fprintf(stderr, "Have a nice day.\n\n");
 }
 
 
 static void
-collect_flow_data(t_flow_container   *flowcr,
+collect_flow_data(FlowData           &flowcr,
                   const t_commrec    *cr,
                   const t_mdatoms    *mdatoms,
                   const t_state      *state,
                   const gmx_groups_t *groups)
 {
-    int     i, j,
-            bin,                  // Corresponding bin index in 1D *data array
-            grid_position[ni];    // Current bin position in 2D grid
-
-    double *fdata = flowcr->data; // Shorthand to the data array
-
-    for (i = 0; i < mdatoms->homenr; i++)
+    for (size_t i = 0; i < static_cast<size_t>(mdatoms->homenr); ++i)
     {
-        if (DOMAINDECOMP(cr))
-        {
-            j = cr->dd->globalAtomIndices[i];
-        }
-        else
-        {
-            j = i;
-        }
+        // Check for match to the input group using the global atom index,
+        // since groups contain these indices instead of MPI rank local indices
+        const auto index_global = DOMAINDECOMP(cr) ? cr->dd->globalAtomIndices[i] : static_cast<int>(i);
 
-        // Check for match to input group
-        if (getGroupType(groups, egcUser1, j) == 0)
+        if (getGroupType(groups, egcUser1, index_global) == 0)
         {
-            // Calculate atom position in data grid
-            grid_position[xi] = ((int) (state->x[i][XX]*flowcr->inv_bin[xi]
-                        + flowcr->num_bins[xi] - 1))
-                    % flowcr->num_bins[xi];
-            grid_position[zi] = ((int) (state->x[i][ZZ]*flowcr->inv_bin[zi]
-                        + flowcr->num_bins[zi] - 1))
-                    % flowcr->num_bins[zi];
-            bin = (flowcr->num_bins[xi]*grid_position[zi] + grid_position[xi])*NumVar;
+            const auto ix = flowcr.get_xbin(state->x[i][XX]);
+            const auto iz = flowcr.get_zbin(state->x[i][ZZ]);
 
-            // Add atom data to bin at index
-            fdata[bin + NumAtoms] += 1;
-            fdata[bin + Temp]     += mdatoms->massT[i]*norm2(state->v[i]);
-            fdata[bin + Mass]     += mdatoms->massT[i];
-            fdata[bin + UU]       += mdatoms->massT[i]*state->v[i][XX];
-            fdata[bin + VV]       += mdatoms->massT[i]*state->v[i][ZZ];
+            const auto bin = flowcr.get_1d_index(ix, iz);
+            const auto mass = mdatoms->massT[i];
+
+            flowcr.data[bin + static_cast<size_t>(FlowVariable::NumAtoms)] += 1.0;
+            flowcr.data[bin + static_cast<size_t>(FlowVariable::Temp)    ] += mass * norm2(state->v[i]);
+            flowcr.data[bin + static_cast<size_t>(FlowVariable::Mass)    ] += mass;
+            flowcr.data[bin + static_cast<size_t>(FlowVariable::U)       ] += mass * state->v[i][XX];
+            flowcr.data[bin + static_cast<size_t>(FlowVariable::V)       ] += mass * state->v[i][ZZ];
         }
     }
 }
 
+enum class FlowOutput {
+    X,
+    Z,
+    NumAtoms,
+    Temp,
+    Mass,
+    U,
+    V,
+    NumVariables
+};
+constexpr size_t NUM_OUTPUT_VARIABLES = static_cast<size_t>(FlowOutput::NumVariables);
 
 static void
-output_flow_data(const t_flow_container *flowcr,
+output_flow_data(FlowData               &flowcr,
                  const t_commrec        *cr,
-                 const uint64_t          step)
+                 const uint64_t          current_step)
 {
-    FILE    *fp;
-
-    char    fnout[STRLEN];             // Final file name of output map
-
-    int     i, j,
-            bin,                       // Bin position in 1d data array
-            num_out;                   // Number of data map to output
-
-    float   write_array[ni + NumVar];  // Array for output data
-
-    double *fdata = flowcr->data;      // Shorthand to the data array
-
     // Reduce data from MPI processing elements
     // Raise warning if MPI_IN_PLACE does not run on platform
     if (PAR(cr))
     {
 #if defined(MPI_IN_PLACE_EXISTS)
         /* Master collects data from all PE's and prints */
-        MPI_Reduce(MASTER(cr) ? MPI_IN_PLACE : flowcr->data,
-                MASTER(cr) ? flowcr->data : NULL,
-                flowcr->num_bins[xi]*flowcr->num_bins[zi]*NumVar,
+        MPI_Reduce(MASTER(cr) ? MPI_IN_PLACE : flowcr.data.data(),
+                MASTER(cr) ? flowcr.data.data() : NULL,
+                flowcr.data.size(),
                 MPI_DOUBLE, MPI_SUM, MASTERRANK(cr),
                 cr->mpi_comm_mygroup);
 #else
 #warning "MPI_IN_PLACE not available on platform"
-        MPI_Reduce(MASTER(cr) ? MPI_IN_PLACE : flowcr->data,
-                MASTER(cr) ? flowcr->data : NULL,
-                flowcr->num_bins[xi]*flowcr->num_bins[zi]*NumVar,
+        MPI_Reduce(MASTER(cr) ? MPI_IN_PLACE : flowcr.data.data(),
+                MASTER(cr) ? flowcr.data.data() : NULL,
+                flowcr.data.size(),
                 MPI_DOUBLE, MPI_SUM, MASTERRANK(cr),
                 cr->mpi_comm_mygroup);
 #endif
@@ -211,55 +182,48 @@ output_flow_data(const t_flow_container *flowcr,
     if (MASTER(cr))
     {
         // Construct output file name
-        num_out = (int) (step/flowcr->step_output);
-        sprintf(fnout, "%s_%05d.%s", flowcr->fnbase, num_out, ftp2ext(efDAT));
-        fp = gmx_ffopen(fnout, "wb");
+        char fnout[STRLEN];
+        const auto file_index = static_cast<uint16_t>(current_step / flowcr.step_output);
+        snprintf(fnout, STRLEN, "%s_%05u.%s", flowcr.fnbase.c_str(), file_index, ftp2ext(efDAT));
 
-        /* Calculate and output to data maps:
-         *   Positions of bin centers in X and Z
-         *   Number of atoms, sample average
-         *   Temperature
-         *   Mass, sample average
-         *   Flow U and V
-         *
-         * Data is collected in write_array before outputting
-         */
-        for (i = 0; i < flowcr->num_bins[xi]; i++)
+        FILE* fp = gmx_ffopen(fnout, "wb");
+        std::array<float, NUM_OUTPUT_VARIABLES> output_buffer;
+
+        for (size_t ix = 0; ix < flowcr.nx(); ++ix)
         {
-            write_array[xi] = (i + 0.5)*flowcr->bin_size[xi];
+            output_buffer[static_cast<size_t>(FlowOutput::X)] = flowcr.get_x(ix);
 
-            for (j = 0; j < flowcr->num_bins[zi]; j++)
+            for (size_t iz = 0; iz < flowcr.nz(); ++iz)
             {
-                write_array[zi] = (j + 0.5)*flowcr->bin_size[zi];
-                bin = (i + flowcr->num_bins[xi]*j)*NumVar;
+                output_buffer[static_cast<size_t>(FlowOutput::Z)] = flowcr.get_z(iz);
 
-                // Sample average mass and number density
-                write_array[ni + NumAtoms] = fdata[bin + NumAtoms]/flowcr->step_ratio;
-                write_array[ni + Mass]     = fdata[bin + Mass]/flowcr->step_ratio;
+                const auto bin = flowcr.get_1d_index(ix, iz);
 
-                /* Sample average temperature */
-                if (fdata[bin + NumAtoms] > 0.0)
-                {
-                    write_array[ni + Temp] = fdata[bin + Temp]/(2*BOLTZ*fdata[bin + NumAtoms]);
-                }
-                else
-                {
-                    write_array[ni + Temp] = 0.0;
-                }
+                const auto num_atoms = flowcr.data[bin + static_cast<size_t>(FlowVariable::NumAtoms)];
+                const auto mass      = flowcr.data[bin + static_cast<size_t>(FlowVariable::Mass)    ];
 
-                /* Average U and V over accumulated mass in bins */
-                if (fdata[bin + Mass] > 0.0)
-                {
-                    write_array[ni + UU] = fdata[bin + UU]/fdata[bin + Mass];
-                    write_array[ni + VV] = fdata[bin + VV]/fdata[bin + Mass];
-                }
-                else
-                {
-                    write_array[ni + UU] = 0.0;
-                    write_array[ni + VV] = 0.0;
-                }
+                // The temperature and flow is averaged by the sampled number 
+                // of atoms and mass in each bin. 
+                const auto temperature = num_atoms > 0.0 
+                    ? flowcr.data[bin + static_cast<size_t>(FlowVariable::Temp)] / (2.0 * BOLTZ * num_atoms) 
+                    : 0.0;
 
-                fwrite(&write_array, sizeof(float), ni + NumVar, fp);
+                const auto flow_x = mass > 0.0 ? flowcr.data[bin + static_cast<size_t>(FlowVariable::U)] / mass : 0.0;
+                const auto flow_z = mass > 0.0 ? flowcr.data[bin + static_cast<size_t>(FlowVariable::V)] / mass : 0.0;
+
+                // In contrast to above, the mass and number of atoms has to be divided by 
+                // the number of samples taken to get their average.
+                const auto num_samples = static_cast<float>(flowcr.step_ratio);
+                const auto avg_num_atoms = num_atoms / num_samples;
+                const auto avg_mass = mass / num_samples;
+
+                output_buffer[static_cast<size_t>(FlowOutput::NumAtoms)] = static_cast<float>(avg_num_atoms);
+                output_buffer[static_cast<size_t>(FlowOutput::Mass)    ] = static_cast<float>(avg_mass);
+                output_buffer[static_cast<size_t>(FlowOutput::Temp)    ] = static_cast<float>(temperature);
+                output_buffer[static_cast<size_t>(FlowOutput::U)       ] = static_cast<float>(flow_x);
+                output_buffer[static_cast<size_t>(FlowOutput::V)       ] = static_cast<float>(flow_z);
+
+                fwrite(output_buffer.data(), sizeof(float), NUM_OUTPUT_VARIABLES, fp);
             }
         }
 
@@ -268,17 +232,9 @@ output_flow_data(const t_flow_container *flowcr,
 }
 
 
-static void
-reset_flow_data(t_flow_container *flowcr)
-{
-    sfree(flowcr->data);
-    snew(flowcr->data, flowcr->num_bins[xi]*flowcr->num_bins[zi]*NumVar);
-}
-
-
 void
-flow_collect_or_output(t_flow_container   *flowcr,
-                       const uint64_t      step,
+flow_collect_or_output(FlowData           &flowcr,
+                       const uint64_t      current_step,
                        const t_commrec    *cr,
                        const t_inputrec   *ir,
                        const t_mdatoms    *mdatoms,
@@ -287,10 +243,11 @@ flow_collect_or_output(t_flow_container   *flowcr,
 {
     collect_flow_data(flowcr, cr, mdatoms, state, groups);
 
-    if (do_per_step(step, flowcr->step_output) && step != ir->init_step)
+    if (do_per_step(current_step, flowcr.step_output) 
+        && (static_cast<int64_t>(current_step) != ir->init_step))
     {
-        output_flow_data(flowcr, cr, step);
-        reset_flow_data(flowcr);
+        output_flow_data(flowcr, cr, current_step);
+        flowcr.reset_data();
     }
 }
 

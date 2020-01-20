@@ -618,12 +618,16 @@ void gmx::Integrator::do_md()
     // PETTER
     // Prepare for (optional) flow field output by setting up the container
     // and reading all parameter values.
-    t_flow_container *flowcr = nullptr;
-    const bool bFlowOutput = opt2bSet("-flow", nfile, fnm);
+    FlowData flowcr;
 
-    if (bFlowOutput)
+    if (opt2bSet("-flow", nfile, fnm))
     {
-        flowcr = get_flow_container(cr, nfile, fnm, ir, state);
+        flowcr = init_flow_container(nfile, fnm, ir, state);
+
+        if (MASTER(cr))
+        {
+            print_flow_collection_information(flowcr, ir->delta_t);
+        }
     }
 
     bool simulationsShareState = false;
@@ -821,7 +825,7 @@ void gmx::Integrator::do_md()
         // not save any data from the flow maps in a checkpoint, so if we resume from a checkpoint 
         // in between output steps, all data since the last output has been lost. By only checkpointing
         // at flow output steps we do not throw away any data.
-        const bool bFlowOutputThisStep = bFlowOutput ? (step % flowcr->step_output) == 0 : true;
+        const bool bFlowOutputThisStep = flowcr.bDoFlowCollection ? (step % flowcr.step_output) == 0 : true;
         checkpointHandler->decideIfCheckpointingThisStep(bNS, bFirstStep, bLastStep, bFlowOutputThisStep);
 
         /* Determine the energy and pressure:
@@ -1468,12 +1472,9 @@ void gmx::Integrator::do_md()
         startingFromCheckpoint = false;
 
         // PETTER
-        if (bFlowOutput)
+        if (flowcr.bDoFlowCollection && do_per_step(step, flowcr.step_collect))
         {
-            if (do_per_step(step, flowcr->step_collect))
-            {
-                flow_collect_or_output(flowcr, step, cr, ir, mdatoms, state, groups);
-            }
+            flow_collect_or_output(flowcr, step, cr, ir, mdatoms, state, groups);
         }
 
         /* #######  SET VARIABLES FOR NEXT ITERATION IF THEY STILL NEED IT ###### */
@@ -1516,13 +1517,6 @@ void gmx::Integrator::do_md()
 
     }
     /* End of main MD loop */
-
-    // PETTER
-    if (bFlowOutput)
-    {
-        sfree(flowcr->data);
-        sfree(flowcr);
-    }
 
     /* Closing TNG files can include compressing data. Therefore it is good to do that
      * before stopping the time measurements. */
