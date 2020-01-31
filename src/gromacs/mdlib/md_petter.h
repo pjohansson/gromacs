@@ -42,19 +42,21 @@ public:
     FlowData() {}
 
     FlowData(const std::string fnbase,
-             const std::array<size_t, NUM_AXES> num_bins,
-             const std::array<double, NUM_AXES> bin_size,
+             const size_t nx, 
+             const size_t nz,
+             const double dx,
+             const double dz,
              const uint64_t step_collect,
              const uint64_t step_output)
     :bDoFlowCollection { true },
      fnbase { fnbase },
-     data(nx() * nz() * NUM_FLOW_VARIABLES, 0.0),
+     data(nx * nz * NUM_FLOW_VARIABLES, 0.0),
      step_collect { step_collect },
      step_output { step_output },
      step_ratio { static_cast<uint64_t>(step_output / step_collect) },
-     num_bins { num_bins },
-     bin_size { bin_size },
-     inv_bin_size { 1.0 / dx(), 1.0 / dz() } {}
+     num_bins { nx, nz },
+     bin_size { dx, dz },
+     inv_bin_size { 1.0 / dx, 1.0 / dz } {}
 
     double dx() const { return bin_size[static_cast<size_t>(GridAxes::X)]; }
     double dz() const { return bin_size[static_cast<size_t>(GridAxes::Z)]; }

@@ -85,7 +85,7 @@ init_flow_container(const int         nfile,
         fnbase.resize(static_cast<size_t>(base_length));
     }
 
-    return FlowData(fnbase, {nx , nz}, {dx, dz}, step_collect, step_output);
+    return FlowData(fnbase, nx , nz, dx, dz, step_collect, step_output);
 }
 
 
