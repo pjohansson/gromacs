@@ -27,6 +27,23 @@ enum class FlowVariable {
 };
 constexpr size_t NUM_FLOW_VARIABLES = static_cast<size_t>(FlowVariable::NumVariables);
 
+struct GroupFlowData {
+    std::string fnbase, 
+                name;
+    std::vector<double> data;
+
+    GroupFlowData(const std::string& fnbase_original, 
+                  const std::string& group_name, 
+                  const size_t num_data)
+    :name { group_name },
+     data(num_data, 0.0)
+    {
+        fnbase.append(fnbase_original);
+        fnbase.append("_");
+        fnbase.append(group_name);
+    }
+};
+
 class FlowData {
 public:
     bool bDoFlowCollection = false;
@@ -34,6 +51,7 @@ public:
     std::string fnbase;
 
     std::vector<double> data;   // A 2D grid is represented by this 1D array
+    std::vector<GroupFlowData> group_data; // Similar data for all separate atom groups
 
     uint64_t step_collect = 0, 
              step_output = 0,
@@ -42,6 +60,7 @@ public:
     FlowData() {}
 
     FlowData(const std::string fnbase,
+             const std::vector<std::string> group_names,
              const size_t nx, 
              const size_t nz,
              const double dx,
@@ -56,7 +75,13 @@ public:
      step_ratio { static_cast<uint64_t>(step_output / step_collect) },
      num_bins { nx, nz },
      bin_size { dx, dz },
-     inv_bin_size { 1.0 / dx, 1.0 / dz } {}
+     inv_bin_size { 1.0 / dx, 1.0 / dz } 
+     {
+         for (const auto& name : group_names)
+         {
+             group_data.push_back(GroupFlowData(fnbase, name, data.size()));
+         }
+     }
 
     double dx() const { return bin_size[static_cast<size_t>(GridAxes::X)]; }
     double dz() const { return bin_size[static_cast<size_t>(GridAxes::Z)]; }
@@ -78,7 +103,14 @@ public:
     float get_x(const size_t ix) const { return get_position(ix, dx()); }
     float get_z(const size_t iz) const { return get_position(iz, dz()); }
 
-    void reset_data() { data.assign(data.size(), 0.0); }
+    void reset_data() { 
+        data.assign(data.size(), 0.0);
+
+        for (auto& group : group_data)
+        {
+            group.data.assign(group.data.size(), 0.0);
+        }
+    }
 
 private:
     std::array<size_t, NUM_AXES> num_bins;
@@ -105,10 +137,11 @@ private:
 
 // Prepare and return a container for flow field data
 FlowData
-init_flow_container(const int         nfile,
-                    const t_filenm    fnm[],
-                    const t_inputrec *ir,
-                    const t_state    *state);
+init_flow_container(const int           nfile,
+                    const t_filenm      fnm[],
+                    const t_inputrec   *ir,
+                    const gmx_groups_t *groups,
+                    const t_state      *state);
 
 // Write information about the flow field collection
 void 

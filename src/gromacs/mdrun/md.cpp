@@ -622,7 +622,7 @@ void gmx::Integrator::do_md()
 
     if (opt2bSet("-flow", nfile, fnm))
     {
-        flowcr = init_flow_container(nfile, fnm, ir, state);
+        flowcr = init_flow_container(nfile, fnm, ir, groups, state);
 
         if (MASTER(cr))
         {
