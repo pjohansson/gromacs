@@ -7,6 +7,8 @@
 
 #include "gromacs/mdtypes/state.h"
 
+constexpr char FLOW_FILE_HEADER_NAME[] = "GMX_FLOW_1";
+
 // We are using a grid along X and Z so we use a separate enum 
 // to not confuse our indexing with regular XX, YY and ZZ
 enum class GridAxes {
@@ -14,7 +16,7 @@ enum class GridAxes {
     Z,
     NumAxes
 };
-constexpr size_t NUM_AXES = static_cast<size_t>(GridAxes::NumAxes);
+constexpr size_t NUM_FLOW_AXES = static_cast<size_t>(GridAxes::NumAxes);
 
 // Indices for different data in array
 enum class FlowVariable {
@@ -113,9 +115,9 @@ public:
     }
 
 private:
-    std::array<size_t, NUM_AXES> num_bins;
-    std::array<double, NUM_AXES> bin_size,
-                                 inv_bin_size;
+    std::array<size_t, NUM_FLOW_AXES> num_bins;
+    std::array<double, NUM_FLOW_AXES> bin_size,
+                                      inv_bin_size;
 
     size_t get_bin_from_position(const real x, const size_t num_bins, const real inv_bin) const
     {

@@ -2,6 +2,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sstream>
 
 #include "gromacs/commandline/filenm.h"
 #include "gromacs/domdec/domdec.h"
@@ -207,23 +208,37 @@ collect_flow_data(FlowData           &flowcr,
     }
 }
 
-enum class FlowOutput {
-    X,
-    Z,
-    NumAtoms,
-    Temp,
-    Mass,
-    U,
-    V,
-    NumVariables
-};
-constexpr size_t NUM_OUTPUT_VARIABLES = static_cast<size_t>(FlowOutput::NumVariables);
 
-static void 
-calc_values_in_bin(std::array<float, NUM_OUTPUT_VARIABLES> &buf,
-                   const std::vector<double>               &data,
-                   const size_t                             bin,
-                   const uint64_t                           samples_per_output)
+struct FlowBinData {
+    float mass, 
+          temp, 
+          num_atoms, 
+          u, 
+          v;
+};
+
+
+struct FlowDataOutput {
+    std::vector<uint64_t> ix, iy;
+    std::vector<float> mass, num_atoms, temp, us, vs;
+
+    FlowDataOutput(const size_t num_elements) 
+    {
+        ix.reserve(num_elements);
+        iy.reserve(num_elements);
+        mass.reserve(num_elements);
+        num_atoms.reserve(num_elements);
+        temp.reserve(num_elements);
+        us.reserve(num_elements);
+        vs.reserve(num_elements);
+    }
+};
+
+
+static FlowBinData 
+calc_values_in_bin(const std::vector<double> &data,
+                   const size_t               bin,
+                   const uint64_t             samples_per_output)
 {
     const auto num_atoms = data[bin + static_cast<size_t>(FlowVariable::NumAtoms)];
     const auto mass      = data[bin + static_cast<size_t>(FlowVariable::Mass)    ];
@@ -243,12 +258,105 @@ calc_values_in_bin(std::array<float, NUM_OUTPUT_VARIABLES> &buf,
     const auto avg_num_atoms = num_atoms / num_samples;
     const auto avg_mass = mass / num_samples;
 
-    buf[static_cast<size_t>(FlowOutput::NumAtoms)] = static_cast<float>(avg_num_atoms);
-    buf[static_cast<size_t>(FlowOutput::Mass)    ] = static_cast<float>(avg_mass);
-    buf[static_cast<size_t>(FlowOutput::Temp)    ] = static_cast<float>(temperature);
-    buf[static_cast<size_t>(FlowOutput::U)       ] = static_cast<float>(flow_x);
-    buf[static_cast<size_t>(FlowOutput::V)       ] = static_cast<float>(flow_z);
+    FlowBinData bin_data;
+
+    bin_data.num_atoms = static_cast<float>(avg_num_atoms);
+    bin_data.mass = static_cast<float>(avg_mass);
+    bin_data.temp = static_cast<float>(temperature);
+    bin_data.u    = static_cast<float>(flow_x);
+    bin_data.v    = static_cast<float>(flow_z);
+
+    return bin_data;
 }
+
+
+static void
+add_bin_if_non_empty(FlowDataOutput    &data,
+                     const size_t       ix,
+                     const size_t       iy,
+                     const FlowBinData &bin_data)
+{
+    if (bin_data.mass > 0.0) 
+    {
+        data.ix.push_back(static_cast<uint64_t>(ix));
+        data.iy.push_back(static_cast<uint64_t>(iy));
+
+        data.mass.push_back(bin_data.mass);
+        data.num_atoms.push_back(bin_data.num_atoms);
+        data.temp.push_back(bin_data.temp);
+        data.us.push_back(bin_data.u);
+        data.vs.push_back(bin_data.v);
+    }
+}
+
+
+static void 
+write_header(FILE        *fp,
+             const size_t nx,
+             const size_t ny,
+             const double dx,
+             const double dy,
+             const size_t num_values)
+{
+    std::ostringstream buf;
+
+    buf << "FORMAT " << FLOW_FILE_HEADER_NAME << '\n';
+    buf << "ORIGIN 0.0 0.0\n";
+    buf << "SHAPE " << nx << ' ' << ny << '\n';
+    buf << "SPACING " << dx << ' ' << dy << '\n';
+    buf << "NUMDATA " << num_values << '\n';
+    buf << "FIELDS IX IY N T M U V\n";
+    buf << "COMMENT Grid is regular but only non-empty bins are output\n";
+    buf << "COMMENT There are 'NUMDATA' non-empty bins and that many values are stored for each field\n";
+    buf << "COMMENT 'FIELDS' is the different fields for each bin:\n";
+    buf << "COMMENT 'IX' and 'IY' are bin indices along x and y respectively\n";
+    buf << "COMMENT 'N' is the average number of atoms\n";
+    buf << "COMMENT 'M' is the average mass\n";
+    buf << "COMMENT 'T' is the temperature\n";
+    buf << "COMMENT 'U' and 'V' is the mass flow along x and y respectively\n";
+    buf << "COMMENT Data is stored as 'NUMDATA' counts for each field in 'FIELDS', in order\n";
+    buf << "COMMENT 'IX' and 'IY' are 64-bit unsigned integers\n";
+    buf << "COMMENT Other fields are 32-bit floating point numbers\n";
+    buf << "COMMENT Data begins after '\\0' character\n";
+    buf << "COMMENT Example: with 'NUMDATA' = 4 and 'FIELDS' = 'IX IY N T', "
+                << "the data following the '\\0' marker is 4 + 4 64-bit integers "
+                << "and then 4 + 4 32-bit floating point numbers\n";
+    buf << '\0';
+
+    const std::string header_str { buf.str() };
+
+    fwrite(header_str.c_str(), sizeof(char), header_str.size(), fp);
+}
+
+
+static void 
+write_flow_data(const std::string    &fnbase, 
+                const size_t          num_file, 
+                const FlowDataOutput &data,
+                const size_t          nx,
+                const size_t          ny,
+                const double          dx,
+                const double          dy)
+{
+    char fn[STRLEN];
+    snprintf(fn, STRLEN, "%s_%05lu.%s", fnbase.c_str(), num_file, ftp2ext(efDAT));
+
+    FILE *fp = gmx_ffopen(fn, "wb");
+
+    const size_t num_elements = data.ix.size();
+    write_header(fp, nx, ny, dx, dy, num_elements);
+
+    fwrite(data.ix.data(),        sizeof(uint64_t), num_elements, fp);
+    fwrite(data.iy.data(),        sizeof(uint64_t), num_elements, fp);
+    fwrite(data.num_atoms.data(), sizeof(float),    num_elements, fp);
+    fwrite(data.temp.data(),      sizeof(float),    num_elements, fp);
+    fwrite(data.mass.data(),      sizeof(float),    num_elements, fp);
+    fwrite(data.us.data(),        sizeof(float),    num_elements, fp);
+    fwrite(data.vs.data(),        sizeof(float),    num_elements, fp);
+
+    gmx_ffclose(fp);
+}
+
 
 static void
 output_flow_data(FlowData               &flowcr,
@@ -296,51 +404,50 @@ output_flow_data(FlowData               &flowcr,
 
     if (MASTER(cr))
     {
-        // Construct output file name
-        char fnout[STRLEN];
-        const auto file_index = static_cast<uint16_t>(current_step / flowcr.step_output);
-        snprintf(fnout, STRLEN, "%s_%05u.%s", flowcr.fnbase.c_str(), file_index, ftp2ext(efDAT));
+        const auto num_elements = flowcr.nx() * flowcr.nz();
+        FlowDataOutput system_bin_data(num_elements);
+        std::vector<FlowDataOutput> separate_group_bin_data;
 
-        std::array<float, NUM_OUTPUT_VARIABLES> output_buffer;
-
-        FILE* fp = gmx_ffopen(fnout, "wb");
-
-        std::vector<FILE*> group_fps;
-        for (const auto& group_data : flowcr.group_data)
+        for (size_t i = 0; i < flowcr.group_data.size(); ++i)
         {
-            snprintf(fnout, STRLEN, "%s_%05u.%s", group_data.fnbase.c_str(), file_index, ftp2ext(efDAT));
-            group_fps.push_back(gmx_ffopen(fnout, "wb"));
+            separate_group_bin_data.push_back(FlowDataOutput(num_elements));
         }
 
         for (size_t ix = 0; ix < flowcr.nx(); ++ix)
         {
-            output_buffer[static_cast<size_t>(FlowOutput::X)] = flowcr.get_x(ix);
-
             for (size_t iz = 0; iz < flowcr.nz(); ++iz)
             {
-                output_buffer[static_cast<size_t>(FlowOutput::Z)] = flowcr.get_z(iz);
-
                 const auto bin = flowcr.get_1d_index(ix, iz);
+                const auto bin_data = calc_values_in_bin(flowcr.data, bin, flowcr.step_ratio);
+                add_bin_if_non_empty(system_bin_data, ix, iz, bin_data);
 
-                calc_values_in_bin(output_buffer, flowcr.data, bin, flowcr.step_ratio);
-                fwrite(output_buffer.data(), sizeof(float), NUM_OUTPUT_VARIABLES, fp);
-
-                for (size_t index_group = 0; index_group < flowcr.group_data.size(); ++index_group)
+                for (size_t i = 0; i < flowcr.group_data.size(); ++i)
                 {
-                    auto group_fp = group_fps.at(index_group);
-                    const auto& group_data = flowcr.group_data.at(index_group);
+                    const auto& data = flowcr.group_data.at(i).data;
+                    auto& group_data = separate_group_bin_data.at(i);
 
-                    calc_values_in_bin(output_buffer, group_data.data, bin, flowcr.step_ratio);
-                    fwrite(output_buffer.data(), sizeof(float), NUM_OUTPUT_VARIABLES, group_fp);
+                    const auto group_bin_data = calc_values_in_bin(data, bin, flowcr.step_ratio);
+                    add_bin_if_non_empty(group_data, ix, iz, group_bin_data);
                 }
             }
         }
 
-        gmx_ffclose(fp);
+        const auto file_index = static_cast<uint16_t>(current_step / flowcr.step_output);
 
-        for (auto& group_fp : group_fps)
+        write_flow_data(
+            flowcr.fnbase, file_index, system_bin_data, 
+            flowcr.nx(), flowcr.nz(), flowcr.dx(), flowcr.dz()
+        );
+
+        for (size_t i = 0; i < flowcr.group_data.size(); ++i)
         {
-            gmx_ffclose(group_fp);
+            const auto& fnbase = flowcr.group_data.at(i).fnbase;
+            const auto& group_data = separate_group_bin_data.at(i);
+
+            write_flow_data(
+                fnbase, file_index, group_data,
+                flowcr.nx(), flowcr.nz(), flowcr.dx(), flowcr.dz()
+            );
         }
     }
 }
