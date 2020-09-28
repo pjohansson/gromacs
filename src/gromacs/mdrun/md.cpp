@@ -145,6 +145,8 @@
 #include "replicaexchange.h"
 #include "shellfc.h"
 
+#include "md_shear_coupling.h"
+
 #if GMX_FAHCORE
 #    include "corewrap.h"
 #endif
@@ -617,6 +619,10 @@ void gmx::LegacySimulator::do_md()
     /* need to make an initiation call to get the Trotter variables set, as well as other constants
        for non-trotter temperature control */
     auto trotter_seq = init_npt_vars(ir, state, &MassQ, bTrotter);
+
+    /* [PETTER] SHEAR COUPLING SETUP */
+    const gmx_bool bShearCoupling = ir->bShearCoupling;
+    const auto shear_velocity_coupling_opts = init_shear_velocity_coupling_opts(ir, state->box, groups, cr, mdlog);
 
     if (MASTER(cr))
     {
@@ -1194,6 +1200,12 @@ void gmx::LegacySimulator::do_md()
              *  otherwise the other nodes don't know.
              */
             checkpointHandler->setSignal(walltime_accounting);
+        }
+
+        /* #########   PETTER   ######### */
+        if (bShearCoupling && do_per_step(step, shear_velocity_coupling_opts.step))
+        {
+            do_shear_velocity_coupling(state, mdatoms, step, shear_velocity_coupling_opts, groups, cr);
         }
 
         /* #########   START SECOND UPDATE STEP ################# */

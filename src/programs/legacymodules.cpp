@@ -325,6 +325,8 @@ void registerLegacyModules(gmx::CommandLineModuleManager* manager)
     registerModule(manager, &gmx_wheel, "wheel", "Plot helical wheels");
     registerModuleNoNice(manager, &gmx_view, "view", "View a trajectory on an X-Windows terminal");
 
+    registerModule(manager, &gmx_velocity_profile, "velprofile", "Calculate velocity profiles along an axis");
+
     {
         gmx::CommandLineModuleGroup group =
                 manager->addModuleGroup("Generating topologies and coordinates");

@@ -1032,6 +1032,16 @@ void pr_inputrec(FILE* fp, int indent, const char* title, const t_inputrec* ir, 
         PR("userreal3", ir->userreal3);
         PR("userreal4", ir->userreal4);
 
+        /* [PETTER] Shear coupling options */
+        PS("shear-coupling", EBOOL(ir->bShearCoupling));
+        PS("shear-axis", enum_name(ir->shear_axis, static_cast<int>(ShearAxis_axis::NR), ShearAxis_axis_names));
+        PS("shear-direction", enum_name(ir->shear_direction, static_cast<int>(ShearAxis_direction::NR), ShearAxis_direction_names));
+        PS("shear-strategy", enum_name(ir->shear_strategy, static_cast<int>(ShearCouplStrategy::NR), ShearCouplStrategy_names));
+        PR("shear-tcoupl", ir->shear_tcoupl);
+        PR("shear-area-size", ir->shear_area_size);
+        PR("shear-zadj", ir->shear_zadj);
+        PR("shear-ref-velocity", ir->shear_ref_velocity);
+
         if (!bMDPformat)
         {
             gmx::TextWriter writer(fp);
