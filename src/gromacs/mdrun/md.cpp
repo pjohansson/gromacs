@@ -145,6 +145,9 @@
 #include "replicaexchange.h"
 #include "shellfc.h"
 
+// PETTER
+#include "gromacs/mdlib/flow_field.h"
+
 #if GMX_FAHCORE
 #    include "corewrap.h"
 #endif
@@ -894,8 +897,12 @@ void gmx::LegacySimulator::do_md()
         // not save any data from the flow maps in a checkpoint, so if we resume from a checkpoint 
         // in between output steps, all data since the last output has been lost. By only checkpointing
         // at flow output steps we do not throw away any data.
+        //
+        // Since checkpoint is only done at neighbourlist creation steps (bNS) we hitchhike on that.
+        //
+        // TODO: Should we assert that the output step is a multiple of nstlist?
         const bool bFlowOutputThisStep = flowcr.bDoFlowCollection ? (step % flowcr.step_output) == 0 : true;
-        checkpointHandler->decideIfCheckpointingThisStep(bNS, bFirstStep, bLastStep, bFlowOutputThisStep);
+        checkpointHandler->decideIfCheckpointingThisStep(bNS && bFlowOutputThisStep, bFirstStep, bLastStep);
 
         /* Determine the energy and pressure:
          * at nstcalcenergy steps and at energy output steps (set below).

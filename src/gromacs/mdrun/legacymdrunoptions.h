@@ -121,7 +121,10 @@ public:
                                           { efTOP, "-mp", "membed", ffOPTRD },
                                           { efNDX, "-mn", "membed", ffOPTRD },
                                           { efXVG, "-if", "imdforces", ffOPTWR },
-                                          { efXVG, "-swap", "swapions", ffOPTWR } } };
+                                          { efXVG, "-swap", "swapions", ffOPTWR },
+                                          // PETTER 
+                                          // Add flow field output file name
+                                          { efDAT, "-flow", "flow", ffOPTWR } } };
 
     //! Print a warning if any force is larger than this (in kJ/mol nm).
     real pforce = -1;

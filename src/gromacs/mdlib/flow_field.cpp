@@ -7,9 +7,10 @@
 #include "gromacs/commandline/filenm.h"
 #include "gromacs/domdec/domdec.h"
 #include "gromacs/domdec/domdec_struct.h"
-#include "gromacs/mdlib/sim_util.h"
+#include "gromacs/mdlib/stat.h"
 #include "gromacs/mdtypes/commrec.h"
 #include "gromacs/mdtypes/inputrec.h"
+#include "gromacs/mdtypes/mdatom.h"
 #include "gromacs/math/vec.h"
 #include "gromacs/math/units.h"
 #include "gromacs/topology/topology.h"
@@ -20,15 +21,41 @@
 #include "gromacs/utility/gmxmpi.h"
 #include "gromacs/utility/smalloc.h"
 
-#include "md_petter.h"
+#include "flow_field.h"
+
+/*! \brief Get the number of groups in User1
+
+    This is slightly complicated by how Gromacs adds a "rest" group 
+    to the array of names if the other groups do not add up to all 
+    atoms in the system. Thus, we detect if the final group is called 
+    exactly "rest" and if so do not count it as one of the groups. */
+static size_t get_num_groups(const SimulationGroups *groups)
+{
+    size_t num_groups = 0;
+
+    for (const auto global_group_index 
+         : groups->groups[SimulationAtomGroupType::User1])
+    {
+        const auto name = groups->groupNames[global_group_index];
+
+        if (strncmp(*name, "rest", 8) == 0)
+        {
+            break;
+        }
+
+        num_groups++;
+    }
+
+    return num_groups;
+}
 
 
 FlowData
-init_flow_container(const int           nfile,
-                    const t_filenm      fnm[],
-                    const t_inputrec   *ir,
-                    const gmx_groups_t *groups,
-                    const t_state      *state)
+init_flow_container(const int               nfile,
+                    const t_filenm          fnm[],
+                    const t_inputrec       *ir,
+                    const SimulationGroups *groups,
+                    const t_state          *state)
 {
     const auto step_collect = static_cast<uint64_t>(ir->userint1);
     auto step_output = static_cast<uint64_t>(ir->userint2);
@@ -91,7 +118,8 @@ init_flow_container(const int           nfile,
     // collection for each individual group (as well as them all combined)
     //
     // Get the number of selected groups, subtract 1 because "rest" is always present
-    const size_t num_groups = groups->grps[egcUser1].nr - 1;
+    // const size_t num_groups = groups->grps[egcUser1].nr - 1;
+    const size_t num_groups = get_num_groups(groups);
 
     std::vector<std::string> group_names;
 
@@ -99,8 +127,12 @@ init_flow_container(const int           nfile,
     {
         for (size_t i = 0; i < num_groups; ++i)
         {
-            const size_t index_name = groups->grps[egcUser1].nm_ind[i];
-            const char *name = *groups->grpname[index_name];
+            const auto global_group_index 
+                = groups->groups[SimulationAtomGroupType::User1].at(i);
+
+            const char *name = *groups->groupNames[global_group_index];
+            // const size_t index_name = groups->grps[egcUser1].nm_ind[i];
+            // const char *name = *groups->grpname[index_name];
 
             group_names.push_back(std::string(name));
         }
@@ -178,7 +210,7 @@ collect_flow_data(FlowData           &flowcr,
                   const t_commrec    *cr,
                   const t_mdatoms    *mdatoms,
                   const t_state      *state,
-                  const gmx_groups_t *groups)
+                  const SimulationGroups *groups)
 {
     const int num_groups = flowcr.group_data.empty() ? 1 : flowcr.group_data.size();
 
@@ -188,7 +220,7 @@ collect_flow_data(FlowData           &flowcr,
         // since groups contain these indices instead of MPI rank local indices
         const auto index_global = DOMAINDECOMP(cr) ? cr->dd->globalAtomIndices[i] : static_cast<int>(i);
 
-        const auto index_group = getGroupType(groups, egcUser1, index_global);
+        const auto index_group = getGroupType(*groups, SimulationAtomGroupType::User1, index_global);
 
         if (index_group < num_groups)
         {
@@ -454,13 +486,13 @@ output_flow_data(FlowData               &flowcr,
 
 
 void
-flow_collect_or_output(FlowData           &flowcr,
-                       const uint64_t      current_step,
-                       const t_commrec    *cr,
-                       const t_inputrec   *ir,
-                       const t_mdatoms    *mdatoms,
-                       const t_state      *state,
-                       const gmx_groups_t *groups)
+flow_collect_or_output(FlowData               &flowcr,
+                       const uint64_t          current_step,
+                       const t_commrec        *cr,
+                       const t_inputrec       *ir,
+                       const t_mdatoms        *mdatoms,
+                       const t_state          *state,
+                       const SimulationGroups *groups)
 {
     collect_flow_data(flowcr, cr, mdatoms, state, groups);
 

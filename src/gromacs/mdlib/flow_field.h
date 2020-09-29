@@ -142,7 +142,7 @@ FlowData
 init_flow_container(const int           nfile,
                     const t_filenm      fnm[],
                     const t_inputrec   *ir,
-                    const gmx_groups_t *groups,
+                    const SimulationGroups *groups,
                     const t_state      *state);
 
 // Write information about the flow field collection
@@ -157,6 +157,6 @@ flow_collect_or_output(FlowData           &flowcr,
                        const t_inputrec   *ir,
                        const t_mdatoms    *mdatoms,
                        const t_state      *state,
-                       const gmx_groups_t *groups);
+                       const SimulationGroups *groups);
 
 #endif
