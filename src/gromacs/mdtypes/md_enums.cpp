@@ -201,3 +201,11 @@ const char* gmx_nbkernel_elec_names[GMX_NBKERNEL_ELEC_NR + 1] = {
 const char* gmx_nbkernel_vdw_names[GMX_NBKERNEL_VDW_NR + 1] = { "None",       "Lennard-Jones",
                                                                 "Buckingham", "Cubic-Spline-Table",
                                                                 "LJEwald",    nullptr };
+
+/* [PETTER] Shear velocity coupling options */
+const char* ShearCouplStrategy_names[static_cast<size_t>(ShearCouplStrategy::NR) + 1] 
+    = { "Edges", "Edge-Center", nullptr };
+const char* ShearAxis_axis_names[static_cast<size_t>(ShearAxis_axis::NR) + 1] 
+    = { "Z", "X", "Y", nullptr };
+const char* ShearAxis_direction_names[static_cast<size_t>(ShearAxis_direction::NR) + 1] 
+    = { "X", "Y", "Z", nullptr };

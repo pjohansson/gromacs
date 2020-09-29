@@ -45,6 +45,7 @@
 #include "gromacs/mdtypes/md_enums.h"
 #include "gromacs/utility/basedefinitions.h"
 #include "gromacs/utility/real.h"
+#include "gromacs/mdrun/md_shear_coupling_enum.h" /* [PETTER] */
 
 #define EGP_EXCL (1 << 0)
 #define EGP_TABLE (1 << 1)
@@ -564,6 +565,17 @@ struct t_inputrec // NOLINT (clang-analyzer-optin.performance.Padding)
     real userreal2;
     real userreal3;
     real userreal4;
+    /**@}*/
+    /*! \brief [PETTER] Shear velocity coupling options */
+    /**@{*/
+    gmx_bool bShearCoupling;
+    int      shear_axis;
+    int      shear_direction;
+    int      shear_strategy;
+    real     shear_tcoupl;
+    real     shear_area_size;
+    real     shear_zadj;
+    real     shear_ref_velocity;
     /**@}*/
     //! Group options
     t_grpopts opts;

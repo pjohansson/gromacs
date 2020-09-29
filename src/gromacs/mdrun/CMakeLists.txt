@@ -45,6 +45,7 @@ gmx_add_libgromacs_sources(
     shellfc.cpp
     simulationcontext.cpp
     tpi.cpp
+    md_shear_coupling.cpp
     )
 
 if (BUILD_TESTING)

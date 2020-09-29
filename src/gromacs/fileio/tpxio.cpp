@@ -1412,6 +1412,16 @@ static void do_inputrec(gmx::ISerializer* serializer, t_inputrec* ir, int file_v
     serializer->doReal(&ir->userreal3);
     serializer->doReal(&ir->userreal4);
 
+    /* [PETTER] Shear velocity coupling options */
+    serializer->doBool(&ir->bShearCoupling);
+    serializer->doInt(&ir->shear_axis);
+    serializer->doInt(&ir->shear_direction);
+    serializer->doInt(&ir->shear_strategy);
+    serializer->doReal(&ir->shear_tcoupl);
+    serializer->doReal(&ir->shear_area_size);
+    serializer->doReal(&ir->shear_zadj);
+    serializer->doReal(&ir->shear_ref_velocity);
+
     /* AdResS is removed, but we need to be able to read old files,
        and let mdrun refuse to run them */
     if (file_version >= 77 && file_version < tpxv_RemoveAdress)

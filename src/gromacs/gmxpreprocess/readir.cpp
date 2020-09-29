@@ -1889,6 +1889,10 @@ void get_ir(const char*     mdparin,
     replace_inp_entry(inp, "xtc-precision", "compressed-x-precision");
     replace_inp_entry(inp, "pull-print-com1", "pull-print-com");
 
+    /* [PETTER] Rebind user2-grps to use for shear coupling 
+        This is likely easier than trying to create an entire new group */
+    replace_inp_entry(inp, "user2-grps", "shear-grps");
+
     printStringNewline(&inp, "VARIOUS PREPROCESSING OPTIONS");
     printStringNoNewline(&inp, "Preprocessor information: use cpp syntax.");
     printStringNoNewline(&inp, "e.g.: -I/home/joe/doe -I/home/mary/roe");
@@ -2376,7 +2380,6 @@ void get_ir(const char*     mdparin,
     /* User defined thingies */
     printStringNewline(&inp, "User defined thingies");
     setStringEntry(&inp, "user1-grps", is->user1, nullptr);
-    setStringEntry(&inp, "user2-grps", is->user2, nullptr);
     ir->userint1  = get_eint(&inp, "userint1", 0, wi);
     ir->userint2  = get_eint(&inp, "userint2", 0, wi);
     ir->userint3  = get_eint(&inp, "userint3", 0, wi);
@@ -2385,6 +2388,34 @@ void get_ir(const char*     mdparin,
     ir->userreal2 = get_ereal(&inp, "userreal2", 0, wi);
     ir->userreal3 = get_ereal(&inp, "userreal3", 0, wi);
     ir->userreal4 = get_ereal(&inp, "userreal4", 0, wi);
+
+    /* [PETTER] Shear velocity coupling options */
+    printStringNewline(&inp, "SHEAR VELOCITY COUPLING (UNOFFICIAL)");
+    printStringNoNewline(&inp, "Do shear velocity coupling");
+    ir->bShearCoupling  = (get_eeenum(&inp, "shear-coupling", yesno_names, wi) != 0);
+    printStringNoNewline(&inp, "Axis along which to exchange the velocities and the direction");
+    printStringNoNewline(&inp, "along which to shear: x, y or z");
+    ir->shear_axis      = get_eeenum(&inp, "shear-axis", ShearAxis_axis_names, wi);
+    ir->shear_direction = get_eeenum(&inp, "shear-direction", ShearAxis_direction_names, wi);
+    printStringNoNewline(&inp, "Strategy for setting up exchange areas: Edges or Edge-Center");
+    printStringNoNewline(&inp, "Edges: exchange area 0 and 1 are respectively at the bottom and top");
+    printStringNoNewline(&inp, "  edges of the system, along the selected axis");
+    printStringNoNewline(&inp, "Edge-Center: exchange area 0 is split into the bottom and top edges");
+    printStringNoNewline(&inp, "  of the system, area 1 is at the center");
+    ir->shear_strategy  = get_eeenum(&inp, "shear-strategy", ShearCouplStrategy_names, wi);
+    printStringNoNewline(&inp, "How often to perform the coupling");
+    ir->shear_tcoupl    = get_ereal(&inp, "shear-tcoupl", 0.0, wi);
+    printStringNoNewline(&inp, "Size of exchange areas and adjustment from the edges");
+    ir->shear_area_size = get_ereal(&inp, "shear-area-size", 0.0, wi);
+    ir->shear_zadj      = get_ereal(&inp, "shear-zadj", 0.0, wi);
+    printStringNoNewline(&inp, "Reference velocity: Targeted velocity for both areas");
+    printStringNoNewline(&inp, "  Area 0: -shear-ref-velocity");
+    printStringNoNewline(&inp, "  Area 1: +shear-ref-velocity");
+    ir->shear_ref_velocity = get_ereal(&inp, "shear-ref-velocity", 0.0, wi);
+    printStringNoNewline(&inp, "Groups to shear with: must be 1 or 2, in the latter case ");
+    printStringNoNewline(&inp, "for area 0 and 1 respectively");
+    printStringNoNewline(&inp, "Note: this replaces user2-grps");
+    setStringEntry(&inp, "shear-grps", is->user2, nullptr);
 #undef CTYPE
 
     {
@@ -3781,6 +3812,17 @@ void do_index(const char*                   mdparin,
                  SimulationAtomGroupType::OrientationRestraintsFit, restnm, egrptpALL_GENREST,
                  bVerbose, wi);
 
+    /* [PETTER] Assert that we have 1 or 2 groups for the shear coupling */
+    if (ir->bShearCoupling 
+        && (user2GroupNames.empty() || user2GroupNames.size() > 2))
+    {
+        gmx_fatal(FARGS, 
+                  "Invalid shear-grps input: must be 1 or 2 groups (is %d), "
+                  "in which case area 0 only couples to atoms in the first "
+                  "group and area 1 to atoms in the second.",
+                  user2GroupNames.size());
+    }
+
     /* QMMM input processing */
     auto qmGroupNames = gmx::splitString(is->QMMM);
     auto qmMethods    = gmx::splitString(is->QMmethod);
@@ -4519,6 +4561,24 @@ void double_check(t_inputrec* ir, matrix box, bool bHasNormalConstraints, bool b
                     "longer than the smallest box diagonal element. Increase the box size or "
                     "decrease rlist.\n");
             warning_error(wi, warn_buf);
+        }
+    }
+
+    /* [PETTER] Shear coupling checking */
+    if (ir->bShearCoupling)
+    {
+        if ((ir->shear_strategy == static_cast<int>(ShearCouplStrategy::Edges))
+            && (ir->ePBC != epbcXY))
+        {
+            sprintf(warn_buf, 
+                "With shear-strategy = %s the system should probably not "
+                "be periodic along the axis, since both edges will shear "
+                "against each other. Use pbc = %s unless you are sure. "
+                "(currently pbc = %s)",
+                ShearCouplStrategy_names[ir->shear_strategy], 
+                epbc_names[epbcXY], 
+                epbc_names[ir->ePBC]);
+            warning(wi, warn_buf);
         }
     }
 }

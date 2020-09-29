@@ -170,5 +170,8 @@ int gmx_sans(int argc, char* argv[]);
 
 int gmx_saxs(int argc, char* argv[]);
 
+/* Modified tools by Petter Johansson */
+int gmx_velocity_profile(int argc, char* argv[]);
+
 #endif
 /* _gmx_ana_h */
