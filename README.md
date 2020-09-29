@@ -3,6 +3,11 @@
 This fork of [Gromacs](http://www.gromacs.org/) modifies it to enable output 
 of two-dimensional flow fields, collected during a simulation. 
 
+## Installation
+
+Follow the regular Gromacs [installations instructions](http://manual.gromacs.org/current/install-guide/index.html). 
+No changes are needed.
+
 ## Usage
 
 The flow field collection uses the following [MDP options](http://manual.gromacs.org/documentation/current/user-guide/mdp-options.html):
@@ -36,7 +41,8 @@ $ gmx mdrun -flow maps/flow   # Saves to `maps/flow_00001.dat`,
 ## Limitations
 
 *   Can currently only sample data in the x-z plane.
-*   Using several groups to sample from is currently buggy (but using 1 always works)
+*   Temperature calculation is only correct for water
+*   Currently only works for static box size
 
 ## File formats
 
