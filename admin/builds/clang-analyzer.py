@@ -1,7 +1,7 @@
 #
 # This file is part of the GROMACS molecular simulation package.
 #
-# Copyright (c) 2015,2016,2017,2018, by the GROMACS development team, led by
+# Copyright (c) 2015,2016,2017,2018,2019, by the GROMACS development team, led by
 # Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
 # and including many others, as listed in the AUTHORS file in the
 # top-level source directory and at http://www.gromacs.org.
@@ -35,7 +35,10 @@
 # These options need to match the node label in Jenkins and the
 # capabilities in releng/agents.py for the agent where the analysis is
 # intended to run.
-build_options = ['clang-6', 'clang-static-analyzer-6']
+build_options = ['clang-8', 'clang-static-analyzer-8']
+
+# Policy global variables
+use_stdlib_through_env_vars = False
 
 def do_build(context):
     cmake_opts = {
@@ -49,6 +52,7 @@ def do_build(context):
             'GMX_FFT_LIBRARY': 'fftpack',
             'GMX_CLANG_ANALYZER' : 'ON'
         }
+    context.env.append_to_env_var('CXXFLAGS', '-stdlib=libc++')
 
     context.run_cmake(cmake_opts)
     context.build_target(target=None)

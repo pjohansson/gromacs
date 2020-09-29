@@ -1,7 +1,7 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2018, by the GROMACS development team, led by
+ * Copyright (c) 2018,2019, by the GROMACS development team, led by
  * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
  * and including many others, as listed in the AUTHORS file in the
  * top-level source directory and at http://www.gromacs.org.
@@ -46,7 +46,6 @@
 #include <algorithm>
 #include <memory>
 
-#include "gromacs/compat/make_unique.h"
 #include "gromacs/domdec/localatomset.h"
 #include "gromacs/utility/exceptions.h"
 
@@ -63,29 +62,33 @@ namespace gmx
  */
 class LocalAtomSetManager::Impl
 {
-    public:
-        std::vector < std::unique_ptr < internal::LocalAtomSetData>> atomSetData_; /**< handles to the managed atom sets */
+public:
+    std::vector<std::unique_ptr<internal::LocalAtomSetData>> atomSetData_; /**< handles to the managed atom sets */
 };
 
 /********************************************************************
  * LocalAtomSetManager */
 
-LocalAtomSetManager::LocalAtomSetManager() : impl_(new Impl())
-{}
+LocalAtomSetManager::LocalAtomSetManager() : impl_(new Impl()) {}
 
-LocalAtomSetManager::~LocalAtomSetManager(){}
+LocalAtomSetManager::~LocalAtomSetManager() {}
 
-LocalAtomSet
-LocalAtomSetManager::add(ArrayRef<const int> globalAtomIndex)
+template<>
+LocalAtomSet LocalAtomSetManager::add<void, void>(ArrayRef<const int> globalAtomIndex)
 {
-    impl_->atomSetData_.push_back(compat::make_unique<internal::LocalAtomSetData>(globalAtomIndex));
+    impl_->atomSetData_.push_back(std::make_unique<internal::LocalAtomSetData>(globalAtomIndex));
     return LocalAtomSet(*impl_->atomSetData_.back());
 }
 
-void
-LocalAtomSetManager::setIndicesInDomainDecomposition(const gmx_ga2la_t &ga2la)
+LocalAtomSet LocalAtomSetManager::add(ArrayRef<const index> globalAtomIndex)
 {
-    for (const auto &atomSet : impl_->atomSetData_)
+    impl_->atomSetData_.push_back(std::make_unique<internal::LocalAtomSetData>(globalAtomIndex));
+    return LocalAtomSet(*impl_->atomSetData_.back());
+}
+
+void LocalAtomSetManager::setIndicesInDomainDecomposition(const gmx_ga2la_t& ga2la)
+{
+    for (const auto& atomSet : impl_->atomSetData_)
     {
         atomSet->setLocalAndCollectiveIndices(ga2la);
     }

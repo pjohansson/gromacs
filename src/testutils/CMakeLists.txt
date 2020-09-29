@@ -1,7 +1,7 @@
 #
 # This file is part of the GROMACS molecular simulation package.
 #
-# Copyright (c) 2011,2012,2013,2014,2015,2016,2017,2018, by the GROMACS development team, led by
+# Copyright (c) 2011,2012,2013,2014,2015,2016,2017,2018,2019, by the GROMACS development team, led by
 # Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
 # and including many others, as listed in the AUTHORS file in the
 # top-level source directory and at http://www.gromacs.org.
@@ -37,17 +37,17 @@ if (NOT GMX_BUILD_UNITTESTS)
     return()
 endif()
 
-include_directories(BEFORE SYSTEM ${GMOCK_INCLUDE_DIRS})
 set(TESTUTILS_SOURCES
     cmdlinetest.cpp
     conftest.cpp
     filematchers.cpp
     interactivetest.cpp
     loggertest.cpp
-    mpi-printer.cpp
+    mpi_printer.cpp
     mpitest.cpp
     refdata.cpp
-    refdata-xml.cpp
+    refdata_xml.cpp
+    simulationdatabase.cpp
     stdiohelper.cpp
     stringtest.cpp
     testasserts.cpp
@@ -57,6 +57,7 @@ set(TESTUTILS_SOURCES
     testmatchers.cpp
     testoptions.cpp
     textblockmatchers.cpp
+    tprfilegenerator.cpp
     xvgtest.cpp
     )
 
@@ -65,10 +66,10 @@ if(NOT HAVE_TINYXML2)
 endif()
 
 add_library(testutils STATIC ${UNITTEST_TARGET_OPTIONS} ${TESTUTILS_SOURCES})
-set(TESTUTILS_LIBS testutils)
-set_property(TARGET testutils APPEND PROPERTY COMPILE_DEFINITIONS "${GMOCK_COMPILE_DEFINITIONS}")
-set_property(TARGET testutils APPEND PROPERTY COMPILE_FLAGS "${GMOCK_COMPILE_FLAGS}")
-target_link_libraries(testutils libgromacs ${GMX_COMMON_LIBRARIES} ${GMOCK_LIBRARIES})
+gmx_target_compile_options(testutils)
+target_compile_definitions(testutils PRIVATE HAVE_CONFIG_H)
+target_include_directories(testutils SYSTEM BEFORE PRIVATE ${PROJECT_SOURCE_DIR}/src/external/thread_mpi/include)
+target_link_libraries(testutils PRIVATE libgromacs ${GMX_COMMON_LIBRARIES} gmock)
 
 if(HAVE_TINYXML2)
     include_directories(SYSTEM ${TinyXML2_INCLUDE_DIR})
@@ -105,7 +106,6 @@ endif()
 
 set(TESTUTILS_DIR ${CMAKE_CURRENT_SOURCE_DIR})
 set(TESTUTILS_DIR ${TESTUTILS_DIR} PARENT_SCOPE)
-set(TESTUTILS_LIBS ${TESTUTILS_LIBS} PARENT_SCOPE)
 set(GMX_CAN_RUN_MPI_TESTS ${GMX_CAN_RUN_MPI_TESTS} PARENT_SCOPE)
 
 add_subdirectory(tests)

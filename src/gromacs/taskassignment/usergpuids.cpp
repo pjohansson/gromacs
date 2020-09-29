@@ -1,7 +1,7 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2017,2018, by the GROMACS development team, led by
+ * Copyright (c) 2017,2018,2019, by the GROMACS development team, led by
  * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
  * and including many others, as listed in the AUTHORS file in the
  * top-level source directory and at http://www.gromacs.org.
@@ -57,22 +57,32 @@
 namespace gmx
 {
 
-std::vector<int>
-parseUserGpuIds(const std::string &gpuIdString)
+/*! \brief Parse a GPU ID specifier string into a container.
+ *
+ * \param[in]   gpuIdString  String like "013" or "0,1,3" typically
+ *                           supplied by the user.
+ *                           Must contain only unique decimal digits, or only decimal
+ *                           digits separated by comma delimiters. A terminal
+ *                           comma is accceptable (and required to specify a
+ *                           single ID that is larger than 9).
+ *
+ * \returns  A vector of numeric IDs extracted from \c gpuIdString.
+ *
+ * \throws   std::bad_alloc     If out of memory.
+ *           InvalidInputError  If an invalid character is found (ie not a digit or ',').
+ */
+static std::vector<int> parseGpuDeviceIdentifierList(const std::string& gpuIdString)
 {
-    // An optional comma is used to separate GPU IDs assigned to the
-    // same type of task, which will be useful for any nodes that have
-    // more than ten GPUs.
-
     std::vector<int> digits;
     auto             foundCommaDelimiters = gpuIdString.find(',') != std::string::npos;
     if (!foundCommaDelimiters)
     {
-        for (const auto &c : gpuIdString)
+        for (const auto& c : gpuIdString)
         {
             if (std::isdigit(c) == 0)
             {
-                GMX_THROW(InvalidInputError(formatString("Invalid character in GPU ID string: \"%c\"\n", c)));
+                GMX_THROW(InvalidInputError(
+                        formatString("Invalid character in GPU ID string: \"%c\"\n", c)));
             }
             // Convert each character in the token to an integer
             digits.push_back(c - '0');
@@ -101,9 +111,84 @@ parseUserGpuIds(const std::string &gpuIdString)
     return digits;
 }
 
-std::vector<int>
-makeGpuIds(ArrayRef<const int> compatibleGpus,
-           size_t              numGpuTasks)
+std::vector<int> parseUserGpuIdString(const std::string& gpuIdString)
+{
+    // An optional comma is used to separate GPU IDs assigned to the
+    // same type of task, which will be useful for any nodes that have
+    // more than ten GPUs.
+
+    auto digits = parseGpuDeviceIdentifierList(gpuIdString);
+
+    // Check and enforce that no duplicate IDs are allowed
+    for (size_t i = 0; i != digits.size(); ++i)
+    {
+        for (size_t j = i + 1; j != digits.size(); ++j)
+        {
+            if (digits[i] == digits[j])
+            {
+                GMX_THROW(
+                        InvalidInputError(formatString("The string of available GPU device IDs "
+                                                       "'%s' may not contain duplicate device IDs",
+                                                       gpuIdString.c_str())));
+            }
+        }
+    }
+    return digits;
+}
+
+std::vector<int> makeGpuIdsToUse(const gmx_gpu_info_t& gpuInfo, const std::string& gpuIdsAvailableString)
+{
+    auto             compatibleGpus  = getCompatibleGpus(gpuInfo);
+    std::vector<int> gpuIdsAvailable = parseUserGpuIdString(gpuIdsAvailableString);
+
+    if (gpuIdsAvailable.empty())
+    {
+        return compatibleGpus;
+    }
+
+    std::vector<int> gpuIdsToUse;
+    gpuIdsToUse.reserve(gpuIdsAvailable.size());
+    std::vector<int> availableGpuIdsThatAreIncompatible;
+    for (const auto& availableGpuId : gpuIdsAvailable)
+    {
+        bool availableGpuIsCompatible = false;
+        for (const auto& compatibleGpuId : compatibleGpus)
+        {
+            if (availableGpuId == compatibleGpuId)
+            {
+                availableGpuIsCompatible = true;
+                break;
+            }
+        }
+        if (availableGpuIsCompatible)
+        {
+            gpuIdsToUse.push_back(availableGpuId);
+        }
+        else
+        {
+            // Prepare data for an error message about all incompatible available GPU IDs.
+            availableGpuIdsThatAreIncompatible.push_back(availableGpuId);
+        }
+    }
+    if (!availableGpuIdsThatAreIncompatible.empty())
+    {
+        auto message = "You requested mdrun to use GPUs with IDs " + gpuIdsAvailableString
+                       + ", but that includes the following incompatible GPUs: "
+                       + formatAndJoin(availableGpuIdsThatAreIncompatible, ",", StringFormatter("%d"))
+                       + ". Request only compatible GPUs.";
+        GMX_THROW(InvalidInputError(message));
+    }
+    return gpuIdsToUse;
+}
+
+std::vector<int> parseUserTaskAssignmentString(const std::string& gpuIdString)
+{
+    // Implement any additional constraints here that need to be imposed
+
+    return parseGpuDeviceIdentifierList(gpuIdString);
+}
+
+std::vector<int> makeGpuIds(ArrayRef<const int> compatibleGpus, size_t numGpuTasks)
 {
     std::vector<int> gpuIdsToUse;
 
@@ -112,7 +197,8 @@ makeGpuIds(ArrayRef<const int> compatibleGpus,
     auto currentGpuId = compatibleGpus.begin();
     for (size_t i = 0; i != numGpuTasks; ++i)
     {
-        GMX_ASSERT(!compatibleGpus.empty(), "Must have compatible GPUs from which to build a list of GPU IDs to use");
+        GMX_ASSERT(!compatibleGpus.empty(),
+                   "Must have compatible GPUs from which to build a list of GPU IDs to use");
         gpuIdsToUse.push_back(*currentGpuId);
         ++currentGpuId;
         if (currentGpuId == compatibleGpus.end())
@@ -125,30 +211,27 @@ makeGpuIds(ArrayRef<const int> compatibleGpus,
     return gpuIdsToUse;
 }
 
-std::string
-makeGpuIdString(const std::vector<int> &gpuIds,
-                int                     totalNumberOfTasks)
+std::string makeGpuIdString(const std::vector<int>& gpuIds, int totalNumberOfTasks)
 {
     auto resultGpuIds = makeGpuIds(gpuIds, totalNumberOfTasks);
     return formatAndJoin(resultGpuIds, ",", StringFormatter("%d"));
 }
 
-void checkUserGpuIds(const gmx_gpu_info_t   &gpu_info,
-                     const std::vector<int> &compatibleGpus,
-                     const std::vector<int> &gpuIds)
+void checkUserGpuIds(const gmx_gpu_info_t&   gpu_info,
+                     const std::vector<int>& compatibleGpus,
+                     const std::vector<int>& gpuIds)
 {
     bool        foundIncompatibleGpuIds = false;
-    std::string message
-        = "Some of the requested GPUs do not exist, behave strangely, or are not compatible:\n";
+    std::string message =
+            "Some of the requested GPUs do not exist, behave strangely, or are not compatible:\n";
 
-    for (const auto &gpuId : gpuIds)
+    for (const auto& gpuId : gpuIds)
     {
         if (std::find(compatibleGpus.begin(), compatibleGpus.end(), gpuId) == compatibleGpus.end())
         {
             foundIncompatibleGpuIds = true;
-            message                += gmx::formatString("    GPU #%d: %s\n",
-                                                        gpuId,
-                                                        getGpuCompatibilityDescription(gpu_info, gpuId));
+            message += gmx::formatString("    GPU #%d: %s\n", gpuId,
+                                         getGpuCompatibilityDescription(gpu_info, gpuId));
         }
     }
     if (foundIncompatibleGpuIds)
@@ -157,4 +240,4 @@ void checkUserGpuIds(const gmx_gpu_info_t   &gpu_info,
     }
 }
 
-}  // namespace gmx
+} // namespace gmx

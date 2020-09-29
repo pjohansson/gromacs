@@ -1,7 +1,7 @@
 #
 # This file is part of the GROMACS molecular simulation package.
 #
-# Copyright (c) 2012,2013,2014,2015,2016,2017,2018, by the GROMACS development team, led by
+# Copyright (c) 2012,2013,2014,2015,2016,2017,2018,2019, by the GROMACS development team, led by
 # Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
 # and including many others, as listed in the AUTHORS file in the
 # top-level source directory and at http://www.gromacs.org.
@@ -116,6 +116,12 @@ if(REGRESSIONTEST_PATH)
         message(WARNING
             "Please set MPIEXEC. Otherwise mpirun is assumed for running tests.")
     endif()
+    if(DEFINED ENV{CI_JOB_ID} AND GMX_OPENMP)
+        set(GMX_REGRESSIONTEST_OMP_THREADS 2 CACHE STRING
+            "Number of OpenMP threads to use with the regression tests")
+        mark_as_advanced(GMX_REGRESSIONTEST_OMP_THREADS)
+        list(APPEND ARGS -ntomp ${GMX_REGRESSIONTEST_OMP_THREADS})
+    endif()
     if(GMX_LIB_MPI)
         set(GMX_TEST_NUMBER_PROCS 8 CACHE STRING "Number of processors used for testing")
         mark_as_advanced(GMX_TEST_NUMBER_PROCS)
@@ -138,6 +144,12 @@ if(REGRESSIONTEST_PATH)
     mark_as_advanced(REGRESSIONTEST_EXTRA_ARGS)
     list(APPEND ARGS ${REGRESSIONTEST_EXTRA_ARGS})
 
+    if(DEFINED ENV{CI_JOB_ID} AND GMX_THREAD_MPI)
+        set(GMX_REGRESSIONTEST_THREAD_MPI_THREADS 2 CACHE STRING
+        "Number of thread MPI threads to use for testing")
+        mark_as_advanced(GMX_REGRESSIONTEST_THREAD_MPI_THREADS)
+        list(APPEND ARGS -nt ${GMX_REGRESSIONTEST_THREAD_MPI_THREADS})
+    endif()
     list(APPEND ARGS -noverbose -nosuffix)
 
     if(GMX_NATIVE_WINDOWS)
@@ -167,7 +179,7 @@ if(REGRESSIONTEST_PATH)
     endif()
 
     #currently not testing tools because they don't contain any useful tests
-    foreach(subtest simple complex kernel freeenergy rotation essentialdynamics)
+    foreach(subtest complex freeenergy rotation essentialdynamics)
         add_test(NAME regressiontests/${subtest}
             #windows requires the command to be perl and not the script
             COMMAND perl "${REGRESSIONTEST_PATH}/gmxtest.pl" ${subtest} ${ARGS})
@@ -183,6 +195,7 @@ endif()
 # Physical validation tests are opt-in via -DGMX_PHYSICAL_VALIDATION=ON
 #
 if(GMX_PHYSICAL_VALIDATION)
+    include(FindPythonModule)
     # physical validation suite is distributed with the source
     set(PHYSVALTEST_SOURCE_PATH
             "${CMAKE_CURRENT_SOURCE_DIR}/physicalvalidation")
@@ -276,21 +289,11 @@ if(GMX_PHYSICAL_VALIDATION)
         # End copied from regression tests.
         #
 
-        #
-        # TODO: Switch to python >= 3.3. For now, use 2.7 for compatibility with rest of build system.
-        #
-        # ${PYTHON_EXECUTABLE} can only be set for one version per build system.
-        # Currently, the following files set 2.7 explicitly:
-        # * cmake/CheckTarget.cmake
-        # * docs/CMakeList.txt
-        # Parts of the documentation rely on python scripts.
-        # These need to be ported to be able to make the move to python 3.
-        #
-        if (NOT PYTHON_EXECUTABLE)
+        if (NOT PYTHONINTERP_FOUND)
             message(FATAL_ERROR
-                    "Python not found. Physical validation relies on python >= 3.3 (python 2.7 supported, but\
-                    deprecated). Install python, set PYTHON_EXECUTABLE to the python location, or set\
-                    GMX_PHYSCIAL_VALIDATION=OFF to disable the physical validation tests.")
+                    "Python not found. Physical validation requires python. \
+                     Install python, set PYTHON_EXECUTABLE to a valid python location, \
+                     or set GMX_PHYSICAL_VALIDATION=OFF to disable the physical validation tests.")
         endif()
         #
         foreach(module numpy scipy pymbar) # add further modules if necessary
@@ -299,7 +302,7 @@ if(GMX_PHYSICAL_VALIDATION)
             if(NOT PYTHONMODULE_${module_upper})
                 message(WARNING
                         "Python module ${module} not found. Physical validation relies on ${module}. Make sure\
-                        ${module} can be found by PYTHON_EXECUTABLE, or set GMX_PHYSCIAL_VALIDATION=OFF to disable\
+                        ${module} can be found by PYTHON_EXECUTABLE, or set GMX_PHYSICAL_VALIDATION=OFF to disable\
                         the physical validation tests.")
             endif()
         endforeach()

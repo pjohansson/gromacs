@@ -67,8 +67,10 @@ if(CUDA_HOST_COMPILER_CHANGED)
     set(CUDA_HOST_COMPILER_OPTIONS "")
 
     if(APPLE AND CMAKE_C_COMPILER_ID MATCHES "GNU")
-        # Some versions of gcc-4.8 and gcc-4.9 produce errors (in particular on OS X)
-        # if we do not use -D__STRICT_ANSI__. It is harmless, so we might as well add it for all versions.
+        # Some versions of gcc-4.8 and gcc-4.9 have produced errors
+        # (in particular on OS X) if we do not use
+        # -D__STRICT_ANSI__. It is harmless, so we might as well add
+        # it for all versions.
         list(APPEND CUDA_HOST_COMPILER_OPTIONS "-D__STRICT_ANSI__")
     endif()
 
@@ -97,54 +99,30 @@ if (GMX_CUDA_TARGET_SM OR GMX_CUDA_TARGET_COMPUTE)
     endforeach()
 else()
     # Set the CUDA GPU architectures to compile for:
-    # - with CUDA >=5.0 <6.5:   CC <=3.5 is supported
-    #     => compile sm_30, sm_35 SASS, and compute_35 PTX
-    # - with CUDA ==6.5:        CC <=3.7 and 5.0 are supported
-    #     => compile sm_30, sm_35, sm_37 sm_50, SASS, and compute_50 PTX
-    # - with CUDA >=7.0         CC 5.2 is supported (5.3, Tegra X1 we don't generate code for)
-    #     => compile sm_30, sm_35, sm_37, sm_50, & sm_52 SASS, and compute_52 PTX
-    # - with CUDA >=8.0         CC 6.0-6.2 is supported (but we know nothing about CC 6.2, so we won't generate code or it)
-    #     => compile sm_30, sm_35, sm_37, sm_50, sm_52, sm_60, sm_61 SASS, and compute_60 and compute_61 PTX
     # - with CUDA >=9.0         CC 7.0 is supported and CC 2.0 is no longer supported
     #     => compile sm_30, sm_35, sm_37, sm_50, sm_52, sm_60, sm_61, sm_70 SASS, and compute_70 PTX
-    #
-    #   Note that CUDA 6.5.19 second patch release supports cc 5.2 too, but
-    #   CUDA_VERSION does not contain patch version and having PTX 5.0 JIT-ed is
-    #   equally fast as compiling with sm_5.2 anyway.
+    # - with CUDA >=10.0        CC 7.5 is supported
+    #     => compile sm_30, sm_35, sm_37, sm_50, sm_52, sm_60, sm_61, sm_70, sm_75 SASS, and compute_75 PTX
 
     # First add flags that trigger SASS (binary) code generation for physical arch
     list (APPEND GMX_CUDA_NVCC_GENCODE_FLAGS "-gencode;arch=compute_30,code=sm_30")
     list (APPEND GMX_CUDA_NVCC_GENCODE_FLAGS "-gencode;arch=compute_35,code=sm_35")
-
-    if(NOT CUDA_VERSION VERSION_LESS "6.5") # >= 6.5
-        list (APPEND GMX_CUDA_NVCC_GENCODE_FLAGS "-gencode;arch=compute_37,code=sm_37")
-        list (APPEND GMX_CUDA_NVCC_GENCODE_FLAGS "-gencode;arch=compute_50,code=sm_50")
-    endif()
-    if(NOT CUDA_VERSION VERSION_LESS "7.0") # >= 7.0
-        list (APPEND GMX_CUDA_NVCC_GENCODE_FLAGS "-gencode;arch=compute_52,code=sm_52")
-    endif()
-    if(NOT CUDA_VERSION VERSION_LESS "8.0") # >= 8.0
-        list (APPEND GMX_CUDA_NVCC_GENCODE_FLAGS "-gencode;arch=compute_60,code=sm_60")
-        list (APPEND GMX_CUDA_NVCC_GENCODE_FLAGS "-gencode;arch=compute_61,code=sm_61")
-    endif()
-    if(NOT CUDA_VERSION VERSION_LESS "9.0") # >= 9.0
-        list (APPEND GMX_CUDA_NVCC_GENCODE_FLAGS "-gencode;arch=compute_70,code=sm_70")
-    endif()
+    list (APPEND GMX_CUDA_NVCC_GENCODE_FLAGS "-gencode;arch=compute_37,code=sm_37")
+    list (APPEND GMX_CUDA_NVCC_GENCODE_FLAGS "-gencode;arch=compute_50,code=sm_50")
+    list (APPEND GMX_CUDA_NVCC_GENCODE_FLAGS "-gencode;arch=compute_52,code=sm_52")
+    list (APPEND GMX_CUDA_NVCC_GENCODE_FLAGS "-gencode;arch=compute_60,code=sm_60")
+    list (APPEND GMX_CUDA_NVCC_GENCODE_FLAGS "-gencode;arch=compute_61,code=sm_61")
+    list (APPEND GMX_CUDA_NVCC_GENCODE_FLAGS "-gencode;arch=compute_70,code=sm_70")
 
     # Next add flags that trigger PTX code generation for the newest supported virtual arch
     # that's useful to JIT to future architectures
-    if(CUDA_VERSION VERSION_LESS "6.5")
-        list (APPEND GMX_CUDA_NVCC_GENCODE_FLAGS "-gencode;arch=compute_35,code=compute_35")
-    elseif(CUDA_VERSION VERSION_LESS "7.0")
-        list (APPEND GMX_CUDA_NVCC_GENCODE_FLAGS "-gencode;arch=compute_50,code=compute_50")
-    elseif(CUDA_VERSION VERSION_LESS "8.0")
-        list (APPEND GMX_CUDA_NVCC_GENCODE_FLAGS "-gencode;arch=compute_52,code=compute_52")
-    elseif(CUDA_VERSION VERSION_LESS "9.0")
-        list (APPEND GMX_CUDA_NVCC_GENCODE_FLAGS "-gencode;arch=compute_60,code=compute_60")
-        list (APPEND GMX_CUDA_NVCC_GENCODE_FLAGS "-gencode;arch=compute_61,code=compute_61")
-    elseif(CUDA_VERSION VERSION_LESS "10.0")
-        list (APPEND GMX_CUDA_NVCC_GENCODE_FLAGS "-gencode;arch=compute_70,code=compute_70")
-    else() # version >= 10.0
+    list (APPEND GMX_CUDA_NVCC_GENCODE_FLAGS "-gencode;arch=compute_35,code=compute_35")
+    list (APPEND GMX_CUDA_NVCC_GENCODE_FLAGS "-gencode;arch=compute_50,code=compute_50")
+    list (APPEND GMX_CUDA_NVCC_GENCODE_FLAGS "-gencode;arch=compute_52,code=compute_52")
+    list (APPEND GMX_CUDA_NVCC_GENCODE_FLAGS "-gencode;arch=compute_60,code=compute_60")
+    list (APPEND GMX_CUDA_NVCC_GENCODE_FLAGS "-gencode;arch=compute_61,code=compute_61")
+    list (APPEND GMX_CUDA_NVCC_GENCODE_FLAGS "-gencode;arch=compute_70,code=compute_70")
+    if(NOT CUDA_VERSION VERSION_LESS "10.0")
         list (APPEND GMX_CUDA_NVCC_GENCODE_FLAGS "-gencode;arch=compute_75,code=compute_75")
     endif()
 endif()
@@ -157,6 +135,23 @@ if (GMX_CUDA_TARGET_COMPUTE)
     set_property(CACHE GMX_CUDA_TARGET_COMPUTE PROPERTY HELPSTRING "List of CUDA virtual architecture codes to compile for (without the compute_ prefix)")
     set_property(CACHE GMX_CUDA_TARGET_COMPUTE PROPERTY TYPE STRING)
 endif()
+
+# FindCUDA.cmake is unaware of the mechanism used by cmake to embed
+# the compiler flag for the required C++ standard in the generated
+# build files, so we have to pass it ourselves
+if (MSVC)
+    # We use C++14 on MSVC, but cmake does not understand the
+    # necessary compilation option for that until version 3.10, so we
+    # can remove this after we require that version.
+    if (NOT CMAKE_CXX14_STANDARD_COMPILE_OPTION)
+        set(GMX_CXX_STANDARD_COMPILE_OPTION "-std:c++14")
+    else()
+        set(GMX_CXX_STANDARD_COMPILE_OPTION "${CMAKE_CXX14_STANDARD_COMPILE_OPTION}")
+    endif()
+else()
+    set(GMX_CXX_STANDARD_COMPILE_OPTION "${CMAKE_CXX14_STANDARD_COMPILE_OPTION}")
+endif()
+list(APPEND GMX_CUDA_NVCC_FLAGS "${GMX_CXX_STANDARD_COMPILE_OPTION}")
 
 # assemble the CUDA flags
 list(APPEND GMX_CUDA_NVCC_FLAGS "${GMX_CUDA_NVCC_GENCODE_FLAGS}")
@@ -206,3 +201,27 @@ endif() # GMX_CHECK_NVCC
 macro(GMX_SET_CUDA_NVCC_FLAGS)
     set(CUDA_NVCC_FLAGS "${GMX_CUDA_NVCC_FLAGS};${CUDA_NVCC_FLAGS}")
 endmacro()
+
+# This helper function creates a temporary scope in which we can set
+# the definitions, include directories and magic host-compiler-flag
+# variables that have to be set in advance of calling
+# cuda_add_library(). This is the only way cuda_add_library() can
+# modify the command line used for host compilation. It is not
+# possible to use the standard CMake mechanisms like
+# target_compile_options() to add such things to targets after they
+# are created.
+function(gmx_cuda_add_library TARGET)
+    add_definitions(-DHAVE_CONFIG_H)
+    # Source files generated by NVCC can include gmxmpi.h, and so
+    # need access to thread-MPI.
+    include_directories(SYSTEM ${PROJECT_SOURCE_DIR}/src/external/thread_mpi/include)
+
+    # Now add all the compilation options
+    gmx_cuda_target_compile_options(CUDA_${TARGET}_CXXFLAGS)
+    list(APPEND CMAKE_CXX_FLAGS ${CUDA_${TARGET}_CXXFLAGS})
+    foreach(build_type ${build_types_with_explicit_flags})
+        list(APPEND CMAKE_CXX_FLAGS_${build_type} ${CUDA_${TARGET}_CXXFLAGS_${build_type}})
+    endforeach()
+
+    cuda_add_library(${TARGET} ${ARGN})
+endfunction()

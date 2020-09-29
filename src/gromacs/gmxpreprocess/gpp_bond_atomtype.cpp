@@ -3,7 +3,7 @@
  *
  * Copyright (c) 1991-2000, University of Groningen, The Netherlands.
  * Copyright (c) 2001-2004, The GROMACS development team.
- * Copyright (c) 2011,2014,2015,2017,2018, by the GROMACS development team, led by
+ * Copyright (c) 2011,2014,2015,2017,2018,2019, by the GROMACS development team, led by
  * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
  * and including many others, as listed in the AUTHORS file in the
  * top-level source directory and at http://www.gromacs.org.
@@ -40,72 +40,66 @@
 
 #include <cstring>
 
+#include <algorithm>
+#include <vector>
+
 #include "gromacs/gmxpreprocess/notset.h"
 #include "gromacs/topology/symtab.h"
 #include "gromacs/utility/cstringutil.h"
 #include "gromacs/utility/smalloc.h"
 
-typedef struct {
-    int              nr;       /* The number of atomtypes		*/
-    char          ***atomname; /* Names of the atomtypes		*/
-} gpp_bond_atomtype;
-
-int get_bond_atomtype_type(char *str, t_bond_atomtype at)
+class PreprocessingBondAtomType::Impl
 {
-    gpp_bond_atomtype *ga = reinterpret_cast<gpp_bond_atomtype *>(at);
+public:
+    //! The atom type names.
+    std::vector<char**> typeNames;
+};
 
-    int                i;
-
-    for (i = 0; (i < ga->nr); i++)
+int PreprocessingBondAtomType::bondAtomTypeFromName(const std::string& str) const
+{
+    /* Atom types are always case sensitive */
+    auto found =
+            std::find_if(impl_->typeNames.begin(), impl_->typeNames.end(),
+                         [&str](const auto& type) { return str == const_cast<const char*>(*type); });
+    if (found == impl_->typeNames.end())
     {
-        /* Atom types are always case sensitive */
-        if (strcmp(str, *(ga->atomname[i])) == 0)
-        {
-            return i;
-        }
+        return NOTSET;
     }
-
-    return NOTSET;
-}
-
-char *get_bond_atomtype_name(int nt, t_bond_atomtype at)
-{
-    gpp_bond_atomtype *ga = reinterpret_cast<gpp_bond_atomtype *>(at);
-
-    if ((nt < 0) || (nt >= ga->nr))
+    else
     {
-        return nullptr;
+        return std::distance(impl_->typeNames.begin(), found);
     }
-
-    return *(ga->atomname[nt]);
 }
 
-t_bond_atomtype init_bond_atomtype()
+const char* PreprocessingBondAtomType::atomNameFromBondAtomType(int nt) const
 {
-    gpp_bond_atomtype *ga;
-
-    snew(ga, 1);
-
-    return reinterpret_cast<t_bond_atomtype>(ga);
+    return isSet(nt) ? *impl_->typeNames[nt] : nullptr;
 }
 
-void add_bond_atomtype(t_bond_atomtype at, t_symtab *tab,
-                       char *name)
-{
-    gpp_bond_atomtype *ga = reinterpret_cast<gpp_bond_atomtype *>(at);
+PreprocessingBondAtomType::PreprocessingBondAtomType() : impl_(new Impl) {}
 
-    ga->nr++;
-    srenew(ga->atomname, ga->nr);
-    ga->atomname[ga->nr-1] = put_symtab(tab, name);
+PreprocessingBondAtomType::~PreprocessingBondAtomType() {}
+
+int PreprocessingBondAtomType::addBondAtomType(t_symtab* tab, const std::string& name)
+{
+    int position = bondAtomTypeFromName(name);
+    if (position == NOTSET)
+    {
+        impl_->typeNames.emplace_back(put_symtab(tab, name.c_str()));
+        return bondAtomTypeFromName(name);
+    }
+    else
+    {
+        return position;
+    }
 }
 
-void done_bond_atomtype(t_bond_atomtype *at)
+size_t PreprocessingBondAtomType::size() const
 {
-    gpp_bond_atomtype *ga = reinterpret_cast<gpp_bond_atomtype *>(*at);
+    return impl_->typeNames.size();
+}
 
-    sfree(ga->atomname);
-    ga->nr = 0;
-    sfree(ga);
-
-    *at = nullptr;
+bool PreprocessingBondAtomType::isSet(int nt) const
+{
+    return ((nt >= 0) && (nt < gmx::ssize(*this)));
 }

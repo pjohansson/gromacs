@@ -1,7 +1,7 @@
 #
 # This file is part of the GROMACS molecular simulation package.
 #
-# Copyright (c) 2016,2017, by the GROMACS development team, led by
+# Copyright (c) 2016,2017,2019, by the GROMACS development team, led by
 # Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
 # and including many others, as listed in the AUTHORS file in the
 # top-level source directory and at http://www.gromacs.org.
@@ -32,13 +32,18 @@
 # To help us fund GROMACS development, we humbly ask that you cite
 # the research papers on the package. Check out http://www.gromacs.org.
 
-gmx_add_unit_test_object_library(mdrunutility-test-shared
-                                 threadaffinitytest.cpp)
+gmx_add_unit_test_library(mdrunutility-test-shared
+                          threadaffinitytest.cpp)
 
 gmx_add_unit_test(MdrunUtilityUnitTests mdrunutility-test
-                  threadaffinity.cpp
-                  $<TARGET_OBJECTS:mdrunutility-test-shared>)
+                  threadaffinity.cpp)
+target_link_libraries(mdrunutility-test PRIVATE mdrunutility-test-shared)
 
 gmx_add_mpi_unit_test(MdrunUtilityMpiUnitTests mdrunutility-mpi-test 4
-                      threadaffinity-mpi.cpp
-                      $<TARGET_OBJECTS:mdrunutility-test-shared>)
+                      threadaffinity_mpi.cpp)
+# TODO This target does not exist in a non-MPI build. It would be preferable
+# to change functions like gmx_add_mpi_unit_test to add link-time dependencies
+# as well as source files.
+if (GMX_MPI OR (GMX_THREAD_MPI AND GTEST_IS_THREADSAFE))
+    target_link_libraries(mdrunutility-mpi-test PRIVATE mdrunutility-test-shared)
+endif()

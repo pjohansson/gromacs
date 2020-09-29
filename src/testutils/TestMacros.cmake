@@ -1,7 +1,7 @@
 #
 # This file is part of the GROMACS molecular simulation package.
 #
-# Copyright (c) 2011,2012,2013,2014,2015,2016,2017,2018, by the GROMACS development team, led by
+# Copyright (c) 2011,2012,2013,2014,2015,2016,2017,2018,2019, by the GROMACS development team, led by
 # Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
 # and including many others, as listed in the AUTHORS file in the
 # top-level source directory and at http://www.gromacs.org.
@@ -34,12 +34,13 @@
 
 include(CMakeParseArguments)
 
-function (gmx_add_unit_test_object_library NAME)
+function (gmx_add_unit_test_library NAME)
     if (GMX_BUILD_UNITTESTS AND BUILD_TESTING)
-        include_directories(BEFORE SYSTEM ${GMOCK_INCLUDE_DIRS})
-        add_library(${NAME} OBJECT ${UNITTEST_TARGET_OPTIONS} ${ARGN})
-        set_property(TARGET ${NAME} APPEND PROPERTY COMPILE_DEFINITIONS "${GMOCK_COMPILE_DEFINITIONS}")
-        set_property(TARGET ${NAME} APPEND PROPERTY COMPILE_FLAGS "${GMOCK_COMPILE_FLAGS}")
+        add_library(${NAME} STATIC ${UNITTEST_TARGET_OPTIONS} ${ARGN})
+        gmx_target_compile_options(${NAME})
+        target_compile_definitions(${NAME} PRIVATE HAVE_CONFIG_H)
+        target_include_directories(${NAME} SYSTEM BEFORE PRIVATE ${PROJECT_SOURCE_DIR}/src/external/thread_mpi/include)
+        target_link_libraries(${NAME} PRIVATE testutils gmock)
     endif()
 endfunction ()
 
@@ -71,18 +72,21 @@ function (gmx_add_gtest_executable EXENAME)
                  TEST_USES_HARDWARE_DETECTION=true)
         endif()
 
-        include_directories(BEFORE SYSTEM ${GMOCK_INCLUDE_DIRS})
         add_executable(${EXENAME} ${UNITTEST_TARGET_OPTIONS}
             ${_source_files} ${TESTUTILS_DIR}/unittest_main.cpp)
-        target_link_libraries(${EXENAME}
-            ${TESTUTILS_LIBS} libgromacs ${GMOCK_LIBRARIES}
-            ${GMX_COMMON_LIBRARIES} ${GMX_EXE_LINKER_FLAGS} ${GMX_STDLIB_LIBRARIES})
-        set_property(TARGET ${EXENAME}
-            APPEND PROPERTY COMPILE_FLAGS "${GMOCK_COMPILE_FLAGS}")
-        set_property(TARGET ${EXENAME}
-            APPEND PROPERTY COMPILE_DEFINITIONS "${GMOCK_COMPILE_DEFINITIONS}")
-        set_property(TARGET ${EXENAME}
-            APPEND PROPERTY COMPILE_DEFINITIONS "${EXTRA_COMPILE_DEFINITIONS}")
+        gmx_target_compile_options(${EXENAME})
+        target_compile_definitions(${EXENAME} PRIVATE HAVE_CONFIG_H ${EXTRA_COMPILE_DEFINITIONS})
+        target_include_directories(${EXENAME} SYSTEM BEFORE PRIVATE ${PROJECT_SOURCE_DIR}/src/external/thread_mpi/include)
+        # Permit GROMACS code to include externally developed headers,
+        # such as the functionality from the nonstd project that we
+        # use for gmx::compat::optional. These are included as system
+        # headers so that no warnings are issued from them.
+        target_include_directories(${EXENAME} SYSTEM PRIVATE ${PROJECT_SOURCE_DIR}/src/external)
+
+        target_link_libraries(${EXENAME} PRIVATE
+            testutils libgromacs gmock
+            ${GMX_COMMON_LIBRARIES} ${GMX_EXE_LINKER_FLAGS})
+
         if(GMX_CLANG_TIDY)
             set_target_properties(${EXENAME} PROPERTIES CXX_CLANG_TIDY
                 "${CLANG_TIDY_EXE};-warnings-as-errors=*;-header-filter=.*")

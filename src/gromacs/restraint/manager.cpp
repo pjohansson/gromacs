@@ -1,7 +1,7 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2018, by the GROMACS development team, led by
+ * Copyright (c) 2018,2019, by the GROMACS development team, led by
  * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
  * and including many others, as listed in the AUTHORS file in the
  * top-level source directory and at http://www.gromacs.org.
@@ -51,7 +51,6 @@
 #include <mutex>
 #include <vector>
 
-#include "gromacs/compat/make_unique.h"
 #include "gromacs/utility/exceptions.h"
 
 namespace gmx
@@ -62,48 +61,47 @@ namespace gmx
  */
 class RestraintManager::Impl
 {
-    public:
+public:
+    /*!
+     * \brief Implement Manager::addToSpec()
+     *
+     * \param restraint Handle to be added to the manager.
+     * \param name Identifying string for restraint.
+     */
+    void add(std::shared_ptr<::gmx::IRestraintPotential> restraint, const std::string& name);
 
-        /*!
-         * \brief Implement Manager::addToSpec()
-         *
-         * \param restraint Handle to be added to the manager.
-         * \param name Identifying string for restraint.
-         */
-        void add(std::shared_ptr<::gmx::IRestraintPotential> restraint, std::string name);
+    /*!
+     * \brief Clear registered restraints and reset the manager.
+     */
+    void clear() noexcept;
 
-        /*!
-         * \brief Clear registered restraints and reset the manager.
-         */
-        void clear() noexcept;
+    /*!
+     * \brief The list of configured restraints.
+     *
+     * Clients can extend the life of a restraint implementation object that
+     * is being used by holding the shared_ptr handle. A RestraintManager::Impl is logically
+     * const when its owning Manager is logically const, but the Manager can still
+     * grant access to individual restraints.
+     */
+    std::vector<std::shared_ptr<::gmx::IRestraintPotential>> restraint_;
 
-        /*!
-         * \brief The list of configured restraints.
-         *
-         * Clients can extend the life of a restraint implementation object that
-         * is being used by holding the shared_ptr handle. A RestraintManager::Impl is logically
-         * const when its owning Manager is logically const, but the Manager can still
-         * grant access to individual restraints.
-         */
-        std::vector< std::shared_ptr<::gmx::IRestraintPotential> > restraint_;
-
-    private:
-        //! Regulate initialization of the shared resource when (re)initialized.
-        static std::mutex initializationMutex_;
-
+private:
+    //! Regulate initialization of the shared resource when (re)initialized.
+    static std::mutex initializationMutex_;
 };
 
 // Initialize static members
-std::mutex RestraintManager::Impl::initializationMutex_ {};
+std::mutex RestraintManager::Impl::initializationMutex_{};
 
 
-void RestraintManager::Impl::add(std::shared_ptr<::gmx::IRestraintPotential> restraint, std::string name)
+void RestraintManager::Impl::add(std::shared_ptr<::gmx::IRestraintPotential> restraint,
+                                 const std::string&                          name)
 {
     (void)name;
     restraint_.emplace_back(std::move(restraint));
 }
 
-RestraintManager::RestraintManager() : instance_(std::make_shared<RestraintManager::Impl>()) {};
+RestraintManager::RestraintManager() : instance_(std::make_shared<RestraintManager::Impl>()){};
 
 RestraintManager::~RestraintManager() = default;
 
@@ -119,13 +117,12 @@ void RestraintManager::clear() noexcept
     instance_->clear();
 }
 
-void RestraintManager::addToSpec(std::shared_ptr<gmx::IRestraintPotential> puller,
-                                 std::string                               name)
+void RestraintManager::addToSpec(std::shared_ptr<gmx::IRestraintPotential> puller, const std::string& name)
 {
-    instance_->add(std::move(puller), std::move(name));
+    instance_->add(std::move(puller), name);
 }
 
-std::vector< std::shared_ptr<IRestraintPotential> > RestraintManager::getRestraints() const
+std::vector<std::shared_ptr<IRestraintPotential>> RestraintManager::getRestraints() const
 {
     return instance_->restraint_;
 }

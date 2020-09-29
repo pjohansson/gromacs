@@ -46,11 +46,11 @@ real correctRadianAngleRange(const real angle)
     real correctedAngle = angle;
     while (correctedAngle < -M_PI)
     {
-        correctedAngle += 2*M_PI;
+        correctedAngle += 2 * M_PI;
     }
     while (correctedAngle >= M_PI)
     {
-        correctedAngle -= 2*M_PI;
+        correctedAngle -= 2 * M_PI;
     }
     return correctedAngle;
 }

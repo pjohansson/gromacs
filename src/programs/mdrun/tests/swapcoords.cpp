@@ -1,7 +1,7 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2013,2014,2015,2016,2018, by the GROMACS development team, led by
+ * Copyright (c) 2013,2014,2015,2016,2018,2019, by the GROMACS development team, led by
  * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
  * and including many others, as listed in the AUTHORS file in the
  * top-level source directory and at http://www.gromacs.org.
@@ -51,20 +51,15 @@ namespace test
 
 class SwapTestFixture : public MdrunTestFixture
 {
-    protected:
-        SwapTestFixture();
-        ~SwapTestFixture() override;
+protected:
+    SwapTestFixture();
+    ~SwapTestFixture() override;
 };
 
 
-SwapTestFixture::SwapTestFixture()
-{
-}
+SwapTestFixture::SwapTestFixture() {}
 
-SwapTestFixture::~SwapTestFixture()
-{
-}
-
+SwapTestFixture::~SwapTestFixture() {}
 
 
 //! Test fixture for mdrun with "Computational Electrophysiology" settings,
@@ -80,7 +75,6 @@ TEST_F(CompelTest, SwapCanRun)
     const std::string mdpContents = R"(
         dt                       = 0.005
         nsteps                   = 2
-        define                   = -DPOSRES
         tcoupl                   = Berendsen
         tc-grps                  = System
         tau-t                    = 0.5
@@ -133,7 +127,6 @@ TEST_F(CompelTest, SwapCanRun)
     runner_.nsteps_ = 2;
     ASSERT_EQ(0, runner_.callMdrun(secondCaller));
 }
-
 
 
 /*! \todo Add other tests for the compel module, e.g.

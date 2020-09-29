@@ -1,7 +1,7 @@
 #
 # This file is part of the GROMACS molecular simulation package.
 #
-# Copyright (c) 2015,2016,2017,2018, by the GROMACS development team, led by
+# Copyright (c) 2015,2016,2017,2018,2019, by the GROMACS development team, led by
 # Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
 # and including many others, as listed in the AUTHORS file in the
 # top-level source directory and at http://www.gromacs.org.
@@ -34,29 +34,38 @@
 
 import os.path
 
-# These are accessible later in the script, just like other
-# declared options, via e.g. context.opts.release.
+# Policy global variables
+use_stdlib_through_env_vars = False
+
+# These are accessible later in the script, just like other declared
+# options, via e.g. context.opts.release.  Keep these in alphabetical
+# order for more convenient rebasing
 extra_options = {
+    'asan': Option.simple,
+    'buildfftw': Option.simple,
+    'clang_cuda': Option.bool,
+    'double': Option.simple,
+    'fftpack': Option.simple,
+    'gpu_id': Option.string,
+    'hwloc': Option.bool,
     'mdrun-only': Option.simple,
-    'static': Option.simple,
+    'mkl': Option.simple,
+    'mpiinplace': Option.bool,
+    'npme': Option.string,
+    'nranks': Option.string,
+    'openmp': Option.bool,
     'reference': Option.simple,
     'release': Option.simple,
     'release-with-assert': Option.simple,
     'release-with-debug-info': Option.simple,
-    'asan': Option.simple,
-    'tng' : Option.bool,
-    'mkl': Option.simple,
-    'fftpack': Option.simple,
-    'buildfftw': Option.simple,
-    'double': Option.simple,
+    'static': Option.simple,
     'thread-mpi': Option.bool,
-    'clang_cuda': Option.bool,
-    'openmp': Option.bool,
-    'nranks': Option.string,
-    'npme': Option.string,
-    'gpu_id': Option.string,
-    'hwloc': Option.bool,
-    'tng': Option.bool
+    'tng' : Option.bool,
+    # The following options cater for testing code in Jenkins that is
+    # currently behind feature flags in master branch.
+    'gpubufferops' : Option.bool,
+    'gpucomm': Option.bool,
+    'gpuupdate': Option.bool,
 }
 
 extra_projects = [Project.REGRESSIONTESTS]
@@ -114,6 +123,8 @@ def do_build(context):
         cmake_opts['GMX_THREAD_MPI'] = 'OFF'
     if context.opts.mpi:
         cmake_opts['GMX_MPI'] = 'ON'
+    if context.opts.mpiinplace is False:
+        cmake_opts['GMX_MPI_IN_PLACE'] = 'OFF'
     if context.opts.openmp is False:
         cmake_opts['GMX_OPENMP'] = 'OFF'
     if context.opts.tng is False:
@@ -142,6 +153,10 @@ def do_build(context):
 
     if context.opts.hwloc is False:
         cmake_opts['GMX_HWLOC'] = 'OFF'
+    elif context.opts.hwloc is True:
+        cmake_opts['GMX_HWLOC'] = 'ON'
+    else:
+        cmake_opts['GMX_HWLOC'] = 'AUTO'
 
     if context.opts.tng is False:
         cmake_opts['GMX_USE_TNG'] = 'OFF'
@@ -159,6 +174,21 @@ def do_build(context):
     if context.opts.asan:
         cmake_opts['GMX_HWLOC'] = 'OFF'
 
+    if context.opts.gpubufferops:
+        context.env.set_env_var('GMX_USE_GPU_BUFFER_OPS', "1")
+
+    # GPU comm flag enables both DD and PP-PME comm as well as buffer ops (hard dependency)
+    if context.opts.gpucomm:
+        context.env.set_env_var('GMX_USE_GPU_BUFFER_OPS', "1")
+        context.env.set_env_var('GMX_GPU_DD_COMMS', "1")
+        context.env.set_env_var('GMX_GPU_PME_PP_COMMS', "1")
+
+    # GPU update flag enables GPU update+constraints as well as buffer ops (dependency)
+    if context.opts.gpuupdate:
+        context.env.set_env_var('GMX_FORCE_UPDATE_DEFAULT_GPU', "1")
+        context.env.set_env_var('GMX_GPU_DD_COMMS', "1")
+        context.env.set_env_var('GMX_GPU_PME_PP_COMMS', "1")
+
     regressiontests_path = context.workspace.get_project_dir(Project.REGRESSIONTESTS)
 
     if context.job_type == JobType.RELEASE:
@@ -166,6 +196,22 @@ def do_build(context):
     else:
         if context.opts.mdrun_only:
             cmake_opts['GMX_BUILD_MDRUN_ONLY'] = 'ON'
+
+    # The build configuration has constructed the environment of the
+    # context so that a particular c++ standard library can be used,
+    # which may come from a different installation of gcc. Here, we
+    # tell CMake how to react to this.
+    #
+    # TODO Once gerrit 9051 and 9053 are both submitted on master,
+    # remove the hasattr part of the predicate, which will then be
+    # redundant.
+    if hasattr(context.env, 'gcc_exe') and context.env.gcc_exe is not None:
+        cmake_opts['GMX_GPLUSPLUS_PATH'] = context.env.gcc_exe
+        # TODO are these needed?
+        # gcc_exe_dirname = os.path.dirname(self.gcc_exe)
+        # gcc_toolchain_path = os.path.join(gcc_exe_dirname, '..')
+        # format_for_linker_flags="-Wl,-rpath,{gcctoolchain}/lib64 -L{gcctoolchain}/lib64"
+        # cmake_opts['CMAKE_CXX_LINK_FLAGS'] = format_for_linker_flags.format(gcctoolchain=gcc_toolchain_path)
 
     context.env.set_env_var('GMX_NO_TERM', '1')
 
@@ -206,6 +252,10 @@ def do_build(context):
 
         context.build_target(target='install')
         # TODO: Consider what could be tested about the installed binaries.
+
+        # run OpenCL offline compile tests on clang tidy builds
+        if (context.opts.tidy and context.opts.opencl):
+            context.build_target(target='ocl_nbnxm_kernels')
 
         if not context.opts.mdrun_only:
             context.env.prepend_path_env(os.path.join(context.workspace.build_dir, 'bin'))

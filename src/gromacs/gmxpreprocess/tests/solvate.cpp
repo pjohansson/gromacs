@@ -1,7 +1,7 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2013,2014,2015,2017,2018, by the GROMACS development team, led by
+ * Copyright (c) 2013,2014,2015,2017,2018,2019, by the GROMACS development team, led by
  * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
  * and including many others, as listed in the AUTHORS file in the
  * top-level source directory and at http://www.gromacs.org.
@@ -62,37 +62,30 @@ using gmx::test::ExactTextMatch;
 
 class SolvateTest : public gmx::test::CommandLineTestBase
 {
-    public:
-        SolvateTest()
-        {
-            setOutputFile("-o", "out.gro", ConfMatch());
-        }
+public:
+    SolvateTest() { setOutputFile("-o", "out.gro", ConfMatch()); }
 
-        void runTest(const CommandLine &args)
-        {
-            CommandLine &cmdline = commandLine();
-            cmdline.merge(args);
+    void runTest(const CommandLine& args)
+    {
+        CommandLine& cmdline = commandLine();
+        cmdline.merge(args);
 
-            ASSERT_EQ(0, gmx_solvate(cmdline.argc(), cmdline.argv()));
-            checkOutputFiles();
-        }
+        ASSERT_EQ(0, gmx_solvate(cmdline.argc(), cmdline.argv()));
+        checkOutputFiles();
+    }
 };
 
 TEST_F(SolvateTest, cs_box_Works)
 {
     // use default solvent box (-cs without argument)
-    const char *const cmdline[] = {
-        "solvate", "-cs", "-box", "1.1"
-    };
+    const char* const cmdline[] = { "solvate", "-cs", "-box", "1.1" };
     runTest(CommandLine(cmdline));
 }
 
 TEST_F(SolvateTest, cs_cp_Works)
 {
     // use default solvent box (-cs without argument)
-    const char *const cmdline[] = {
-        "solvate", "-cs"
-    };
+    const char* const cmdline[] = { "solvate", "-cs" };
     setInputFile("-cp", "spc-and-methanol.gro");
     runTest(CommandLine(cmdline));
 }
@@ -100,16 +93,9 @@ TEST_F(SolvateTest, cs_cp_Works)
 TEST_F(SolvateTest, cs_cp_p_Works)
 {
     // use default solvent box (-cs without argument)
-    const char *const cmdline[] = {
-        "solvate", "-cs"
-    };
+    const char* const cmdline[] = { "solvate", "-cs" };
     setInputFile("-cp", "spc-and-methanol.gro");
-
-    // TODO: Consider adding a convenience method for this.
-    std::string topFileName           = gmx::test::TestFileManager::getInputFilePath("spc-and-methanol.top");
-    std::string modifiableTopFileName = fileManager().getTemporaryFilePath(".top");
-    gmx_file_copy(topFileName.c_str(), modifiableTopFileName.c_str(), true);
-    commandLine().addOption("-p", modifiableTopFileName);
+    setModifiableInputFile("-p", "spc-and-methanol.top");
 
     runTest(CommandLine(cmdline));
 }
@@ -117,9 +103,7 @@ TEST_F(SolvateTest, cs_cp_p_Works)
 TEST_F(SolvateTest, shell_Works)
 {
     // use default solvent box (-cs without argument)
-    const char *const cmdline[] = {
-        "solvate", "-cs"
-    };
+    const char* const cmdline[] = { "solvate", "-cs" };
     setInputFile("-cp", "spc-and-methanol.gro");
     commandLine().addOption("-shell", 1.0);
 
@@ -129,19 +113,10 @@ TEST_F(SolvateTest, shell_Works)
 TEST_F(SolvateTest, update_Topology_Works)
 {
     // use solvent box with 2 solvents, check that topology has been updated
-    const char *const cmdline[] = {
-        "solvate"
-    };
+    const char* const cmdline[] = { "solvate" };
     setInputFile("-cs", "mixed_solvent.gro");
     setInputFile("-cp", "simple.gro");
-
-    // TODO: Consider adding a convenience method for this.
-    // Copies topology file to where it would be found as an output file, so the copied
-    // .top file is used as both input and output
-    std::string topFileName           = gmx::test::TestFileManager::getInputFilePath("simple.top");
-    std::string modifiableTopFileName = fileManager().getTemporaryFilePath("simple.top");
-    gmx_file_copy(topFileName.c_str(), modifiableTopFileName.c_str(), true);
-    setOutputFile("-p", "simple.top", ExactTextMatch());
+    setInputAndOutputFile("-p", "simple.top", ExactTextMatch());
 
     runTest(CommandLine(cmdline));
 }

@@ -43,27 +43,15 @@ if(GMX_MPI)
 
   # Test the CMAKE_C_COMPILER for being an MPI (wrapper) compiler
   TRY_COMPILE(MPI_FOUND ${CMAKE_BINARY_DIR}
-    "${CMAKE_SOURCE_DIR}/cmake/TestMPI.c"
+    "${CMAKE_SOURCE_DIR}/cmake/TestMPI.cpp"
     COMPILE_DEFINITIONS )
 
   # If CMAKE_C_COMPILER is not a MPI wrapper. Try to find MPI using cmake module as fall-back.
   if(NOT MPI_FOUND)
       find_package(MPI)
       if(MPI_C_FOUND)
-          # workaround for rhel bug #1749463, cmake bug #18349, fixed in cmake-3.12.3
-          if(CMAKE_VERSION VERSION_LESS "3.12.3")
-              set(MPI_COMPILE_FLAGS)
-              foreach(_MPI_FLAG ${MPI_C_COMPILE_FLAGS})
-                  set(MPI_COMPILE_FLAGS "${MPI_COMPILE_FLAGS} ${_MPI_FLAG}")
-              endforeach()
-              set(MPI_LINKER_FLAGS)
-              foreach(_MPI_FLAG ${MPI_C_LINK_FLAGS})
-                  set(MPI_LINKER_FLAGS "${MPI_LINKER_FLAGS} ${_MPI_FLAG}")
-              endforeach()
-          else()
-              set(MPI_COMPILE_FLAGS ${MPI_C_COMPILE_FLAGS})
-              set(MPI_LINKER_FLAGS ${MPI_C_LINK_FLAGS})
-          endif()
+          set(MPI_COMPILE_FLAGS ${MPI_C_COMPILE_FLAGS})
+          set(MPI_LINKER_FLAGS ${MPI_C_LINK_FLAGS})
           include_directories(SYSTEM ${MPI_C_INCLUDE_PATH})
           list(APPEND GMX_COMMON_LIBRARIES ${MPI_C_LIBRARIES})
       endif()

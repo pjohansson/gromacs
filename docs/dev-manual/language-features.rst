@@ -7,24 +7,19 @@ reason for deviating from them.
 Portability considerations
 ^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-|Gromacs| uses C99 for C files and C++11 for C++ files. 
+Most |Gromacs| files compile as C++14, but some files remain that compile as C99.
 C++ has a lot of features, but to keep the source code maintainable and easy to read, 
 we will avoid using some of them in |Gromacs| code. The basic principle is to keep things 
 as simple as possible.
-For compatiblity, certain work-arounds are required because not all compilers support 
-these standards fully.
 
 * MSVC supports only a subset of C99 and work-arounds are required in those cases.
-* Before 7.0 (partial support in 6.5) CUDA didn't support C++11. Therefore any
-  header file which is needed (or likely will be nedded) by CUDA should not use C++11.
-* We should be able to use virtually all C++ features outside of the header files
-  required by CUDA code (and OpenCL kernels), since we have gradually moved to
-  compilers that have full support for C++11.
+* We should be able to use virtually all C++14 features outside of OpenCL kernels
+  (which compile as C), and for consistency also in CUDA kernels.
 
 C++ Standard Library
 --------------------
 
-|Gromacs| code must support the lowest common denominator of C++11 standard library
+|Gromacs| code must support the lowest common denominator of C++14 standard library
 features available on supported platforms.
 Some modern features are useful enough to warrant back-porting.
 Consistent and forward-compatible headers are provided in ``src/gromacs/compat/``
@@ -61,12 +56,27 @@ a release.
   prototype.
 * Use ``not_null<T>`` pointers wherever possible to convey the
   semantics that a pointer to a valid is required, and a reference
-  is inappropriate. See also |linkrefnotnull|.
+  is inappropriate. See also |linkrefnotnull1| and |linkrefnotnull2|.
+* Use ``string_view`` in cases where you want to only use a read-only-sequence
+  of characters instead of using ``const std::string &``. See also |linkrefstringview|.
+  Because null termination expected by some C APIs (e.g. fopen, fputs, fprintf)
+  is not guaranteed, string_view should not be used in such cases.
+* Use ``optional<T>`` types in situations where there is exactly one,
+  reason (that is clear to all parties) for having no value of type T,
+  and where the lack of value is as natural as having any regular
+  value of T. Good examples include the return type of a function that
+  parses an integer value from a string, searching for a matching
+  element in a range, or providing an optional name for a residue
+  type. Prefer some other construct when the logic requires an
+  explanation of the reason why no regular value for T exists, ie.  do
+  not use ``optional<T>`` for error handling.
 * Don't use C-style casts; use ``const_cast``, ``static_cast`` or
   ``reinterpret_cast as appropriate``. See the point on RTTI for
   ``dynamic_cast``. For emphasizing type (e.g. intentional integer division)
   use constructor syntax. For creating real constants use the user-defined literal
   _real (e.g. 2.5_real instead of static_cast<real>(2.5)).
+* Use signed integers for arithmetic (including loop indices). Use ssize
+  (available as free function and member of ArrayRef) to avoid casting.
 * Avoid overloading functions unless all variants really do the same
   thing, just with different types. Instead, consider making the
   function names more descriptive.
@@ -89,7 +99,11 @@ a release.
   "inherit to be reused, not to reuse." Also, you should not
   mix implementation and interface inheritance. For explanation please
   see |linkref7|.
-* Don't include unnecessary headers.
+* Don't include unnecessary headers. In header files, prefer to
+  forward declare the names of types used only "in name" in the header
+  file. This reduces compilation coupling and thus time. If a source
+  file also only uses the type by name (e.g. passing a pointer received
+  from the caller to a callee), then no include statements are needed!
 * Make liberal use of assertions to help document your intentions (but
   prefer to write the code such that no assertion is necessary).
 * Prefer ``GMX_ASSERT()`` and ``GMX_RELEASE_ASSERT()`` to naked
@@ -108,7 +122,7 @@ a release.
   make sure that they do what you
   want). ``src/gromacs/utility/classhelpers.h`` has some convenience
   macros for doing this well.
-  Starting from c++11, you can also use deleted functions in this case.
+  You can also use deleted functions in this case.
 * Declare all constructors with one parameter as explicit unless you
   really know what you are doing. Otherwise, they can be used for
   implicit type conversions, which can make the code difficult to
@@ -148,7 +162,11 @@ a release.
 .. |linkref7| replace:: `here <http://isocpp.github.io/CppCoreGuidelines/CppCoreGuidelines#c129-when-designing-a-class-hierarchy-distinguish-between-implementation-inheritance-and-interface-inheritance>`__
 .. |linkref8| replace:: `here <http://isocpp.github.io/CppCoreGuidelines/CppCoreGuidelines#Renum-class>`__
 .. |linkref9| replace:: `here <http://isocpp.github.io/CppCoreGuidelines/CppCoreGuidelines#Rc-explicit>`__
-.. |linkrefnotnull| replace:: `here <http://isocpp.github.io/CppCoreGuidelines/CppCoreGuidelines#Ri-nullptr> and here <http://isocpp.github.io/CppCoreGuidelines/CppCoreGuidelines#Rf-nullptr>`__
+.. |linkrefnotnull1| replace:: `here <http://isocpp.github.io/CppCoreGuidelines/CppCoreGuidelines#Ri-nullptr>`__
+.. |linkrefnotnull2| replace:: `here <http://isocpp.github.io/CppCoreGuidelines/CppCoreGuidelines#Rf-nullptr>`__
+.. |linkrefstringview| replace:: `here <https://isocpp.github.io/CppCoreGuidelines/CppCoreGuidelines.html#Rstr-view>`__
+
+
 
 .. _implementing exceptions:
 
@@ -190,7 +208,7 @@ Preprocessor considerations
   test what value it has. This is much more robust under maintance,
   because a compiler can tell you that the variable is undefined.
 * Avoid code with lengthy segments whose compilation depends on #if
-  (or worse, #ifdef).
+  (or worse, #ifdef of symbols provided from outside |Gromacs|).
 * Prefer to organize the definition of a const variable at the top of
   the source code file, and use that in the code.  This helps keep all
   compilation paths built in all configurations, which reduces the

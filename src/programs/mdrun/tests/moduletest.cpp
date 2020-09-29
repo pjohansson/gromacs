@@ -1,7 +1,7 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2013,2014,2015,2016,2017,2018, by the GROMACS development team, led by
+ * Copyright (c) 2013,2014,2015,2016,2017,2018,2019, by the GROMACS development team, led by
  * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
  * and including many others, as listed in the AUTHORS file in the
  * top-level source directory and at http://www.gromacs.org.
@@ -47,10 +47,12 @@
 
 #include <cstdio>
 
+#include "gromacs/gmxana/gmx_ana.h"
 #include "gromacs/gmxpreprocess/grompp.h"
 #include "gromacs/hardware/detecthardware.h"
 #include "gromacs/options/basicoptions.h"
 #include "gromacs/options/ioptionscontainer.h"
+#include "gromacs/tools/convert_tpr.h"
 #include "gromacs/utility/basedefinitions.h"
 #include "gromacs/utility/basenetwork.h"
 #include "gromacs/utility/gmxmpi.h"
@@ -83,19 +85,22 @@ GMX_TEST_OPTIONS(MdrunTestOptions, options)
 {
     GMX_UNUSED_VALUE(options);
 #if GMX_OPENMP
-    options->addOption(IntegerOption("ntomp").store(&g_numOpenMPThreads)
-                           .description("Number of OpenMP threads for child mdrun calls"));
+    options->addOption(
+            IntegerOption("ntomp").store(&g_numOpenMPThreads).description("Number of OpenMP threads for child mdrun calls"));
 #endif
 }
 //! \endcond
 
-}       // namespace
+} // namespace
 
-SimulationRunner::SimulationRunner(TestFileManager *fileManager) :
+SimulationRunner::SimulationRunner(TestFileManager* fileManager) :
+    fullPrecisionTrajectoryFileName_(fileManager->getTemporaryFilePath(".trr")),
     mdpOutputFileName_(fileManager->getTemporaryFilePath("output.mdp")),
     tprFileName_(fileManager->getTemporaryFilePath(".tpr")),
     logFileName_(fileManager->getTemporaryFilePath(".log")),
     edrFileName_(fileManager->getTemporaryFilePath(".edr")),
+    mtxFileName_(fileManager->getTemporaryFilePath(".mtx")),
+
     nsteps_(-2),
     fileManager_(*fileManager)
 {
@@ -111,47 +116,46 @@ SimulationRunner::SimulationRunner(TestFileManager *fileManager) :
 // TODO There is possible outstanding unexplained behaviour of mdp
 // input parsing e.g. Redmine 2074, so this particular set of mdp
 // contents is also tested with GetIrTest in gmxpreprocess-test.
-void
-SimulationRunner::useEmptyMdpFile()
+void SimulationRunner::useEmptyMdpFile()
 {
-    useStringAsMdpFile(R"(cutoff-scheme = Verlet
-                          verlet-buffer-tolerance = 0.005)");
+    useStringAsMdpFile("");
 }
 
-void
-SimulationRunner::useStringAsMdpFile(const char *mdpString)
+void SimulationRunner::useStringAsMdpFile(const char* mdpString)
 {
     useStringAsMdpFile(std::string(mdpString));
 }
 
-void
-SimulationRunner::useStringAsMdpFile(const std::string &mdpString)
+void SimulationRunner::useStringAsMdpFile(const std::string& mdpString)
 {
     mdpInputContents_ = mdpString;
 }
 
-void
-SimulationRunner::useStringAsNdxFile(const char *ndxString)
+void SimulationRunner::useStringAsNdxFile(const char* ndxString)
 {
     gmx::TextWriter::writeFileFromString(ndxFileName_, ndxString);
 }
 
-void
-SimulationRunner::useTopGroAndNdxFromDatabase(const std::string &name)
+void SimulationRunner::useTopG96AndNdxFromDatabase(const std::string& name)
+{
+    topFileName_ = gmx::test::TestFileManager::getInputFilePath(name + ".top");
+    groFileName_ = gmx::test::TestFileManager::getInputFilePath(name + ".g96");
+    ndxFileName_ = gmx::test::TestFileManager::getInputFilePath(name + ".ndx");
+}
+
+void SimulationRunner::useTopGroAndNdxFromDatabase(const std::string& name)
 {
     topFileName_ = gmx::test::TestFileManager::getInputFilePath(name + ".top");
     groFileName_ = gmx::test::TestFileManager::getInputFilePath(name + ".gro");
     ndxFileName_ = gmx::test::TestFileManager::getInputFilePath(name + ".ndx");
 }
 
-void
-SimulationRunner::useGroFromDatabase(const char *name)
+void SimulationRunner::useGroFromDatabase(const char* name)
 {
     groFileName_ = gmx::test::TestFileManager::getInputFilePath((std::string(name) + ".gro").c_str());
 }
 
-int
-SimulationRunner::callGromppOnThisRank(const CommandLine &callerRef)
+int SimulationRunner::callGromppOnThisRank(const CommandLine& callerRef)
 {
     const std::string mdpInputFileName(fileManager_.getTemporaryFilePath("input.mdp"));
     gmx::TextWriter::writeFileFromString(mdpInputFileName, mdpInputContents_);
@@ -174,14 +178,12 @@ SimulationRunner::callGromppOnThisRank(const CommandLine &callerRef)
     return gmx_grompp(caller.argc(), caller.argv());
 }
 
-int
-SimulationRunner::callGromppOnThisRank()
+int SimulationRunner::callGromppOnThisRank()
 {
     return callGromppOnThisRank(CommandLine());
 }
 
-int
-SimulationRunner::callGrompp(const CommandLine &callerRef)
+int SimulationRunner::callGrompp(const CommandLine& callerRef)
 {
     int returnValue = 0;
 #if GMX_LIB_MPI
@@ -202,14 +204,46 @@ SimulationRunner::callGrompp(const CommandLine &callerRef)
     return returnValue;
 }
 
-int
-SimulationRunner::callGrompp()
+int SimulationRunner::callGrompp()
 {
     return callGrompp(CommandLine());
 }
 
-int
-SimulationRunner::callMdrun(const CommandLine &callerRef)
+int SimulationRunner::changeTprNsteps(int nsteps)
+{
+    CommandLine caller;
+    caller.append("convert-tpr");
+    caller.addOption("-nsteps", nsteps);
+    // Because the operation is to change the .tpr, we replace the
+    // file. TODO Do we need to delete an automatic backup?
+    caller.addOption("-s", tprFileName_);
+    caller.addOption("-o", tprFileName_);
+
+    return gmx_convert_tpr(caller.argc(), caller.argv());
+}
+
+int SimulationRunner::callNmeig()
+{
+    /* Conforming to style guide by not passing a non-const reference
+       to this function. Passing a non-const reference might make it
+       easier to write code that incorrectly re-uses callerRef after
+       the call to this function. */
+
+    CommandLine caller;
+    caller.append("nmeig");
+    caller.addOption("-s", tprFileName_);
+    caller.addOption("-f", mtxFileName_);
+    // Ignore the overall translation and rotation in the
+    // first six eigenvectors.
+    caller.addOption("-first", "7");
+    // No need to check more than a number of output values.
+    caller.addOption("-last", "50");
+    caller.addOption("-xvg", "none");
+
+    return gmx_nmeig(caller.argc(), caller.argv());
+}
+
+int SimulationRunner::callMdrun(const CommandLine& callerRef)
 {
     /* Conforming to style guide by not passing a non-const reference
        to this function. Passing a non-const reference might make it
@@ -223,6 +257,7 @@ SimulationRunner::callMdrun(const CommandLine &callerRef)
 
     caller.addOption("-g", logFileName_);
     caller.addOption("-e", edrFileName_);
+    caller.addOption("-mtx", mtxFileName_);
     caller.addOption("-o", fullPrecisionTrajectoryFileName_);
     caller.addOption("-x", reducedPrecisionTrajectoryFileName_);
 
@@ -244,8 +279,7 @@ SimulationRunner::callMdrun(const CommandLine &callerRef)
     return gmx_mdrun(caller.argc(), caller.argv());
 }
 
-int
-SimulationRunner::callMdrun()
+int SimulationRunner::callMdrun()
 {
     return callMdrun(CommandLine());
 }
@@ -259,15 +293,11 @@ MdrunTestFixtureBase::MdrunTestFixtureBase()
 #endif
 }
 
-MdrunTestFixtureBase::~MdrunTestFixtureBase()
-{
-}
+MdrunTestFixtureBase::~MdrunTestFixtureBase() {}
 
 // ====
 
-MdrunTestFixture::MdrunTestFixture() : runner_(&fileManager_)
-{
-}
+MdrunTestFixture::MdrunTestFixture() : runner_(&fileManager_) {}
 
 MdrunTestFixture::~MdrunTestFixture()
 {

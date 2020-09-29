@@ -38,7 +38,7 @@
 #include <array>
 
 #include "gromacs/utility.h"
-#include "gromacs/compat/make_unique.h"
+#include <memory>
 #include "gromacs/mdrun/runner.h"
 
 #include "gmxapi/context.h"
@@ -47,7 +47,7 @@
 #include "gmxapi/status.h"
 #include "gmxapi/system.h"
 
-#include "system-impl.h"
+#include "system_impl.h"
 #include "workflow.h"
 
 namespace gmxapi
@@ -56,9 +56,9 @@ namespace gmxapi
 //! \cond
 System::Impl::~Impl() = default;
 
-System::Impl::Impl(System::Impl &&) noexcept = default;
+System::Impl::Impl(System::Impl&&) noexcept = default;
 
-System::Impl &System::Impl::operator=(System::Impl &&source) noexcept
+System::Impl& System::Impl::operator=(System::Impl&& source) noexcept
 {
     if (this != &source)
     {
@@ -68,14 +68,13 @@ System::Impl &System::Impl::operator=(System::Impl &&source) noexcept
 }
 //! \endcond
 
-std::shared_ptr<Session> System::launch(const std::shared_ptr<Context> &context)
+std::shared_ptr<Session> System::launch(const std::shared_ptr<Context>& context)
 {
     return impl_->launch(context);
 }
 
 //! \cond
-System::System(std::unique_ptr<Impl> implementation) :
-    impl_ {std::move(implementation)}
+System::System(std::unique_ptr<Impl> implementation) : impl_{ std::move(implementation) }
 {
     GMX_ASSERT(impl_, "Constructor requires valid implementation object.");
 }
@@ -83,11 +82,11 @@ System::System(std::unique_ptr<Impl> implementation) :
 System::~System() = default;
 //! \endcond
 
-System::System(System &&) noexcept = default;
+System::System(System&&) noexcept = default;
 
-System &System::operator=(System &&) noexcept = default;
+System& System::operator=(System&&) noexcept = default;
 
-System fromTprFile(const std::string &filename)
+System fromTprFile(const std::string& filename)
 {
     // TODO Confirm the file is readable and parseable and note unique
     // identifying information for when the work spec is used in a different
@@ -100,7 +99,7 @@ System fromTprFile(const std::string &filename)
     // This may produce errors or throw exceptions in the future, but as of
     // 0.0.3 only memory allocation errors are possible, and we do not have a
     // plan for how to recover from them.
-    auto systemImpl = gmx::compat::make_unique<System::Impl>(std::move(workflow));
+    auto systemImpl = std::make_unique<System::Impl>(std::move(workflow));
     GMX_ASSERT(systemImpl, "Could not create a valid implementation object.");
     auto system = System(std::move(systemImpl));
 
@@ -125,7 +124,7 @@ System::Impl::Impl(std::unique_ptr<gmxapi::Workflow> workflow) noexcept :
     GMX_ASSERT(spec_, "Class invariant implies non-null work specification member.");
 }
 
-std::shared_ptr<Session> System::Impl::launch(const std::shared_ptr<Context> &context)
+std::shared_ptr<Session> System::Impl::launch(const std::shared_ptr<Context>& context)
 {
     std::shared_ptr<Session> session = nullptr;
     if (context != nullptr)
@@ -134,12 +133,11 @@ std::shared_ptr<Session> System::Impl::launch(const std::shared_ptr<Context> &co
         session = context->launch(*workflow_);
         GMX_ASSERT(session, "Context::launch() expected to produce non-null session.");
 
-        for (auto && module : spec_->getModules())
+        for (auto&& module : spec_->getModules())
         {
             // TODO: This should be the job of the launching code that produces the Session.
             // Configure the restraints in a restraint manager made available to the session launcher.
-            addSessionRestraint(session.get(),
-                                module);
+            addSessionRestraint(session.get(), module);
         }
     }
     else

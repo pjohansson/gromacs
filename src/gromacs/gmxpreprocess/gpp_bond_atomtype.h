@@ -3,7 +3,7 @@
  *
  * Copyright (c) 1991-2000, University of Groningen, The Netherlands.
  * Copyright (c) 2001-2004, The GROMACS development team.
- * Copyright (c) 2011,2014,2015,2018, by the GROMACS development team, led by
+ * Copyright (c) 2011,2014,2015,2018,2019, by the GROMACS development team, led by
  * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
  * and including many others, as listed in the AUTHORS file in the
  * top-level source directory and at http://www.gromacs.org.
@@ -34,29 +34,79 @@
  * To help us fund GROMACS development, we humbly ask that you cite
  * the research papers on the package. Check out http://www.gromacs.org.
  */
+/*! \libinternal \file
+ * \brief
+ * Declares PreprocessingBondAtomType.
+ *
+ * \author David van der Spoel <david.vanderspoel@icm.uu.se>
+ * \author Paul Bauer <paul.bauer.q@gmail.com>
+ * \inlibraryapi
+ * \ingroup module_preprocessing
+ */
+#ifndef GMX_GMXPREPROCESS_GPP_BOND_ATOMTYPE_H
+#define GMX_GMXPREPROCESS_GPP_BOND_ATOMTYPE_H
 
-#ifndef GMX_GMXPREPROCESS_GPP_BONDATOMTYPE_H
-#define GMX_GMXPREPROCESS_GPP_BONDATOMTYPE_H
+#include <cstdio>
 
-#include <stdio.h>
+#include <string>
 
-typedef struct gpp_bondatomtype *t_bond_atomtype;
+#include "gromacs/utility/classhelpers.h"
 
-int get_bond_atomtype_type(char *str, t_bond_atomtype at);
-/* Return atomtype corresponding to case-insensitive str
-   or NOTSET if not found */
+struct t_symtab;
 
-char *get_bond_atomtype_name(int nt, t_bond_atomtype at);
-/* Return name corresponding to atomtype nt, or NULL if not found */
+/*! \libinternal \brief
+ * Storage for all bonded atomtypes during simulation preprocessing.
+ */
+class PreprocessingBondAtomType
+{
+public:
+    PreprocessingBondAtomType();
+    ~PreprocessingBondAtomType();
 
-t_bond_atomtype init_bond_atomtype();
-/* Return a new atomtype structure */
+    //! Get number of defined bond atom types.
+    size_t size() const;
 
-void done_bond_atomtype(t_bond_atomtype *at);
-/* Free the memory in the structure */
+    /*! \brief
+     * Get name of atom from internal bond atom type number.
+     *
+     * \param[in] nt Internal number of atom type.
+     * \returns The type name.
+     */
+    const char* atomNameFromBondAtomType(int nt) const;
 
-void add_bond_atomtype(t_bond_atomtype at, struct t_symtab *tab,
-                       char *name);
-/* Add a complete new atom type to an existing atomtype structure */
+    /*! \brief
+     *  Get bond atom type index for atom type name if present in the database, or NOTSET.
+     *
+     *  \todo The code should be changed to instead use a gmx::compat version
+     *  of std::optional to return a handle to the element being searched,
+     *  or an empty optional construct if the entry has not been found.
+     *
+     *  \param[in] str Input string to search type for.
+     *  \returns Atomtype as integer.
+     */
+    int bondAtomTypeFromName(const std::string& str) const;
+
+    /*! \brief
+     * Add a complete new bond atom type.
+     *
+     * \param[in] tab Symbol table.
+     * \param[in] name Atom name.
+     * \returns The number of entries in database or the type number of an already set type.
+     */
+    int addBondAtomType(t_symtab* tab, const std::string& name);
+
+    /*! \brief
+     * If a value is within the range of the current types or not.
+     *
+     * \param[in] nt Value to check.
+     * \returns True if value is in range.
+     */
+    bool isSet(int nt) const;
+
+private:
+    class Impl;
+    //! Pimpl that holds the data.
+    gmx::PrivateImplPointer<Impl> impl_;
+};
 
 #endif

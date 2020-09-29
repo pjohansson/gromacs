@@ -67,22 +67,28 @@ if(${GMX_SIMD_ACTIVE} MATCHES "^(SSE|AVX)" AND APPLE)
     set(_fftw_simd_support_level "--enable-sse2")
 elseif(${GMX_SIMD_ACTIVE} MATCHES "^(SSE)")
     set(_fftw_simd_support_level "--enable-sse2")
-elseif(${GMX_SIMD_ACTIVE} MATCHES "^(AVX)")
+elseif(${GMX_SIMD_ACTIVE} MATCHES "^(AVX)" AND NOT ${GMX_SIMD_ACTIVE} MATCHES "^(AVX_512)")
     # Testing shows FFTW configured with --enable-sse2 --enable-avx is
     # slightly faster on most architectures than --enable-sse2 alone.
     # Support for --enable-avx2 was only added in 3.3.5, but
     # configuring with it is at worst a warning, even on an earlier
     # version.
+    # On platforms capable of AVX512 where we are building with AVX2,
+    # enabling AVX512 risks clock-throttling the entire mdrun if
+    # fftw happens to pick up an AVX512 kernel (which is not unlikely
+    # as fftw tuning is known to produce highly varying results).
+    set(_fftw_simd_support_level --enable-sse2;--enable-avx;--enable-avx2)
+elseif(${GMX_SIMD_ACTIVE} MATCHES "^(AVX_512)")
     # MSVC, GCC < 4.9, Clang < 3.9 do not support AVX-512, so
     # we should not enable it there. FFTW does not support clang with
     # AVX-512, so we should not enable that either.
-if(MSVC OR (CMAKE_COMPILER_IS_GNUCC AND CMAKE_C_COMPILER_VERSION VERSION_LESS 4.9.0) OR
-   (CMAKE_C_COMPILER_ID MATCHES "Clang" AND CMAKE_C_COMPILER_VERSION VERSION_LESS 3.9.0) OR
-   (CMAKE_C_COMPILER_ID MATCHES "Clang" AND ${GMX_SIMD_ACTIVE} MATCHES "^(AVX_512)"))
-    set(_fftw_simd_support_level --enable-sse2;--enable-avx;--enable-avx2)
-else()
-    set(_fftw_simd_support_level --enable-sse2;--enable-avx;--enable-avx2;--enable-avx512)
-endif()
+    if(MSVC OR (CMAKE_COMPILER_IS_GNUCC AND CMAKE_C_COMPILER_VERSION VERSION_LESS 4.9.0) OR
+        (CMAKE_C_COMPILER_ID MATCHES "Clang" AND CMAKE_C_COMPILER_VERSION VERSION_LESS 3.9.0) OR
+        (CMAKE_C_COMPILER_ID MATCHES "Clang" AND ${GMX_SIMD_ACTIVE} MATCHES "^(AVX_512)"))
+        set(_fftw_simd_support_level --enable-sse2;--enable-avx;--enable-avx2)
+    else()
+        set(_fftw_simd_support_level --enable-sse2;--enable-avx;--enable-avx2;--enable-avx512)
+    endif()
 elseif(${GMX_SIMD_ACTIVE} MATCHES "^(VSX)")
     set(_fftw_simd_support_level --enable-vsx)
 endif()
@@ -102,47 +108,16 @@ set(GMX_BUILD_OWN_FFTW_MD5 8aac833c943d8e90d51b697b27d4384d CACHE STRING
     "Expected MD5 hash for the file at GMX_BUILD_OWN_FFTW_URL")
 mark_as_advanced(GMX_BUILD_OWN_FFTW_URL GMX_BUILD_OWN_FFTW_MD5)
 
-# ExternalProject at least up to CMake 3.0 prints a confusing error message if
-# download fails when MD5 verification is enabled.  So we manage the download
-# ourselves so that MD5 sum is not verified there, and then pass a local file
-# as the URL to ExternalProject.  This way, ExternalProject still verifies the
-# MD5 sum with a proper message if that fails.
-# TODO remove this when we require CMake 3.5+
-set(url "${GMX_BUILD_OWN_FFTW_URL}")
-# Determine whether we are actually downloading (this matches the conditions in
-# ExternalProject).  ExternalProject works as expected if passed a local file.
-set(is_download TRUE)
-if (IS_DIRECTORY "${url}" OR "${url}" MATCHES "^file://" OR NOT "${url}" MATCHES "^[a-z]+://")
-    set(is_download FALSE)
-endif()
-if (is_download)
-    # For simplicity, don't try to extract the file name from the URL, but use
-    # a hard-coded value.
-    set(remote_url "${GMX_BUILD_OWN_FFTW_URL}")
-    set(local_path "${CMAKE_CURRENT_BINARY_DIR}/fftw.tar.gz")
-    set(url ${local_path})
-    # Write a script to do our own download step (mimics what ExternalProject
-    # would do, but without MD5 sum verification at this step).
-    set(download_script ${CMAKE_CURRENT_BINARY_DIR}/fftw-download.cmake)
-    configure_file(fftw-download.cmake.cmakein ${download_script} @ONLY)
-endif()
-
 # The actual build target.
 set(EXTERNAL_FFTW_BUILD_TARGET fftwBuild)
 include(ExternalProject)
 ExternalProject_add(${EXTERNAL_FFTW_BUILD_TARGET}
-        URL "${url}" URL_MD5 ${GMX_BUILD_OWN_FFTW_MD5}
+        URL "${GMX_BUILD_OWN_FFTW_URL}"
+        URL_MD5 ${GMX_BUILD_OWN_FFTW_MD5}
         CONFIGURE_COMMAND <SOURCE_DIR>/configure --prefix=<INSTALL_DIR> --libdir=<INSTALL_DIR>/lib --disable-fortran
         ${GMX_BUILD_OWN_FFTW_SHARED_FLAG} ${GMX_BUILD_OWN_FFTW_OPTIMIZATION_CONFIGURATION}
         ${GMX_BUILD_OWN_FFTW_PREC}
         ${GMX_BUILD_OWN_FFTW_TARGET_HOST})
-# Add a custom step to do our own download if that is necessary.
-if (is_download)
-    ExternalProject_add_step(${EXTERNAL_FFTW_BUILD_TARGET} pre-download
-            COMMAND ${CMAKE_COMMAND} -P ${CMAKE_CURRENT_BINARY_DIR}/fftw-download.cmake
-            DEPENDERS download)
-endif()
-
 ExternalProject_get_property(${EXTERNAL_FFTW_BUILD_TARGET} INSTALL_DIR)
 
 string(REGEX REPLACE "fftw" "fftw3" FFTW_LIBNAME ${LOWERFFTW})

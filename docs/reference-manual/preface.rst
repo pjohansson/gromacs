@@ -14,7 +14,8 @@ Jiri Kraus, Carsten Kutzner, Per Larsson, Justin A. Lemkul,
 Viveca Lindahl, Magnus Lundborg, Erik Marklund,Pascal Merz,
 Pieter Meulenhoff, Teemu Murtola, Szilárd Páll, Sander Pronk,
 Roland Schulz, Michael Shirts, Alexey Shvetsov, Alfons Sijbers,
-Peter Tieleman, Teemu Virolainen, Christian Wennberg, and Maarten Wolf.
+Peter Tieleman, Teemu Virolainen, Christian Wennberg, Maarten Wolf,
+and Artem Zhmurov.
 
 Mark Abraham, Berk Hess, David van der Spoel, and Erik Lindahl.
 
@@ -50,14 +51,7 @@ Citation information
 
 .. TODO needs link to ref list
 
-When citing this document in any scientific publication
-please refer to it as:
-
-.. parsed-literal::
-
-    M.J. Abraham, D. van der Spoel, E. Lindahl, B. Hess, and the GROMACS development team,
-    |Gromacs| User Manual version |version|,
-    `http://www.gromacs.org <http://www.gromacs.org>`__ 
+|GMX_MANUAL_DOI_STRING|
 
 However, we prefer that you cite (some of) the |Gromacs|
 papers:

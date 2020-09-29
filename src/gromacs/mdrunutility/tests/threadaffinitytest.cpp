@@ -1,7 +1,7 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2016,2017,2018, by the GROMACS development team, led by
+ * Copyright (c) 2016,2017,2018,2019, by the GROMACS development team, led by
  * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
  * and including many others, as listed in the AUTHORS file in the
  * top-level source directory and at http://www.gromacs.org.
@@ -38,9 +38,10 @@
 
 #include "config.h"
 
+#include <memory>
+
 #include <gmock/gmock.h>
 
-#include "gromacs/compat/make_unique.h"
 #include "gromacs/hardware/hardwaretopology.h"
 #include "gromacs/mdtypes/commrec.h"
 #include "gromacs/utility/basenetwork.h"
@@ -52,30 +53,28 @@ namespace gmx
 namespace test
 {
 
-MockThreadAffinityAccess::MockThreadAffinityAccess()
-    : supported_(true)
+MockThreadAffinityAccess::MockThreadAffinityAccess() : supported_(true)
 {
     using ::testing::_;
     using ::testing::Return;
-    ON_CALL(*this, setCurrentThreadAffinityToCore(_))
-        .WillByDefault(Return(true));
+#ifndef __clang_analyzer__
+    ON_CALL(*this, setCurrentThreadAffinityToCore(_)).WillByDefault(Return(true));
+#endif
 }
 
-MockThreadAffinityAccess::~MockThreadAffinityAccess()
-{
-}
+MockThreadAffinityAccess::~MockThreadAffinityAccess() {}
 
 
 ThreadAffinityTestHelper::ThreadAffinityTestHelper()
 {
     snew(cr_, 1);
-    cr_->nnodes         = gmx_node_num();
-    cr_->nodeid         = gmx_node_rank();
-    cr_->duty           = DUTY_PP;
+    cr_->nnodes = gmx_node_num();
+    cr_->nodeid = gmx_node_rank();
+    cr_->duty   = DUTY_PP;
 #if GMX_MPI
     cr_->mpi_comm_mysim = MPI_COMM_WORLD;
 #endif
-    hwOpt_.thread_affinity     = threadaffAUTO;
+    hwOpt_.threadAffinity      = ThreadAffinity::Auto;
     hwOpt_.totNumThreadsIsAuto = false;
     physicalNodeId_            = 0;
 }
@@ -87,7 +86,7 @@ ThreadAffinityTestHelper::~ThreadAffinityTestHelper()
 
 void ThreadAffinityTestHelper::setLogicalProcessorCount(int logicalProcessorCount)
 {
-    hwTop_ = gmx::compat::make_unique<HardwareTopology>(logicalProcessorCount);
+    hwTop_ = std::make_unique<HardwareTopology>(logicalProcessorCount);
 }
 
 } // namespace test

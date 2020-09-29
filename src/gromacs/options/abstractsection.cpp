@@ -1,7 +1,7 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2016, by the GROMACS development team, led by
+ * Copyright (c) 2016,2019, by the GROMACS development team, led by
  * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
  * and including many others, as listed in the AUTHORS file in the
  * top-level source directory and at http://www.gromacs.org.
@@ -43,7 +43,7 @@
 
 #include "abstractsection.h"
 
-#include "options-impl.h"
+#include "options_impl.h"
 
 namespace gmx
 {
@@ -53,24 +53,22 @@ namespace gmx
  */
 
 // static
-IOptionSectionStorage *
-AbstractOptionSectionHandle::getStorage(internal::OptionSectionImpl *section)
+IOptionSectionStorage* AbstractOptionSectionHandle::getStorage(internal::OptionSectionImpl* section)
 {
     return section->storage_.get();
 }
 
-IOptionsContainer &AbstractOptionSectionHandle::addGroup()
+IOptionsContainer& AbstractOptionSectionHandle::addGroup()
 {
     return section_->addGroup();
 }
 
-internal::OptionSectionImpl *
-AbstractOptionSectionHandle::addSectionImpl(const AbstractOptionSection &section)
+internal::OptionSectionImpl* AbstractOptionSectionHandle::addSectionImpl(const AbstractOptionSection& section)
 {
     return section_->addSectionImpl(section);
 }
 
-OptionInfo *AbstractOptionSectionHandle::addOptionImpl(const AbstractOption &settings)
+OptionInfo* AbstractOptionSectionHandle::addOptionImpl(const AbstractOption& settings)
 {
     return section_->addOptionImpl(settings);
 }
@@ -79,7 +77,7 @@ OptionInfo *AbstractOptionSectionHandle::addOptionImpl(const AbstractOption &set
  * AbstractOptionSectionInfo
  */
 
-const std::string &AbstractOptionSectionInfo::name() const
+const std::string& AbstractOptionSectionInfo::name() const
 {
     return section_.name_;
 }

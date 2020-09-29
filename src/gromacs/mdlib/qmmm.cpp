@@ -3,7 +3,7 @@
  *
  * Copyright (c) 1991-2000, University of Groningen, The Netherlands.
  * Copyright (c) 2001-2004, The GROMACS development team.
- * Copyright (c) 2013,2014,2015,2016,2017,2018, by the GROMACS development team, led by
+ * Copyright (c) 2013,2014,2015,2016,2017,2018,2019, by the GROMACS development team, led by
  * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
  * and including many others, as listed in the AUTHORS file in the
  * top-level source directory and at http://www.gromacs.org.
@@ -54,12 +54,12 @@
 #include "gromacs/math/functions.h"
 #include "gromacs/math/units.h"
 #include "gromacs/math/vec.h"
-#include "gromacs/mdlib/ns.h"
 #include "gromacs/mdlib/qm_gamess.h"
 #include "gromacs/mdlib/qm_gaussian.h"
 #include "gromacs/mdlib/qm_mopac.h"
 #include "gromacs/mdlib/qm_orca.h"
 #include "gromacs/mdtypes/commrec.h"
+#include "gromacs/mdtypes/forceoutput.h"
 #include "gromacs/mdtypes/forcerec.h"
 #include "gromacs/mdtypes/inputrec.h"
 #include "gromacs/mdtypes/md_enums.h"
@@ -83,18 +83,23 @@
  * a QMMM input for the QM routines from the QMMM neighbor list.
  */
 
-typedef struct {
-    int      j;
-    int      shift;
+typedef struct
+{
+    int j;
+    int shift;
 } t_j_particle;
 
-static bool struct_comp(const t_j_particle &a, const t_j_particle &b)
+static bool struct_comp(const t_j_particle& a, const t_j_particle& b)
 {
     return a.j < b.j;
 }
 
-static real call_QMroutine(const t_commrec gmx_unused *cr, const t_forcerec gmx_unused *fr, t_QMrec gmx_unused *qm,
-                           t_MMrec gmx_unused *mm, rvec gmx_unused f[], rvec gmx_unused fshift[])
+static real call_QMroutine(const t_commrec gmx_unused* cr,
+                           const t_forcerec gmx_unused* fr,
+                           t_QMrec gmx_unused* qm,
+                           t_MMrec gmx_unused* mm,
+                           rvec gmx_unused f[],
+                           rvec gmx_unused fshift[])
 {
     /* makes a call to the requested QM routine (qm->QMmethod)
      * Note that f is actually the gradient, i.e. -f
@@ -149,13 +154,14 @@ static real call_QMroutine(const t_commrec gmx_unused *cr, const t_forcerec gmx_
             }
             else
             {
-                gmx_fatal(FARGS, "Ab-initio calculation only supported with Gamess, Gaussian or ORCA.");
+                gmx_fatal(FARGS,
+                          "Ab-initio calculation only supported with Gamess, Gaussian or ORCA.");
             }
         }
     }
 }
 
-static void init_QMroutine(const t_commrec gmx_unused *cr, t_QMrec gmx_unused *qm, t_MMrec gmx_unused *mm)
+static void init_QMroutine(const t_commrec gmx_unused* cr, t_QMrec gmx_unused* qm, t_MMrec gmx_unused* mm)
 {
     /* makes a call to the requested QM routine (qm->QMmethod)
      */
@@ -193,14 +199,13 @@ static void init_QMroutine(const t_commrec gmx_unused *cr, t_QMrec gmx_unused *q
     }
 } /* init_QMroutine */
 
-static void update_QMMM_coord(const rvec *x, const t_forcerec *fr, t_QMrec *qm, t_MMrec *mm)
+static void update_QMMM_coord(const rvec* x, const t_forcerec* fr, t_QMrec* qm, t_MMrec* mm)
 {
     /* shifts the QM and MM particles into the central box and stores
      * these shifted coordinates in the coordinate arrays of the
      * QMMMrec. These coordinates are passed on the QM subroutines.
      */
-    int
-        i;
+    int i;
 
     /* shift the QM atoms into the central box
      */
@@ -220,22 +225,21 @@ static void update_QMMM_coord(const rvec *x, const t_forcerec *fr, t_QMrec *qm, 
 
 /* QMMM core routines */
 
-static t_QMrec *mk_QMrec()
+static t_QMrec* mk_QMrec()
 {
-    t_QMrec *qm;
+    t_QMrec* qm;
     snew(qm, 1);
     return qm;
 } /* mk_QMrec */
 
-static t_MMrec *mk_MMrec()
+static t_MMrec* mk_MMrec()
 {
-    t_MMrec *mm;
+    t_MMrec* mm;
     snew(mm, 1);
     return mm;
 } /* mk_MMrec */
 
-static void init_QMrec(int grpnr, t_QMrec *qm, int nr, const int *atomarray,
-                       const gmx_mtop_t *mtop, const t_inputrec *ir)
+static void init_QMrec(int grpnr, t_QMrec* qm, int nr, const int* atomarray, const gmx_mtop_t* mtop, const t_inputrec* ir)
 {
     /* fills the t_QMrec struct of QM group grpnr
      */
@@ -253,42 +257,39 @@ static void init_QMrec(int grpnr, t_QMrec *qm, int nr, const int *atomarray,
     int molb = 0;
     for (int i = 0; i < qm->nrQMatoms; i++)
     {
-        const t_atom &atom = mtopGetAtomParameters(mtop, qm->indexQM[i], &molb);
-        qm->nelectrons       += mtop->atomtypes.atomnumber[atom.type];
+        const t_atom& atom = mtopGetAtomParameters(mtop, qm->indexQM[i], &molb);
+        qm->nelectrons += mtop->atomtypes.atomnumber[atom.type];
         qm->atomicnumberQM[i] = mtop->atomtypes.atomnumber[atom.type];
     }
 
-    qm->QMcharge       = ir->opts.QMcharge[grpnr];
-    qm->multiplicity   = ir->opts.QMmult[grpnr];
-    qm->nelectrons    -= ir->opts.QMcharge[grpnr];
+    qm->QMcharge     = ir->opts.QMcharge[grpnr];
+    qm->multiplicity = ir->opts.QMmult[grpnr];
+    qm->nelectrons -= ir->opts.QMcharge[grpnr];
 
-    qm->QMmethod       = ir->opts.QMmethod[grpnr];
-    qm->QMbasis        = ir->opts.QMbasis[grpnr];
+    qm->QMmethod = ir->opts.QMmethod[grpnr];
+    qm->QMbasis  = ir->opts.QMbasis[grpnr];
     /* trajectory surface hopping setup (Gaussian only) */
-    qm->bSH            = ir->opts.bSH[grpnr];
-    qm->CASorbitals    = ir->opts.CASorbitals[grpnr];
-    qm->CASelectrons   = ir->opts.CASelectrons[grpnr];
-    qm->SAsteps        = ir->opts.SAsteps[grpnr];
-    qm->SAon           = ir->opts.SAon[grpnr];
-    qm->SAoff          = ir->opts.SAoff[grpnr];
+    qm->bSH          = ir->opts.bSH[grpnr];
+    qm->CASorbitals  = ir->opts.CASorbitals[grpnr];
+    qm->CASelectrons = ir->opts.CASelectrons[grpnr];
+    qm->SAsteps      = ir->opts.SAsteps[grpnr];
+    qm->SAon         = ir->opts.SAon[grpnr];
+    qm->SAoff        = ir->opts.SAoff[grpnr];
     /* hack to prevent gaussian from reinitializing all the time */
-    qm->nQMcpus        = 0; /* number of CPU's to be used by g01, is set
-                             * upon initializing gaussian
-                             * (init_gaussian()
-                             */
+    qm->nQMcpus = 0; /* number of CPU's to be used by g01, is set
+                      * upon initializing gaussian
+                      * (init_gaussian()
+                      */
     /* print the current layer to allow users to check their input */
     fprintf(stderr, "Layer %d\nnr of QM atoms %d\n", grpnr, nr);
-    fprintf(stderr, "QMlevel: %s/%s\n\n",
-            eQMmethod_names[qm->QMmethod], eQMbasis_names[qm->QMbasis]);
+    fprintf(stderr, "QMlevel: %s/%s\n\n", eQMmethod_names[qm->QMmethod], eQMbasis_names[qm->QMbasis]);
 } /* init_QMrec */
 
-static t_QMrec *copy_QMrec(t_QMrec *qm)
+static t_QMrec* copy_QMrec(t_QMrec* qm)
 {
     /* copies the contents of qm into a new t_QMrec struct */
-    t_QMrec
-       *qmcopy;
-    int
-        i;
+    t_QMrec* qmcopy;
+    int      i;
 
     qmcopy            = mk_QMrec();
     qmcopy->nrQMatoms = qm->nrQMatoms;
@@ -317,44 +318,104 @@ static t_QMrec *copy_QMrec(t_QMrec *qm)
     qmcopy->SAoff        = qm->SAoff;
 
     /* Gaussian init. variables */
-    qmcopy->nQMcpus      = qm->nQMcpus;
+    qmcopy->nQMcpus = qm->nQMcpus;
     for (i = 0; i < DIM; i++)
     {
         qmcopy->SHbasis[i] = qm->SHbasis[i];
     }
-    qmcopy->QMmem        = qm->QMmem;
-    qmcopy->accuracy     = qm->accuracy;
-    qmcopy->cpmcscf      = qm->cpmcscf;
-    qmcopy->SAstep       = qm->SAstep;
+    qmcopy->QMmem    = qm->QMmem;
+    qmcopy->accuracy = qm->accuracy;
+    qmcopy->cpmcscf  = qm->cpmcscf;
+    qmcopy->SAstep   = qm->SAstep;
 
-    return(qmcopy);
+    return (qmcopy);
 
 } /*copy_QMrec */
 
 #if GMX_QMMM
 
-t_QMMMrec *mk_QMMMrec()
+t_QMMMrec* mk_QMMMrec()
 {
-    t_QMMMrec *qr;
+    t_QMMMrec* qr;
 
     snew(qr, 1);
 
     return qr;
 
-}     /* mk_QMMMrec */
+} /* mk_QMMMrec */
 
 #else /* GMX_QMMM */
 
-t_QMMMrec *mk_QMMMrec()
+t_QMMMrec* mk_QMMMrec()
 {
     gmx_incons("Compiled without QMMM");
 } /* mk_QMMMrec */
 #endif
 
-void init_QMMMrec(const t_commrec  *cr,
-                  const gmx_mtop_t *mtop,
-                  const t_inputrec *ir,
-                  const t_forcerec *fr)
+std::vector<int> qmmmAtomIndices(const t_inputrec& ir, const gmx_mtop_t& mtop)
+{
+    const int               numQmmmGroups = ir.opts.ngQM;
+    const SimulationGroups& groups        = mtop.groups;
+    std::vector<int>        qmmmAtoms;
+    for (int i = 0; i < numQmmmGroups; i++)
+    {
+        for (const AtomProxy atomP : AtomRange(mtop))
+        {
+            int index = atomP.globalAtomNumber();
+            if (getGroupType(groups, SimulationAtomGroupType::QuantumMechanics, index) == i)
+            {
+                qmmmAtoms.push_back(index);
+            }
+        }
+        if (ir.QMMMscheme == eQMMMschemeoniom)
+        {
+            /* I assume that users specify the QM groups from small to
+             * big(ger) in the mdp file
+             */
+            gmx_mtop_ilistloop_all_t iloop      = gmx_mtop_ilistloop_all_init(&mtop);
+            int                      nral1      = 1 + NRAL(F_VSITE2);
+            int                      atomOffset = 0;
+            while (const InteractionLists* ilists = gmx_mtop_ilistloop_all_next(iloop, &atomOffset))
+            {
+                const InteractionList& ilist = (*ilists)[F_VSITE2];
+                for (int j = 0; j < ilist.size(); j += nral1)
+                {
+                    const int vsite = atomOffset + ilist.iatoms[j];     /* the vsite         */
+                    const int ai    = atomOffset + ilist.iatoms[j + 1]; /* constructing atom */
+                    const int aj    = atomOffset + ilist.iatoms[j + 2]; /* constructing atom */
+                    if (getGroupType(groups, SimulationAtomGroupType::QuantumMechanics, vsite)
+                                == getGroupType(groups, SimulationAtomGroupType::QuantumMechanics, ai)
+                        && getGroupType(groups, SimulationAtomGroupType::QuantumMechanics, vsite)
+                                   == getGroupType(groups, SimulationAtomGroupType::QuantumMechanics, aj))
+                    {
+                        /* this dummy link atom needs to be removed from qmmmAtoms
+                         * before making the QMrec of this layer!
+                         */
+                        qmmmAtoms.erase(std::remove_if(qmmmAtoms.begin(), qmmmAtoms.end(),
+                                                       [&vsite](int atom) { return atom == vsite; }),
+                                        qmmmAtoms.end());
+                    }
+                }
+            }
+        }
+    }
+    return qmmmAtoms;
+}
+
+void removeQmmmAtomCharges(gmx_mtop_t* mtop, gmx::ArrayRef<const int> qmmmAtoms)
+{
+    int molb = 0;
+    for (gmx::index i = 0; i < qmmmAtoms.ssize(); i++)
+    {
+        int indexInMolecule;
+        mtopGetMolblockIndex(mtop, qmmmAtoms[i], &molb, nullptr, &indexInMolecule);
+        t_atom* atom = &mtop->moltype[mtop->molblock[molb].type].atoms.atom[indexInMolecule];
+        atom->q      = 0.0;
+        atom->qB     = 0.0;
+    }
+}
+
+void init_QMMMrec(const t_commrec* cr, const gmx_mtop_t* mtop, const t_inputrec* ir, const t_forcerec* fr)
 {
     /* we put the atomsnumbers of atoms that belong to the QMMM group in
      * an array that will be copied later to QMMMrec->indexQM[..]. Also
@@ -362,12 +423,8 @@ void init_QMMMrec(const t_commrec  *cr,
      * simply contains true/false for QM and MM (the other) atoms.
      */
 
-    int                     *qm_arr = nullptr, vsite, ai, aj;
-    int                      qm_max = 0, qm_nr = 0, i, j, jmax, k, l;
-    t_QMMMrec               *qr;
-    t_MMrec                 *mm;
-    gmx_mtop_atomloop_all_t  aloop;
-    int                      a_offset;
+    t_QMMMrec* qr;
+    t_MMrec*   mm;
 
     if (!GMX_QMMM)
     {
@@ -397,7 +454,7 @@ void init_QMMMrec(const t_commrec  *cr,
      * the qm_arr (=MMrec->indexQM) to changes the elements
      * corresponding to the QM atoms at TRUE.  */
 
-    qr->QMMMscheme     = ir->QMMMscheme;
+    qr->QMMMscheme = ir->QMMMscheme;
 
     /* we take the possibility into account that a user has
      * defined more than one QM group:
@@ -409,44 +466,28 @@ void init_QMMMrec(const t_commrec  *cr,
 
     /* small problem if there is only QM.... so no MM */
 
-    jmax = ir->opts.ngQM;
+    int numQmmmGroups = ir->opts.ngQM;
 
     if (qr->QMMMscheme == eQMMMschemeoniom)
     {
-        qr->nrQMlayers = jmax;
+        qr->nrQMlayers = numQmmmGroups;
     }
     else
     {
         qr->nrQMlayers = 1;
     }
 
-    const gmx_groups_t *groups = &mtop->groups;
-
-    /* there are jmax groups of QM atoms. In case of multiple QM groups
+    /* there are numQmmmGroups groups of QM atoms. In case of multiple QM groups
      * I assume that the users wants to do ONIOM. However, maybe it
      * should also be possible to define more than one QM subsystem with
      * independent neighbourlists. I have to think about
      * that.. 11-11-2003
      */
-    snew(qr->qm, jmax);
-    for (j = 0; j < jmax; j++)
+    std::vector<int> qmmmAtoms = qmmmAtomIndices(*ir, *mtop);
+    snew(qr->qm, numQmmmGroups);
+    for (int i = 0; i < numQmmmGroups; i++)
     {
         /* new layer */
-        aloop = gmx_mtop_atomloop_all_init(mtop);
-        const t_atom *atom;
-        while (gmx_mtop_atomloop_all_next(aloop, &i, &atom))
-        {
-            if (qm_nr >= qm_max)
-            {
-                qm_max += 1000;
-                srenew(qm_arr, qm_max);
-            }
-            if (getGroupType(groups, egcQMMM, i) == j)
-            {
-                /* hack for tip4p */
-                qm_arr[qm_nr++] = i;
-            }
-        }
         if (qr->QMMMscheme == eQMMMschemeoniom)
         {
             /* add the atoms to the bQMMM array
@@ -455,50 +496,10 @@ void init_QMMMrec(const t_commrec  *cr,
             /* I assume that users specify the QM groups from small to
              * big(ger) in the mdp file
              */
-            qr->qm[j] = mk_QMrec();
-            /* we need to throw out link atoms that in the previous layer
-             * existed to separate this QMlayer from the previous
-             * QMlayer. We use the iatoms array in the idef for that
-             * purpose. If all atoms defining the current Link Atom (Dummy2)
-             * are part of the current QM layer it needs to be removed from
-             * qm_arr[].  */
-
-            gmx_mtop_ilistloop_all_t iloop = gmx_mtop_ilistloop_all_init(mtop);
-            int nral1 = 1 + NRAL(F_VSITE2);
-            while (const InteractionLists *ilists = gmx_mtop_ilistloop_all_next(iloop, &a_offset))
-            {
-                const InteractionList &ilist = (*ilists)[F_VSITE2];
-                for (int i = 0; i < ilist.size(); i += nral1)
-                {
-                    vsite = a_offset + ilist.iatoms[i  ]; /* the vsite         */
-                    ai    = a_offset + ilist.iatoms[i+1]; /* constructing atom */
-                    aj    = a_offset + ilist.iatoms[i+2]; /* constructing atom */
-                    if (getGroupType(groups, egcQMMM, vsite) == getGroupType(groups, egcQMMM, ai)
-                        &&
-                        getGroupType(groups, egcQMMM, vsite) == getGroupType(groups, egcQMMM, aj))
-                    {
-                        /* this dummy link atom needs to be removed from the qm_arr
-                         * before making the QMrec of this layer!
-                         */
-                        for (i = 0; i < qm_nr; i++)
-                        {
-                            if (qm_arr[i] == vsite)
-                            {
-                                /* drop the element */
-                                for (l = i; l < qm_nr; l++)
-                                {
-                                    qm_arr[l] = qm_arr[l+1];
-                                }
-                                qm_nr--;
-                            }
-                        }
-                    }
-                }
-            }
-
+            qr->qm[i] = mk_QMrec();
             /* store QM atoms in this layer in the QMrec and initialise layer
              */
-            init_QMrec(j, qr->qm[j], qm_nr, qm_arr, mtop, ir);
+            init_QMrec(i, qr->qm[i], qmmmAtoms.size(), qmmmAtoms.data(), mtop, ir);
         }
     }
     if (qr->QMMMscheme != eQMMMschemeoniom)
@@ -511,32 +512,23 @@ void init_QMMMrec(const t_commrec  *cr,
          * TODO: Consider doing this in grompp instead.
          */
 
-        int molb = 0;
-        for (k = 0; k < qm_nr; k++)
-        {
-            int     indexInMolecule;
-            mtopGetMolblockIndex(mtop, qm_arr[k], &molb, nullptr, &indexInMolecule);
-            t_atom *atom = &mtop->moltype[mtop->molblock[molb].type].atoms.atom[indexInMolecule];
-            atom->q  = 0.0;
-            atom->qB = 0.0;
-        }
         qr->qm[0] = mk_QMrec();
         /* store QM atoms in the QMrec and initialise
          */
-        init_QMrec(0, qr->qm[0], qm_nr, qm_arr, mtop, ir);
+        init_QMrec(0, qr->qm[0], qmmmAtoms.size(), qmmmAtoms.data(), mtop, ir);
 
         /* MM rec creation */
-        mm               = mk_MMrec();
-        mm->scalefactor  = ir->scalefactor;
-        mm->nrMMatoms    = (mtop->natoms)-(qr->qm[0]->nrQMatoms); /* rest of the atoms */
-        qr->mm           = mm;
+        mm              = mk_MMrec();
+        mm->scalefactor = ir->scalefactor;
+        mm->nrMMatoms   = (mtop->natoms) - (qr->qm[0]->nrQMatoms); /* rest of the atoms */
+        qr->mm          = mm;
     }
     else /* ONIOM */
     {    /* MM rec creation */
-        mm               = mk_MMrec();
-        mm->scalefactor  = ir->scalefactor;
-        mm->nrMMatoms    = 0;
-        qr->mm           = mm;
+        mm              = mk_MMrec();
+        mm->scalefactor = ir->scalefactor;
+        mm->nrMMatoms   = 0;
+        qr->mm          = mm;
     }
 
     /* these variables get updated in the update QMMMrec */
@@ -577,17 +569,14 @@ void init_QMMMrec(const t_commrec  *cr,
             }
             else
             {
-                gmx_fatal(FARGS, "Ab-initio calculation only supported with Gamess, Gaussian or ORCA.");
+                gmx_fatal(FARGS,
+                          "Ab-initio calculation only supported with Gamess, Gaussian or ORCA.");
             }
         }
     }
 } /* init_QMMMrec */
 
-void update_QMMMrec(const t_commrec  *cr,
-                    const t_forcerec *fr,
-                    const rvec       *x,
-                    const t_mdatoms  *md,
-                    const matrix      box)
+void update_QMMMrec(const t_commrec* cr, const t_forcerec* fr, const rvec* x, const t_mdatoms* md, const matrix box)
 {
     /* updates the coordinates of both QM atoms and MM atoms and stores
      * them in the QMMMrec.
@@ -595,26 +584,16 @@ void update_QMMMrec(const t_commrec  *cr,
      * NOTE: is NOT yet working if there are no PBC. Also in ns.c, simple
      * ns needs to be fixed!
      */
-    int
-        mm_max = 0, mm_nr = 0, mm_nr_new, i, j, is, k, shift;
-    t_j_particle
-       *mm_j_particles = nullptr, *qm_i_particles = nullptr;
-    t_QMMMrec
-       *qr;
-    t_nblist
-       *QMMMlist;
-    rvec
-        dx;
-    ivec
-        crd;
-    t_QMrec
-       *qm;
-    t_MMrec
-       *mm;
-    t_pbc
-        pbc;
-    int
-       *parallelMMarray = nullptr;
+    int           mm_max = 0, mm_nr = 0, mm_nr_new, i, j, is, k, shift;
+    t_j_particle *mm_j_particles = nullptr, *qm_i_particles = nullptr;
+    t_QMMMrec*    qr;
+    t_nblist*     QMMMlist;
+    rvec          dx;
+    ivec          crd;
+    t_QMrec*      qm;
+    t_MMrec*      mm;
+    t_pbc         pbc;
+    int*          parallelMMarray = nullptr;
 
     if (!GMX_QMMM)
     {
@@ -628,15 +607,14 @@ void update_QMMMrec(const t_commrec  *cr,
      * whcih atoms are part of the QM subsystem.
      */
     /* copy some pointers */
-    qr          = fr->qr;
-    mm          = qr->mm;
-    QMMMlist    = fr->QMMMlist;
+    qr       = fr->qr;
+    mm       = qr->mm;
+    QMMMlist = fr->QMMMlist;
 
     /*  init_pbc(box);  needs to be called first, see pbc.h */
     ivec null_ivec;
     clear_ivec(null_ivec);
-    set_pbc_dd(&pbc, fr->ePBC, DOMAINDECOMP(cr) ? cr->dd->nc : null_ivec,
-               FALSE, box);
+    set_pbc_dd(&pbc, fr->ePBC, DOMAINDECOMP(cr) ? cr->dd->nc : null_ivec, FALSE, box);
     /* only in standard (normal) QMMM we need the neighbouring MM
      * particles to provide a electric field of point charges for the QM
      * atoms.
@@ -662,13 +640,12 @@ void update_QMMMrec(const t_commrec  *cr,
             qm_i_particles[0].shift = XYZ2IS(0, 0, 0);
             for (i = 0; i < QMMMlist->nri; i++)
             {
-                qm_i_particles[i].j     = QMMMlist->iinr[i];
+                qm_i_particles[i].j = QMMMlist->iinr[i];
 
                 if (i)
                 {
-                    qm_i_particles[i].shift = pbc_dx_aiuc(&pbc, x[QMMMlist->iinr[0]],
-                                                          x[QMMMlist->iinr[i]], dx);
-
+                    qm_i_particles[i].shift =
+                            pbc_dx_aiuc(&pbc, x[QMMMlist->iinr[0]], x[QMMMlist->iinr[i]], dx);
                 }
                 /* However, since nri >= nrQMatoms, we do a quicksort, and throw
                  * out double, triple, etc. entries later, as we do for the MM
@@ -683,9 +660,7 @@ void update_QMMMrec(const t_commrec  *cr,
                 crd[1] = IS2Y(QMMMlist->shift[i]) + IS2Y(qm_i_particles[i].shift);
                 crd[2] = IS2Z(QMMMlist->shift[i]) + IS2Z(qm_i_particles[i].shift);
                 is     = XYZ2IS(crd[0], crd[1], crd[2]);
-                for (j = QMMMlist->jindex[i];
-                     j < QMMMlist->jindex[i+1];
-                     j++)
+                for (j = QMMMlist->jindex[i]; j < QMMMlist->jindex[i + 1]; j++)
                 {
                     if (mm_nr >= mm_max)
                     {
@@ -702,12 +677,11 @@ void update_QMMMrec(const t_commrec  *cr,
             /* quicksort QM and MM shift arrays and throw away multiple entries */
 
 
-
-            std::sort(qm_i_particles, qm_i_particles+QMMMlist->nri, struct_comp);
+            std::sort(qm_i_particles, qm_i_particles + QMMMlist->nri, struct_comp);
             /* The mm_j_particles argument to qsort is not allowed to be nullptr */
             if (mm_nr > 0)
             {
-                std::sort(mm_j_particles, mm_j_particles+mm_nr, struct_comp);
+                std::sort(mm_j_particles, mm_j_particles + mm_nr, struct_comp);
             }
             /* remove multiples in the QM shift array, since in init_QMMM() we
              * went through the atom numbers from 0 to md.nr, the order sorted
@@ -716,7 +690,7 @@ void update_QMMMrec(const t_commrec  *cr,
             j = 0;
             for (i = 0; i < QMMMlist->nri; i++)
             {
-                if (i == 0 || qm_i_particles[i].j != qm_i_particles[i-1].j)
+                if (i == 0 || qm_i_particles[i].j != qm_i_particles[i - 1].j)
                 {
                     qm_i_particles[j++] = qm_i_particles[i];
                 }
@@ -728,7 +702,7 @@ void update_QMMMrec(const t_commrec  *cr,
              */
             for (i = 0; i < mm_nr; i++)
             {
-                if ((i == 0 || mm_j_particles[i].j != mm_j_particles[i-1].j)
+                if ((i == 0 || mm_j_particles[i].j != mm_j_particles[i - 1].j)
                     && !md->bQM[mm_j_particles[i].j]
                     && ((md->chargeA[mm_j_particles[i].j] != 0.0_real)
                         || (md->chargeB && (md->chargeB[mm_j_particles[i].j] != 0.0_real))))
@@ -764,21 +738,21 @@ void update_QMMMrec(const t_commrec  *cr,
         /* parallel excecution */
         if (PAR(cr))
         {
-            snew(parallelMMarray, 2*(md->nr));
+            snew(parallelMMarray, 2 * (md->nr));
             /* only MM particles have a 1 at their atomnumber. The second part
              * of the array contains the shifts. Thus:
              * p[i]=1/0 depending on wether atomnumber i is a MM particle in the QM
              * step or not. p[i+md->nr] is the shift of atomnumber i.
              */
-            for (i = 0; i < 2*(md->nr); i++)
+            for (i = 0; i < 2 * (md->nr); i++)
             {
                 parallelMMarray[i] = 0;
             }
 
             for (i = 0; i < mm_nr; i++)
             {
-                parallelMMarray[mm_j_particles[i].j]          = 1;
-                parallelMMarray[mm_j_particles[i].j+(md->nr)] = mm_j_particles[i].shift;
+                parallelMMarray[mm_j_particles[i].j]            = 1;
+                parallelMMarray[mm_j_particles[i].j + (md->nr)] = mm_j_particles[i].shift;
             }
             gmx_sumi(md->nr, parallelMMarray, cr);
             mm_nr = 0;
@@ -795,7 +769,7 @@ void update_QMMMrec(const t_commrec  *cr,
                         srenew(mm->shiftMM, mm_max);
                     }
                     mm->indexMM[mm_nr]   = i;
-                    mm->shiftMM[mm_nr++] = parallelMMarray[i+md->nr]/parallelMMarray[i];
+                    mm->shiftMM[mm_nr++] = parallelMMarray[i + md->nr] / parallelMMarray[i];
                 }
             }
             mm->nrMMatoms = mm_nr;
@@ -812,7 +786,6 @@ void update_QMMMrec(const t_commrec  *cr,
                 mm->indexMM[i] = mm_j_particles[i].j;
                 mm->shiftMM[i] = mm_j_particles[i].shift;
             }
-
         }
         /* (re) allocate memory for the MM coordiate array. The QM
          * coordinate array was already allocated in init_QMMM, and is
@@ -826,7 +799,7 @@ void update_QMMMrec(const t_commrec  *cr,
         srenew(mm->MMcharges, mm->nrMMatoms);
         for (i = 0; i < mm->nrMMatoms; i++) /* no free energy yet */
         {
-            mm->MMcharges[i] = md->chargeA[mm->indexMM[i]]*mm->scalefactor;
+            mm->MMcharges[i] = md->chargeA[mm->indexMM[i]] * mm->scalefactor;
         }
         /* the next routine fills the coordinate fields in the QMMM rec of
          * both the qunatum atoms and the MM atoms, using the shifts
@@ -847,35 +820,26 @@ void update_QMMMrec(const t_commrec  *cr,
             qm->shiftQM[0] = XYZ2IS(0, 0, 0);
             for (i = 1; i < qm->nrQMatoms; i++)
             {
-                qm->shiftQM[i] = pbc_dx_aiuc(&pbc, x[qm->indexQM[0]], x[qm->indexQM[i]],
-                                             dx);
+                qm->shiftQM[i] = pbc_dx_aiuc(&pbc, x[qm->indexQM[0]], x[qm->indexQM[i]], dx);
             }
             update_QMMM_coord(x, fr, qm, mm);
         }
     }
 } /* update_QMMM_rec */
 
-real calculate_QMMM(const t_commrec  *cr,
-                    rvec              f[],
-                    const t_forcerec *fr)
+real calculate_QMMM(const t_commrec* cr, gmx::ForceWithShiftForces* forceWithShiftForces, const t_forcerec* fr)
 {
-    real
-        QMener = 0.0;
+    real QMener = 0.0;
     /* a selection for the QM package depending on which is requested
      * (Gaussian, GAMESS-UK, MOPAC or ORCA) needs to be implemented here. Now
      * it works through defines.... Not so nice yet
      */
-    t_QMMMrec
-    *qr;
-    t_QMrec
-    *qm, *qm2;
-    t_MMrec
-    *mm = nullptr;
-    rvec
-    *forces  = nullptr, *fshift = nullptr,
-    *forces2 = nullptr, *fshift2 = nullptr; /* needed for multilayer ONIOM */
-    int
-        i, j, k;
+    t_QMMMrec* qr;
+    t_QMrec *  qm, *qm2;
+    t_MMrec*   mm     = nullptr;
+    rvec *     forces = nullptr, *fshift = nullptr, *forces2 = nullptr,
+         *fshift2 = nullptr; /* needed for multilayer ONIOM */
+    int i, j, k;
 
     if (!GMX_QMMM)
     {
@@ -890,38 +854,39 @@ real calculate_QMMM(const t_commrec  *cr,
     /* now different procedures are carried out for one layer ONION and
      * normal QMMM on one hand and multilayer oniom on the other
      */
+    gmx::ArrayRef<gmx::RVec> fMM      = forceWithShiftForces->force();
+    gmx::ArrayRef<gmx::RVec> fshiftMM = forceWithShiftForces->shiftForces();
     if (qr->QMMMscheme == eQMMMschemenormal || qr->nrQMlayers == 1)
     {
         qm = qr->qm[0];
-        snew(forces, (qm->nrQMatoms+mm->nrMMatoms));
-        snew(fshift, (qm->nrQMatoms+mm->nrMMatoms));
+        snew(forces, (qm->nrQMatoms + mm->nrMMatoms));
+        snew(fshift, (qm->nrQMatoms + mm->nrMMatoms));
         QMener = call_QMroutine(cr, fr, qm, mm, forces, fshift);
         for (i = 0; i < qm->nrQMatoms; i++)
         {
             for (j = 0; j < DIM; j++)
             {
-                f[qm->indexQM[i]][j]          -= forces[i][j];
-                fr->fshift[qm->shiftQM[i]][j] += fshift[i][j];
+                fMM[qm->indexQM[i]][j] -= forces[i][j];
+                fshiftMM[qm->shiftQM[i]][j] += fshift[i][j];
             }
         }
         for (i = 0; i < mm->nrMMatoms; i++)
         {
             for (j = 0; j < DIM; j++)
             {
-                f[mm->indexMM[i]][j]          -= forces[qm->nrQMatoms+i][j];
-                fr->fshift[mm->shiftMM[i]][j] += fshift[qm->nrQMatoms+i][j];
+                fMM[mm->indexMM[i]][j] -= forces[qm->nrQMatoms + i][j];
+                fshiftMM[mm->shiftMM[i]][j] += fshift[qm->nrQMatoms + i][j];
             }
-
         }
         free(forces);
         free(fshift);
     }
-    else                                       /* Multi-layer ONIOM */
+    else /* Multi-layer ONIOM */
     {
-        for (i = 0; i < qr->nrQMlayers-1; i++) /* last layer is special */
+        for (i = 0; i < qr->nrQMlayers - 1; i++) /* last layer is special */
         {
             qm  = qr->qm[i];
-            qm2 = copy_QMrec(qr->qm[i+1]);
+            qm2 = copy_QMrec(qr->qm[i + 1]);
 
             qm2->nrQMatoms = qm->nrQMatoms;
 
@@ -929,7 +894,7 @@ real calculate_QMMM(const t_commrec  *cr,
             {
                 for (k = 0; k < DIM; k++)
                 {
-                    qm2->xQM[j][k]       = qm->xQM[j][k];
+                    qm2->xQM[j][k] = qm->xQM[j][k];
                 }
                 qm2->indexQM[j]        = qm->indexQM[j];
                 qm2->atomicnumberQM[j] = qm->atomicnumberQM[j];
@@ -957,14 +922,14 @@ real calculate_QMMM(const t_commrec  *cr,
             {
                 for (j = 0; j < DIM; j++)
                 {
-                    f[qm->indexQM[i]][j]          -= (forces[i][j]-forces2[i][j]);
-                    fr->fshift[qm->shiftQM[i]][j] += (fshift[i][j]-fshift2[i][j]);
+                    fMM[qm->indexQM[i]][j] -= (forces[i][j] - forces2[i][j]);
+                    fshiftMM[qm->shiftQM[i]][j] += (fshift[i][j] - fshift2[i][j]);
                 }
             }
             free(qm2);
         }
         /* now the last layer still needs to be done: */
-        qm      = qr->qm[qr->nrQMlayers-1]; /* C counts from 0 */
+        qm = qr->qm[qr->nrQMlayers - 1]; /* C counts from 0 */
         init_QMroutine(cr, qm, mm);
         srenew(forces, qm->nrQMatoms);
         srenew(fshift, qm->nrQMatoms);
@@ -973,8 +938,8 @@ real calculate_QMMM(const t_commrec  *cr,
         {
             for (j = 0; j < DIM; j++)
             {
-                f[qm->indexQM[i]][j]          -= forces[i][j];
-                fr->fshift[qm->shiftQM[i]][j] += fshift[i][j];
+                fMM[qm->indexQM[i]][j] -= forces[i][j];
+                fshiftMM[qm->shiftQM[i]][j] += fshift[i][j];
             }
         }
         free(forces);
@@ -982,7 +947,7 @@ real calculate_QMMM(const t_commrec  *cr,
         free(forces2);
         free(fshift2);
     }
-    return(QMener);
+    return (QMener);
 } /* calculate_QMMM */
 
 #pragma GCC diagnostic pop

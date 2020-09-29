@@ -43,7 +43,8 @@
 
 #include "topologyinformation.h"
 
-#include "gromacs/compat/make_unique.h"
+#include <memory>
+
 #include "gromacs/fileio/confio.h"
 #include "gromacs/math/vec.h"
 #include "gromacs/pbcutil/rmpbc.h"
@@ -58,22 +59,21 @@
 namespace gmx
 {
 
-TopologyInformation::TopologyInformation()
-    : hasLoadedMtop_(false),
-      expandedTopology_(nullptr),
-      atoms_ (nullptr),
-      bTop_(false), ePBC_(-1)
+TopologyInformation::TopologyInformation() :
+    hasLoadedMtop_(false),
+    expandedTopology_(nullptr),
+    atoms_(nullptr),
+    bTop_(false),
+    ePBC_(-1)
 {
 }
 
 
-TopologyInformation::~TopologyInformation()
-{
-}
+TopologyInformation::~TopologyInformation() {}
 
-void TopologyInformation::fillFromInputFile(const std::string &filename)
+void TopologyInformation::fillFromInputFile(const std::string& filename)
 {
-    mtop_ = gmx::compat::make_unique<gmx_mtop_t>();
+    mtop_ = std::make_unique<gmx_mtop_t>();
     // TODO When filename is not a .tpr, then using readConfAndAtoms
     // would be efficient for not doing multiple conversions for
     // makeAtomsData. However we'd also need to be able to copy the
@@ -81,9 +81,7 @@ void TopologyInformation::fillFromInputFile(const std::string &filename)
     // TODO Once there are fewer callers of the file-reading
     // functionality, make them read directly into std::vector.
     rvec *x, *v;
-    readConfAndTopology(filename.c_str(), &bTop_, mtop_.get(),
-                        &ePBC_, &x, &v,
-                        boxtop_);
+    readConfAndTopology(filename.c_str(), &bTop_, mtop_.get(), &ePBC_, &x, &v, boxtop_);
     xtop_.assign(x, x + mtop_->natoms);
     vtop_.assign(v, v + mtop_->natoms);
     sfree(x);
@@ -91,7 +89,7 @@ void TopologyInformation::fillFromInputFile(const std::string &filename)
     hasLoadedMtop_ = true;
     // TODO: Only load this here if the tool actually needs it; selections
     // take care of themselves.
-    for (gmx_moltype_t &moltype : mtop_->moltype)
+    for (gmx_moltype_t& moltype : mtop_->moltype)
     {
         if (!moltype.atoms.haveMass)
         {
@@ -101,12 +99,13 @@ void TopologyInformation::fillFromInputFile(const std::string &filename)
     }
 }
 
-const gmx_localtop_t *TopologyInformation::expandedTopology() const
+const gmx_localtop_t* TopologyInformation::expandedTopology() const
 {
     // Do lazy initialization
     if (expandedTopology_ == nullptr && hasTopology())
     {
-        expandedTopology_.reset(gmx_mtop_generate_local_top(mtop_.get(), false));
+        expandedTopology_ = std::make_unique<gmx_localtop_t>();
+        gmx_mtop_generate_local_top(*mtop_, expandedTopology_.get(), false);
     }
 
     return expandedTopology_.get();
@@ -116,7 +115,7 @@ namespace
 {
 
 //! Helps implement lazy initialization.
-AtomsDataPtr makeAtoms(const TopologyInformation &top_)
+AtomsDataPtr makeAtoms(const TopologyInformation& top_)
 {
     AtomsDataPtr atoms(new t_atoms);
     if (top_.hasTopology())
@@ -130,9 +129,9 @@ AtomsDataPtr makeAtoms(const TopologyInformation &top_)
     return atoms;
 }
 
-}   // namespace
+} // namespace
 
-const t_atoms *TopologyInformation::atoms() const
+const t_atoms* TopologyInformation::atoms() const
 {
     // Do lazy initialization
     if (atoms_ == nullptr)
@@ -152,8 +151,7 @@ AtomsDataPtr TopologyInformation::copyAtoms() const
     return makeAtoms(*this);
 }
 
-ArrayRef<const RVec>
-TopologyInformation::x() const
+ArrayRef<const RVec> TopologyInformation::x() const
 {
     if (xtop_.empty())
     {
@@ -162,8 +160,7 @@ TopologyInformation::x() const
     return xtop_;
 }
 
-ArrayRef<const RVec>
-TopologyInformation::v() const
+ArrayRef<const RVec> TopologyInformation::v() const
 {
     if (vtop_.empty())
     {
@@ -172,15 +169,13 @@ TopologyInformation::v() const
     return vtop_;
 }
 
-void
-TopologyInformation::getBox(matrix box) const
+void TopologyInformation::getBox(matrix box) const
 {
     GMX_RELEASE_ASSERT(box != nullptr, "Must have valid box to fill");
-    copy_mat(const_cast<rvec *>(boxtop_), box);
+    copy_mat(const_cast<rvec*>(boxtop_), box);
 }
 
-const char *
-TopologyInformation::name() const
+const char* TopologyInformation::name() const
 {
     if (hasTopology() && mtop_->name)
     {
@@ -189,7 +184,7 @@ TopologyInformation::name() const
     return nullptr;
 }
 
-gmx_rmpbc_t gmx_rmpbc_init(const gmx::TopologyInformation &topInfo)
+gmx_rmpbc_t gmx_rmpbc_init(const gmx::TopologyInformation& topInfo)
 {
     GMX_RELEASE_ASSERT(topInfo.hasTopology(), "Cannot remove PBC without a topology");
 

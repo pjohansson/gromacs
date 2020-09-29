@@ -1,7 +1,7 @@
 #
 # This file is part of the GROMACS molecular simulation package.
 #
-# Copyright (c) 2018, by the GROMACS development team, led by
+# Copyright (c) 2018,2019, by the GROMACS development team, led by
 # Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
 # and including many others, as listed in the AUTHORS file in the
 # top-level source directory and at http://www.gromacs.org.
@@ -39,14 +39,14 @@
 # Prior to 0.1, GMXAPI patch levels are used to mark short term development cycles
 # and allow compatibility checks for client software of the early releases.
 #
-# gmxapi 0.1 will be the first release candidate for gmxapi 1.0 and will attempt
+# gmxapi 0.2 will be the first release candidate for gmxapi 1.0 and will attempt
 # to establish compatibility guarantees consistent with semantic versioning.
 # (https://semver.org). When the API is deemed suitably stable, gmxapi 1.0 should
 # be tagged. Official GROMACS releases should be mappable to a distinct gmxapi
 # release string. For roadmap details, see https://redmine.gromacs.org/issues/2585
 set(GMXAPI_MAJOR 0)
-set(GMXAPI_MINOR 0)
-set(GMXAPI_PATCH 7)
+set(GMXAPI_MINOR 1)
+set(GMXAPI_PATCH 0)
 set(GMXAPI_RELEASE ${GMXAPI_MAJOR}.${GMXAPI_MINOR}.${GMXAPI_PATCH})
 
 ###############################
@@ -60,12 +60,17 @@ set(GMXAPI_PUBLIC_HEADERS
     ${CMAKE_CURRENT_SOURCE_DIR}/cpp/include/gmxapi/context.h
     ${CMAKE_CURRENT_SOURCE_DIR}/cpp/include/gmxapi/exceptions.h
     ${CMAKE_CURRENT_SOURCE_DIR}/cpp/include/gmxapi/gmxapi.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/cpp/include/gmxapi/gmxapicompat.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/cpp/include/gmxapi/gromacsfwd.h
     ${CMAKE_CURRENT_SOURCE_DIR}/cpp/include/gmxapi/md.h
-    ${CMAKE_CURRENT_SOURCE_DIR}/cpp/include/gmxapi/md/mdmodule.h
     ${CMAKE_CURRENT_SOURCE_DIR}/cpp/include/gmxapi/session.h
     ${CMAKE_CURRENT_SOURCE_DIR}/cpp/include/gmxapi/status.h
     ${CMAKE_CURRENT_SOURCE_DIR}/cpp/include/gmxapi/system.h
-    ${CMAKE_CURRENT_BINARY_DIR}/cpp/include/gmxapi/version.h)
+    ${CMAKE_CURRENT_BINARY_DIR}/cpp/include/gmxapi/version.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/cpp/include/gmxapi/compat/mdparams.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/cpp/include/gmxapi/compat/tpr.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/cpp/include/gmxapi/md/mdmodule.h
+    )
 
 add_subdirectory(cpp)
 

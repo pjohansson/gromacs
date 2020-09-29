@@ -1,7 +1,7 @@
 /*
  * This file is part of the GROMACS molecular simulation package.
  *
- * Copyright (c) 2014,2015,2018, by the GROMACS development team, led by
+ * Copyright (c) 2014,2015,2018,2019, by the GROMACS development team, led by
  * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
  * and including many others, as listed in the AUTHORS file in the
  * top-level source directory and at http://www.gromacs.org.
@@ -38,43 +38,49 @@
 
 #include "config.h"
 
-#include "baseversion-gen.h"
+#include "baseversion_gen.h"
 
-const char *gmx_version()
+const char* gmx_version()
 {
     return _gmx_ver_string;
 }
 
-const char *gmx_version_git_full_hash()
+const char* gmx_version_git_full_hash()
 {
     return _gmx_full_git_hash;
 }
 
-const char *gmx_version_git_central_base_hash()
+const char* gmx_version_git_central_base_hash()
 {
     return _gmx_central_base_hash;
 }
 
-const char *gmxDOI()
+const char* gmxDOI()
 {
     return gmxSourceDoiString;
 }
 
+const char* gmxReleaseSourceChecksum()
+{
+    return gmxReleaseSourceFileChecksum;
+}
+
+const char* gmxCurrentSourceChecksum()
+{
+    return gmxCurrentSourceFileChecksum;
+}
+
 #if GMX_DOUBLE
-void gmx_is_double_precision()
-{
-}
+void gmx_is_double_precision() {}
 #else
-void gmx_is_single_precision()
-{
-}
+void gmx_is_single_precision() {}
 #endif
 
 /* Note that this array (and some which follow) must match the "GPU
  * support enumeration" in src/config.h.cmakein */
-static const char * const gpuImplementationStrings[] = { "disabled", "CUDA", "OpenCL" };
+static const char* const gpuImplementationStrings[] = { "disabled", "CUDA", "OpenCL" };
 
-const char *getGpuImplementationString()
+const char* getGpuImplementationString()
 {
     return gpuImplementationStrings[GMX_GPU];
 }

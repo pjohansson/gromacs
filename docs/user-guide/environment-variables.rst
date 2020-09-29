@@ -157,6 +157,15 @@ Performance and Run Control
 ``GMX_DISABLE_CUDA_TIMING``
         Deprecated. Use ``GMX_DISABLE_GPU_TIMING`` instead.
 
+``GMX_GPU_DD_COMMS``
+        perform domain decomposition halo exchange communication operations (on coordinate and force buffers)
+        directly on GPU memory spaces, without the staging of data through CPU memory, where possible.
+
+``GMX_GPU_PME_PP_COMMS``
+        when the simulation uses a separate PME rank, perform communication operations between PP and PME rank
+        (for coordinate and force buffers) directly on GPU memory spaces, without the staging of data through CPU
+        memory, where possible. 
+
 ``GMX_CYCLE_ALL``
         times all code during runs.  Incompatible with threads.
 
@@ -221,6 +230,14 @@ Performance and Run Control
 ``GMX_FORCE_UPDATE``
         update forces when invoking ``mdrun -rerun``.
 
+``GMX_FORCE_UPDATE_DEFAULT_GPU``
+        Force update to run on the GPU by default, overriding the ``mdrun -update auto`` option. Works similar to setting
+        ``mdrun -update gpu``, but (1) falls back to the CPU code-path, if set with input that is not supported and
+        (2) can be used to run update on GPUs in multi-rank cases. The latter case should be
+        considered experimental since it lacks substantial testing. Also, GPU update is only supported with the GPU direct
+        communications and ``GMX_FORCE_UPDATE_DEFAULT_GPU`` variable should be set simultaneously with ``GMX_GPU_DD_COMMS``
+        and ``GMX_GPU_PME_PP_COMMS`` environment variables in multi-rank case. Does not override ``mdrun -update cpu``.
+
 ``GMX_GPU_ID``
         set in the same way as ``mdrun -gpu_id``, ``GMX_GPU_ID``
         allows the user to specify different GPU IDs for different ranks, which can be useful for selecting different
@@ -243,11 +260,6 @@ Performance and Run Control
 ``GMX_MAXCONSTRWARN``
         if set to -1, :ref:`gmx mdrun` will
         not exit if it produces too many LINCS warnings.
-
-``GMX_NB_GENERIC``
-        use the generic C kernel.  Should be set if using
-        the group-based cutoff scheme and also sets ``GMX_NO_SOLV_OPT`` to be true,
-        thus disabling solvent optimizations as well.
 
 ``GMX_NB_MIN_CI``
         neighbor list balancing parameter used when running on GPU. Sets the
@@ -282,9 +294,6 @@ Performance and Run Control
 ``GMX_NOOPTIMIZEDKERNELS``
         deprecated, use ``GMX_DISABLE_SIMD_KERNELS`` instead.
 
-``GMX_NO_ALLVSALL``
-        disables optimized all-vs-all kernels.
-
 ``GMX_NO_CART_REORDER``
         used in initializing domain decomposition communicators. Rank reordering
         is default, but can be switched off with this environment variable.
@@ -312,10 +321,6 @@ Performance and Run Control
 ``GMX_NOPREDICT``
         shell positions are not predicted.
 
-``GMX_NO_SOLV_OPT``
-        turns off solvent optimizations; automatic if ``GMX_NB_GENERIC``
-        is enabled.
-
 ``GMX_NO_UPDATEGROUPS``
         turns off update groups. May allow for a decomposition of more
         domains for small systems at the cost of communication during update.
@@ -327,7 +332,7 @@ Performance and Run Control
 
 ``GMX_PME_NUM_THREADS``
         set the number of OpenMP or PME threads; overrides the default set by
-        :ref:`gmx mdrun`; can be used instead of the `-npme` command line option,
+        :ref:`gmx mdrun`; can be used instead of the ``-npme`` command line option,
         also useful to set heterogeneous per-process/-node thread count.
 
 ``GMX_PME_P3M``
@@ -336,7 +341,7 @@ Performance and Run Control
 ``GMX_PME_THREAD_DIVISION``
         PME thread division in the format "x y z" for all three dimensions. The
         sum of the threads in each dimension must equal the total number of PME threads (set in
-        `GMX_PME_NTHREADS`).
+        :envvar:`GMX_PME_NTHREADS`).
 
 ``GMX_PMEONEDD``
         if the number of domain decomposition cells is set to 1 for both x and y,
@@ -368,7 +373,7 @@ Performance and Run Control
 ``HWLOC_XMLFILE``
         Not strictly a |Gromacs| environment variable, but on large machines
         the hwloc detection can take a few seconds if you have lots of MPI processes.
-        If you run the hwloc command `lstopo out.xml` and set this environment
+        If you run the hwloc command :command:`lstopo out.xml` and set this environment
         variable to point to the location of this file, the hwloc library will use
         the cached information instead, which can be faster.
 
@@ -487,6 +492,10 @@ compilation of OpenCL kernels, but they are also used in device selection.
         Disables the hardware compatibility check. Useful for developers
         and allows testing the OpenCL kernels on non-supported platforms
         (like Intel iGPUs) without source code modification.
+
+``GMX_OCL_SHOW_DIAGNOSTICS``
+        Use Intel OpenCL extension to show additional runtime performance
+        diagnostics.
 
 Analysis and Core Functions
 ---------------------------

@@ -1,7 +1,7 @@
 #
 # This file is part of the GROMACS molecular simulation package.
 #
-# Copyright (c) 2016,2018, by the GROMACS development team, led by
+# Copyright (c) 2016,2018,2019, by the GROMACS development team, led by
 # Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
 # and including many others, as listed in the AUTHORS file in the
 # top-level source directory and at http://www.gromacs.org.
@@ -66,7 +66,7 @@ function(gmx_manage_lmfit)
         # would not convey the right information.
         add_library(lmfit INTERFACE)
         target_sources(lmfit INTERFACE $<TARGET_OBJECTS:lmfit_objlib>)
-        target_include_directories(lmfit INTERFACE $<BUILD_INTERFACE:${BUNDLED_LMFIT_DIR}>)
+        target_include_directories(lmfit SYSTEM INTERFACE $<BUILD_INTERFACE:${BUNDLED_LMFIT_DIR}>)
         # Add the lmfit interface library to the libgromacs Export name, even though
         # we will not be installing any content.
         install(TARGETS lmfit EXPORT libgromacs)

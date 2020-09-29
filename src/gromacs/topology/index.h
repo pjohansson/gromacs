@@ -3,7 +3,7 @@
  *
  * Copyright (c) 1991-2000, University of Groningen, The Netherlands.
  * Copyright (c) 2001-2004, The GROMACS development team.
- * Copyright (c) 2010,2014,2015,2016,2017,2018, by the GROMACS development team, led by
+ * Copyright (c) 2010,2014,2015,2016,2017,2018,2019, by the GROMACS development team, led by
  * Mark Abraham, David van der Spoel, Berk Hess, and Erik Lindahl,
  * and including many others, as listed in the AUTHORS file in the
  * top-level source directory and at http://www.gromacs.org.
@@ -39,23 +39,22 @@
 
 #include <stdio.h>
 
+#include "gromacs/utility/arrayref.h"
 #include "gromacs/utility/basedefinitions.h"
 
 struct t_atoms;
 struct t_blocka;
 
-void check_index(const char *gname, int n, int index[],
-                 const char *traj, int natoms);
+void check_index(const char* gname, int n, int index[], const char* traj, int natoms);
 /* Checks if any index is smaller than zero or larger than natoms,
  * if so a fatal_error is given with the gname (if gname=NULL, "Index" is used)
  * and traj (if traj=NULL, "the trajectory" is used).
  */
 
-struct t_blocka *init_index(const char *gfile, char ***grpname);
+struct t_blocka* init_index(const char* gfile, char*** grpname);
 /* Lower level routine than the next */
 
-void rd_index(const char *statfile, int ngrps, int isize[],
-              int *index[], char *grpnames[]);
+void rd_index(const char* statfile, int ngrps, int isize[], int* index[], char* grpnames[]);
 /* Assume the group file is generated, so the
  * format need not be user-friendly. The format is:
  * nr of groups, total nr of atoms
@@ -71,31 +70,38 @@ void rd_index(const char *statfile, int ngrps, int isize[],
  * the dimension of the isize and grpnames arrays are ngrps.
  */
 
-void get_index(const t_atoms *atoms, const char *fnm, int ngrps,
-               int isize[], int *index[], char *grpnames[]);
+void get_index(const t_atoms* atoms, const char* fnm, int ngrps, int isize[], int* index[], char* grpnames[]);
 /* Does the same as rd_index, but if the fnm pointer is NULL it
  * will not read from fnm, but it will make default index groups
  * for the atoms in *atoms.
  */
 
-typedef struct {
-    int               maxframe;
-    char            **grpname;
-    struct t_blocka  *clust;
-    int              *inv_clust;
+typedef struct
+{
+    int              maxframe;
+    char**           grpname;
+    struct t_blocka* clust;
+    int*             inv_clust;
 } t_cluster_ndx;
 
-t_cluster_ndx *cluster_index(FILE *fplog, const char *ndx);
+t_cluster_ndx* cluster_index(FILE* fplog, const char* ndx);
 
 
-void write_index(const char *outf, struct t_blocka *b, char **gnames, gmx_bool bDuplicate, int natoms);
+void write_index(const char* outf, struct t_blocka* b, char** gnames, gmx_bool bDuplicate, int natoms);
 /* Writes index blocks to outf (writes an indexfile) */
 
-void add_grp(struct t_blocka *b, char ***gnames, int nra, const int a[], const char *name);
+/*! \brief
+ * Add a new group with \p name to \p b.
+ *
+ * \param[in] b Block struct to add group to.
+ * \param[in] gnames Names of groups.
+ * \param[in] a Group to add to Block.
+ * \param[in] name Group name.
+ */
+void add_grp(struct t_blocka* b, char*** gnames, gmx::ArrayRef<const int> a, const std::string& name);
 /* Ads group a with name name to block b and namelist gnames */
 
-void analyse(const t_atoms *atoms, struct t_blocka *gb, char ***gn,
-             gmx_bool bASK, gmx_bool bVerb);
+void analyse(const t_atoms* atoms, struct t_blocka* gb, char*** gn, gmx_bool bASK, gmx_bool bVerb);
 /* Makes index groups gb with names gn for atoms in atoms.
  * bASK=FALSE gives default groups.
  */
@@ -107,7 +113,7 @@ void analyse(const t_atoms *atoms, struct t_blocka *gb, char ***gn,
  * \param[in] grpname The names of the groups
  * \return the group number or -1 if not found.
  */
-int find_group(const char *s, int ngrps, char **grpname);
+int find_group(const char* s, int ngrps, char** grpname);
 
 
 #endif

@@ -66,9 +66,6 @@ include_directories(
   ${gtest_SOURCE_DIR}/include
   ${gtest_SOURCE_DIR})
 
-# Where Google Test's libraries can be found.
-link_directories(${gtest_BINARY_DIR}/src)
-
 # Summary of tuple support for Microsoft Visual Studio:
 # Compiler    version(MS)  version(cmake)  Support
 # ----------  -----------  --------------  -----------------------------
@@ -95,15 +92,15 @@ target_link_libraries(gtest_main gtest)
 # to the targets for when we are part of a parent build (ie being pulled
 # in via add_subdirectory() rather than being a standalone build).
 if (DEFINED CMAKE_VERSION AND NOT "${CMAKE_VERSION}" VERSION_LESS "2.8.11")
-  target_include_directories(gtest      INTERFACE "${gtest_SOURCE_DIR}/include")
-  target_include_directories(gtest_main INTERFACE "${gtest_SOURCE_DIR}/include")
+  target_include_directories(gtest      SYSTEM INTERFACE "${gtest_SOURCE_DIR}/include")
+  target_include_directories(gtest_main SYSTEM INTERFACE "${gtest_SOURCE_DIR}/include")
 endif()
 
 ########################################################################
 #
 # Install rules
-install(TARGETS gtest gtest_main
-  DESTINATION lib)
+#install(TARGETS gtest gtest_main
+#  DESTINATION lib)
 install(DIRECTORY ${gtest_SOURCE_DIR}/include/gtest
   DESTINATION include)
 
