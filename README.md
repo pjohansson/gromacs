@@ -6,7 +6,8 @@ of two-dimensional flow fields, collected during a simulation.
 ## Installation
 
 Follow the regular Gromacs [installations instructions](http://manual.gromacs.org/current/install-guide/index.html). 
-No changes are needed.
+While not required, it is recommended to set the `cmake` option 
+`-DGMX_VERSION_STRING_OF_FORK=flow-field`.
 
 ## Usage
 
