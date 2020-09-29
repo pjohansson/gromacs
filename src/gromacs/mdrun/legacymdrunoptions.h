@@ -122,7 +122,7 @@ public:
                                           { efNDX, "-mn", "membed", ffOPTRD },
                                           { efXVG, "-if", "imdforces", ffOPTWR },
                                           { efXVG, "-swap", "swapions", ffOPTWR },
-                                          // PETTER 
+                                          // [FLOW_FIELD] 
                                           // Add flow field output file name
                                           { efDAT, "-flow", "flow", ffOPTWR } } };
 

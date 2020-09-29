@@ -145,7 +145,7 @@
 #include "replicaexchange.h"
 #include "shellfc.h"
 
-// PETTER
+// [FLOW_FIELD]
 #include "gromacs/mdlib/flow_field.h"
 
 #if GMX_FAHCORE
@@ -693,7 +693,7 @@ void gmx::LegacySimulator::do_md()
     bExchanged       = FALSE;
     bNeedRepartition = FALSE;
 
-    // PETTER
+    // [FLOW_FIELD]
     // Prepare for (optional) flow field output by setting up the container
     // and reading all parameter values.
     FlowData flowcr;
@@ -908,7 +908,7 @@ void gmx::LegacySimulator::do_md()
         }
         clear_mat(force_vir);
 
-        // PETTER
+        // [FLOW_FIELD]
         // Add condition for checkpointing only on flow map output step. This is because we do 
         // not save any data from the flow maps in a checkpoint, so if we resume from a checkpoint 
         // in between output steps, all data since the last output has been lost. By only checkpointing
@@ -1644,7 +1644,7 @@ void gmx::LegacySimulator::do_md()
         bFirstStep = FALSE;
         bInitStep  = FALSE;
 
-        // PETTER
+        // [FLOW_FIELD]
         if (flowcr.bDoFlowCollection && do_per_step(step, flowcr.step_collect))
         {
             flow_collect_or_output(flowcr, step, cr, ir, mdatoms, state, groups);

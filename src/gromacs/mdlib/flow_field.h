@@ -1,5 +1,5 @@
-#ifndef MD_PETTER
-#define MD_PETTER
+#ifndef MD_FLOW_FIELD
+#define MD_FLOW_FIELD
 
 #include <array>
 #include <string>
