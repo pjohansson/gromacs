@@ -7,7 +7,7 @@
 
 #include "gromacs/mdtypes/state.h"
 
-constexpr char FLOW_FILE_HEADER_NAME[] = "GMX_FLOW_1";
+constexpr char FLOW_FILE_HEADER_NAME[] = "GMX_FLOW_2";
 
 // We are using a grid along X and Z so we use a separate enum 
 // to not confuse our indexing with regular XX, YY and ZZ
@@ -22,7 +22,7 @@ constexpr size_t NUM_FLOW_AXES = static_cast<size_t>(GridAxes::NumAxes);
 enum class FlowVariable {
     NumAtoms,
     Temp,
-    Mass,
+    Mass,   // Mass in bin (amu)
     U,      // Mass flow along X
     V,      //             and Z
     NumVariables
@@ -59,6 +59,8 @@ public:
              step_output = 0,
              step_ratio = 0;
 
+    double bin_volume;
+
     FlowData() {}
 
     FlowData(const std::string fnbase,
@@ -66,6 +68,7 @@ public:
              const size_t nx, 
              const size_t nz,
              const double dx,
+             const double dy,
              const double dz,
              const uint64_t step_collect,
              const uint64_t step_output)
@@ -75,6 +78,7 @@ public:
      step_collect { step_collect },
      step_output { step_output },
      step_ratio { static_cast<uint64_t>(step_output / step_collect) },
+     bin_volume { dx * dy * dz },
      num_bins { nx, nz },
      bin_size { dx, dz },
      inv_bin_size { 1.0 / dx, 1.0 / dz } 
@@ -139,11 +143,11 @@ private:
 
 // Prepare and return a container for flow field data
 FlowData
-init_flow_container(const int           nfile,
-                    const t_filenm      fnm[],
-                    const t_inputrec   *ir,
+init_flow_container(const int               nfile,
+                    const t_filenm          fnm[],
+                    const t_inputrec       *ir,
                     const SimulationGroups *groups,
-                    const t_state      *state);
+                    const t_state          *state);
 
 // Write information about the flow field collection
 void 
@@ -151,12 +155,12 @@ print_flow_collection_information(const FlowData &flowcr, const double dt);
 
 // If at a collection or output step, perform actions
 void
-flow_collect_or_output(FlowData           &flowcr,
-                       const uint64_t      step,
-                       const t_commrec    *cr,
-                       const t_inputrec   *ir,
-                       const t_mdatoms    *mdatoms,
-                       const t_state      *state,
+flow_collect_or_output(FlowData               &flowcr,
+                       const uint64_t          step,
+                       const t_commrec        *cr,
+                       const t_inputrec       *ir,
+                       const t_mdatoms        *mdatoms,
+                       const t_state          *state,
                        const SimulationGroups *groups);
 
 #endif
