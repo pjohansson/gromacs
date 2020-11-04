@@ -57,6 +57,7 @@
 #include <memory>
 
 #include "gromacs/math/vectypes.h"
+#include "gromacs/pbcutil/pbc.h"
 #include "gromacs/utility/basedefinitions.h"
 
 struct gmx_domdec_t;
@@ -148,5 +149,8 @@ gmx_bool do_swapcoords(t_commrec*     cr,
                        matrix         box,
                        gmx_bool       bVerbose,
                        gmx_bool       bRerun);
+
+void get_molecule_center(rvec x[], int nat, const real* weights, rvec center, const t_pbc* pbc);
+void translate_positions(rvec* x, const int apm, const rvec old_com, const rvec new_com, const t_pbc* pbc);
 
 #endif

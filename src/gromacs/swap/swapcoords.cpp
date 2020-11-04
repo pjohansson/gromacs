@@ -69,7 +69,6 @@
 #include "gromacs/mdtypes/observableshistory.h"
 #include "gromacs/mdtypes/state.h"
 #include "gromacs/mdtypes/swaphistory.h"
-#include "gromacs/pbcutil/pbc.h"
 #include "gromacs/timing/wallcycle.h"
 #include "gromacs/topology/mtop_lookup.h"
 #include "gromacs/topology/topology.h"
@@ -327,7 +326,7 @@ static void print_ionlist(t_swap* s, double time, const char comment[])
  * Since with PBC an atom group might not be whole, use the first atom as the
  * reference atom and determine the center with respect to this reference.
  */
-static void get_molecule_center(rvec x[], int nat, const real* weights, rvec center, t_pbc* pbc)
+void get_molecule_center(rvec x[], int nat, const real* weights, rvec center, const t_pbc* pbc)
 {
     int  i;
     rvec weightedPBCimage;
@@ -1880,7 +1879,7 @@ static int get_index_of_distant_atom(t_compartment* comp, const char molname[])
 
 
 /*! \brief Swaps centers of mass and makes molecule whole if broken */
-static void translate_positions(rvec* x, int apm, rvec old_com, rvec new_com, t_pbc* pbc)
+void translate_positions(rvec* x, const int apm, const rvec old_com, const rvec new_com, const t_pbc* pbc)
 {
     int  i;
     rvec reference, dx, correctPBCimage;

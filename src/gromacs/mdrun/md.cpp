@@ -147,6 +147,7 @@
 
 // [FLOW_FIELD]
 #include "gromacs/mdlib/flow_field.h"
+#include "gromacs/mdlib/flow_swap.h"
 
 #if GMX_FAHCORE
 #    include "corewrap.h"
@@ -707,6 +708,15 @@ void gmx::LegacySimulator::do_md()
             print_flow_collection_information(flowcr, ir->delta_t);
         }
     }
+
+
+    auto flow_swap_atom_sets = new LocalAtomSetManager;
+    if (DOMAINDECOMP(cr))
+    {
+        flow_swap_atom_sets = cr->dd->atomSets;
+    }
+
+    auto flow_swap = init_flowswap(cr, flow_swap_atom_sets, ir, top_global, groups, state->box, mdlog);
 
     auto stopHandler = stopHandlerBuilder->getStopHandlerMD(
             compat::not_null<SimulationSignal*>(&signals[eglsSTOPCOND]), simulationsShareState,
@@ -1618,6 +1628,20 @@ void gmx::LegacySimulator::do_md()
             bNeedRepartition =
                     do_swapcoords(cr, step, t, ir, swap, wcycle, as_rvec_array(state->x.data()),
                                   state->box, MASTER(cr) && mdrunOptions.verbose, bRerunMD);
+
+            if (bNeedRepartition && DOMAINDECOMP(cr))
+            {
+                dd_collect_state(cr->dd, state, state_global);
+            }
+        }
+
+        // [FLOW_FIELD]
+        // Use same conditions as for the ion/water swapping code to ensure that we are consistent
+        // with updating the state after a swap is made. In particular, bNeedPartition is used later.
+        // if (flow_swap.do_swap && (step > 0) && !bLastStep && do_per_step(step, flow_swap.nstswap))
+        if (flow_swap.do_swap && !bLastStep && do_per_step(step, flow_swap.nstswap))
+        {
+            bNeedRepartition = bNeedRepartition || do_flowswap(flow_swap, state, cr, ir, wcycle);
 
             if (bNeedRepartition && DOMAINDECOMP(cr))
             {
