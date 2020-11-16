@@ -1641,7 +1641,7 @@ void gmx::LegacySimulator::do_md()
         // if (flow_swap.do_swap && (step > 0) && !bLastStep && do_per_step(step, flow_swap.nstswap))
         if (flow_swap.do_swap && !bLastStep && do_per_step(step, flow_swap.nstswap))
         {
-            bNeedRepartition = bNeedRepartition || do_flowswap(flow_swap, state, cr, ir, wcycle);
+            bNeedRepartition = bNeedRepartition || do_flowswap(flow_swap, state, cr, ir, wcycle, step, MASTER(cr) && mdrunOptions.verbose);
 
             if (bNeedRepartition && DOMAINDECOMP(cr))
             {

@@ -43,6 +43,7 @@ for (int nodeid = 0; nodeid < commrec->nnodes; nodeid++) \
 
 constexpr SimulationAtomGroupType FLOW_SWAP_GROUP = SimulationAtomGroupType::User2;
 
+
 /*************************
  * Class implementations *
  *************************/
@@ -59,6 +60,10 @@ void SwapZone::get_center(rvec center) const
     }
 }
 
+
+/*************************
+ * Group and zone set-up *
+ *************************/
 
 // Return the global atom indices of a given group.
 static std::vector<int> get_group_inds(const int               num_atoms, 
@@ -170,6 +175,11 @@ static SwapGroup create_swap_group(const int               group_index,
     };
 }
 
+
+/*********************
+ * Logging functions *
+ *********************/
+
 static void log_swap_group_info(const SwapGroup     &group,
                                 const char          *group_type,
                                 const gmx::MDLogger &mdlog)
@@ -261,61 +271,27 @@ static void log_flow_swap_info(const FlowSwap      &flow_swap,
     log_swap_zone_info(flow_swap.coupled_zones, mdlog);
 }
 
-FlowSwap init_flowswap(t_commrec                *cr,
-                       gmx::LocalAtomSetManager *atom_sets,
-                       const t_inputrec         *ir,
-                       const gmx_mtop_t         *top_global,
-                       const SimulationGroups   *groups,
-                       const matrix              box,
-                       const gmx::MDLogger      &mdlog)
+static void print_swap_info(FILE *fp,
+                            const AtomGroupIndices &swap_mols,
+                            const AtomGroupIndices &fill_mols,
+                            const double time,
+                            const char *comment)
 {
-    if ((PAR(cr)) && !DOMAINDECOMP(cr))
+    if (fp != nullptr) 
     {
-        gmx_fatal(FARGS, "Position swapping is only implemented for domain decomposition!");
+        fprintf(fp, "%12.5g %10lu %10lu %s%s\n", 
+            time, 
+            swap_mols.size(), 
+            fill_mols.size(), 
+            strlen(comment) > 0 ? "# " : "", 
+            comment);
     }
-
-    // TODO: Check this in readir
-    if (groups->numberOfGroupNumbers(FLOW_SWAP_GROUP) < 2)
-    {
-        gmx_fatal(FARGS, "Number of user2-grps is less than 2");
-    }
-
-    // TODO: Get these from ir
-    constexpr real zone_width = 2.0;        // sigma
-    constexpr real zone_thickness = 1.5; 
-    constexpr size_t ref_max_atoms = 1;
-    constexpr uint64_t nstswap = 50;
-    const std::vector<double> at_heights { 0.25, 0.75 }; // relative to system box size
-
-    std::vector<CoupledSwapZones> coupled_zones;
-
-    for (const auto height : at_heights)
-    {
-        coupled_zones.push_back(create_swap_zones_at_height(height, zone_width, zone_thickness, box));
-    }
-
-    const auto swap_group = create_swap_group(0, top_global, atom_sets, groups);
-    const auto fill_group = create_swap_group(1, top_global, atom_sets, groups);
-
-    // If we are using domain decompositioning, we must update the local and global
-    // atom indices of the sets now that we have added new ones to the manager
-    if (DOMAINDECOMP(cr))
-    {
-        atom_sets->setIndicesInDomainDecomposition(*cr->dd->ga2la);
-    }
-
-    const FlowSwap flow_swap {
-        nstswap,
-        coupled_zones,
-        swap_group,
-        fill_group,
-        ref_max_atoms
-    };
-
-    log_flow_swap_info(flow_swap, mdlog);
-
-    return flow_swap;
 }
+
+
+/****************** 
+ * Position utils *
+ ******************/
 
 static bool position_is_within_box(const rvec x, const gmx::RVec &xmin, const gmx::RVec &xmax)
 {
@@ -330,6 +306,32 @@ static bool position_is_within_box(const rvec x, const gmx::RVec &xmin, const gm
 
     return true;
 }
+
+static void get_position_in_box(const rvec x, rvec x_in_box, const matrix box)
+{
+    for (int d = 0; d < DIM; d++)
+    {
+        x_in_box[d] = fmod(x[d], box[d][d]);
+
+        while (x_in_box[d] < 0)
+        {
+            x_in_box[d] += box[d][d];
+        }
+    }
+}
+
+static real get_distance_pbc(const rvec x1, const rvec x2, const t_pbc *pbc)
+{
+    rvec dx;
+    pbc_dx(pbc, x1, x2, dx);
+
+    return norm(dx);
+}
+
+
+/*********************************
+ * Zone and compartment checking *
+ *********************************/
 
 static bool zone_contains_atom(const rvec x, const SwapZone &zone)
 {
@@ -353,19 +355,6 @@ static void collect_group_positions_from_ranks(SwapGroup       &group,
         group.atom_set.numAtomsGlobal(), group.atom_set.numAtomsLocal(), 
         group.atom_set.localIndex().data(), group.atom_set.collectiveIndex().data(),
         nullptr, box);
-}
-
-static void get_position_in_box(const rvec x, rvec x_in_box, const matrix box)
-{
-    for (int d = 0; d < DIM; d++)
-    {
-        x_in_box[d] = fmod(x[d], box[d][d]);
-
-        while (x_in_box[d] < 0)
-        {
-            x_in_box[d] += box[d][d];
-        }
-    }
 }
 
 // Return the collective indices (in group.xs) of all group atoms in the compartment.
@@ -395,6 +384,11 @@ static bool check_compartment_condition(const std::vector<int> &mols_in_compartm
     return (mols_in_compartment.size() > flow_swap.ref_num_atoms);
 }
 
+
+/**********************
+ * Swapping utilities *
+ **********************/
+
 static bool check_for_swap(const std::vector<std::vector<int>> &mols_in_low_compartment,
                            const FlowSwap                      &flow_swap)
 {
@@ -408,14 +402,6 @@ static bool check_for_swap(const std::vector<std::vector<int>> &mols_in_low_comp
     }
 
     return false;
-}
-
-static real get_distance_pbc(const rvec x1, const rvec x2, const t_pbc *pbc)
-{
-    rvec dx;
-    pbc_dx(pbc, x1, x2, dx);
-
-    return norm(dx);
 }
 
 static int get_swap_molecule_index(const rvec              xs[],
@@ -449,47 +435,6 @@ static int get_swap_molecule_index(const rvec              xs[],
     return best_index;
 }
 
-static void swap_molecules(rvec xs1[],
-                           const int i1,
-                           const size_t atoms_per_mol_1,
-                           rvec xs2[],
-                           const int i2,
-                           const size_t atoms_per_mol_2,
-                           const t_pbc *pbc,
-                           const t_commrec *cr)
-{
-    rvec com_swap, com_fill;
-
-    get_molecule_center(&xs1[i1], atoms_per_mol_1, nullptr, com_swap, pbc);
-    get_molecule_center(&xs2[i2], atoms_per_mol_2, nullptr, com_fill, pbc);
-
-    MPI_RANK_LOOP_VERBOSE(cr, 
-        fprintf(stderr, 
-            "swapping atoms %d-%d (at [%f, %f, %f]) with atoms %d-%d (at [%f, %f, %f])\n",
-            i1, i1 + atoms_per_mol_1 - 1, com_swap[XX], com_swap[YY], com_swap[ZZ],
-            i2, i2 + atoms_per_mol_2 - 1, com_fill[XX], com_fill[YY], com_fill[ZZ]);
-    )
-
-    translate_positions(&xs1[i1], atoms_per_mol_1, com_swap, com_fill, pbc);
-    translate_positions(&xs2[i2], atoms_per_mol_2, com_fill, com_swap, pbc);
-}
-
-static void swap_molecules2(rvec xs1[],
-                            const int i1,
-                            rvec xs2[],
-                            const int i2,
-                            const size_t atoms_per_mol)
-{
-    rvec rbuf;
-
-    for (size_t i = 0; i < atoms_per_mol; i++)
-    {
-        copy_rvec(xs1[i1 + i], rbuf);
-        copy_rvec(xs2[i2 + i], xs1[i1 + i]);
-        copy_rvec(rbuf, xs2[i2 + i]);
-    }
-}
-
 static void add_swapped_inds_to_list(const int         head_index,
                                      const size_t      atoms_per_mol,
                                      std::vector<int> &inds)
@@ -505,6 +450,11 @@ static bool vector_contains_value(const std::vector<T> vs, const T value)
 {
     return std::find(vs.cbegin(), vs.cend(), value) != vs.cend();
 }
+
+
+/*********************
+ * Molecule swapping *
+ *********************/
 
 static void apply_modified_positions(rvec                    xs_local[],
                                      const SwapGroup        &group,
@@ -525,12 +475,57 @@ static void apply_modified_positions(rvec                    xs_local[],
         }
     }
 }
+
+// Swap the molecules by swapping their center of mass positions.
+static void swap_molecules_com(rvec xs1[],
+                               const int i1,
+                               const size_t atoms_per_mol_1,
+                               rvec xs2[],
+                               const int i2,
+                               const size_t atoms_per_mol_2,
+                               const t_pbc *pbc,
+                               const t_commrec *cr)
+{
+    rvec com_swap, com_fill;
+
+    get_molecule_center(&xs1[i1], atoms_per_mol_1, nullptr, com_swap, pbc);
+    get_molecule_center(&xs2[i2], atoms_per_mol_2, nullptr, com_fill, pbc);
+
+    MPI_RANK_LOOP_VERBOSE(cr, 
+        fprintf(stderr, 
+            "swapping atoms %d-%d (at [%f, %f, %f]) with atoms %d-%d (at [%f, %f, %f])\n",
+            i1, i1 + atoms_per_mol_1 - 1, com_swap[XX], com_swap[YY], com_swap[ZZ],
+            i2, i2 + atoms_per_mol_2 - 1, com_fill[XX], com_fill[YY], com_fill[ZZ]);
+    )
+
+    translate_positions(&xs1[i1], atoms_per_mol_1, com_swap, com_fill, pbc);
+    translate_positions(&xs2[i2], atoms_per_mol_2, com_fill, com_swap, pbc);
+}
+
+// Swap the molecules by exchanging their atom positions.
+//
+// Assumes that both molecules have the same number of atoms.
+static void swap_molecules_atom_pos(rvec xs1[],
+                                    const int i1,
+                                    rvec xs2[],
+                                    const int i2,
+                                    const size_t atoms_per_mol)
+{
+    rvec rbuf;
+
+    for (size_t i = 0; i < atoms_per_mol; i++)
+    {
+        copy_rvec(xs1[i1 + i], rbuf);
+        copy_rvec(xs2[i2 + i], xs1[i1 + i]);
+        copy_rvec(rbuf, xs2[i2 + i]);
+    }
+}
                         
-static void do_swap(rvec                                 xs_local[],
-                    const FlowSwap                      &flow_swap,
-                    const std::vector<std::vector<int>> &swap_mols_in_low_department,
-                    const matrix                         box,
-                    const t_commrec                     *cr)
+static uint16_t do_swap(rvec                                 xs_local[],
+                        const FlowSwap                      &flow_swap,
+                        const std::vector<std::vector<int>> &swap_mols_in_low_department,
+                        const matrix                         box,
+                        const t_commrec                     *cr)
 {
     GMX_RELEASE_ASSERT(flow_swap.coupled_zones.size() == swap_mols_in_low_department.size(),
         "Inconsistency.");
@@ -540,46 +535,122 @@ static void do_swap(rvec                                 xs_local[],
 
     std::vector<int> swap_atom_inds,
                      fill_atom_inds;
+    
+    uint16_t num_swaps = 0;
 
     while (zones != flow_swap.coupled_zones.cend())
     {
+        AtomGroupIndices fill_mols;
+
         if (check_compartment_condition(*swap_mols, flow_swap))
         {
-            const auto fill_mols = find_molecules_in_compartment(flow_swap.fill, (*zones).max, box);
-            MPI_Barrier(cr->mpi_comm_mysim);
+            fill_mols = find_molecules_in_compartment(flow_swap.fill, (*zones).max, box);
 
-            const auto swap_index = get_swap_molecule_index(flow_swap.swap.xs, *swap_mols, (*zones).min, flow_swap.pbc);
-            const auto fill_index = get_swap_molecule_index(flow_swap.fill.xs,  fill_mols, (*zones).max, flow_swap.pbc);
+            if (!fill_mols.empty()) {
+                const auto swap_index = get_swap_molecule_index(
+                    flow_swap.swap.xs, *swap_mols, (*zones).min, flow_swap.pbc);
 
-            // swap_molecules(
-            //     flow_swap.swap.xs, swap_index, flow_swap.swap.atoms_per_mol, 
-            //     flow_swap.fill.xs, fill_index, flow_swap.fill.atoms_per_mol, 
-            //     flow_swap.pbc, cr);
+                const auto fill_index = get_swap_molecule_index(
+                    flow_swap.fill.xs,  fill_mols, (*zones).max, flow_swap.pbc);
 
-            swap_molecules2(
-                flow_swap.swap.xs, swap_index, 
-                flow_swap.fill.xs, fill_index, 
-                flow_swap.fill.atoms_per_mol);
+                // swap_molecules_com(
+                //     flow_swap.swap.xs, swap_index, flow_swap.swap.atoms_per_mol, 
+                //     flow_swap.fill.xs, fill_index, flow_swap.fill.atoms_per_mol, 
+                //     flow_swap.pbc, cr);
 
-            add_swapped_inds_to_list(swap_index, flow_swap.swap.atoms_per_mol, swap_atom_inds);
-            add_swapped_inds_to_list(fill_index, flow_swap.fill.atoms_per_mol, fill_atom_inds);
+                swap_molecules_atom_pos(
+                    flow_swap.swap.xs, swap_index, 
+                    flow_swap.fill.xs, fill_index, 
+                    flow_swap.fill.atoms_per_mol);
+
+                add_swapped_inds_to_list(
+                    swap_index, flow_swap.swap.atoms_per_mol, swap_atom_inds);
+
+                add_swapped_inds_to_list(
+                    fill_index, flow_swap.fill.atoms_per_mol, fill_atom_inds);
+                
+                num_swaps++;
+            }
         }
 
         ++zones;
         ++swap_mols;
     }
 
-    MPI_RANK_LOOP_VERBOSE(cr,
     apply_modified_positions(xs_local, flow_swap.swap, swap_atom_inds);
     apply_modified_positions(xs_local, flow_swap.fill, fill_atom_inds);
-    );
+
+    return num_swaps;
+}
+
+
+/******************** 
+ * Public functions *
+ ********************/
+
+FlowSwap init_flowswap(t_commrec                *cr,
+                       gmx::LocalAtomSetManager *atom_sets,
+                       const t_inputrec         *ir,
+                       const gmx_mtop_t         *top_global,
+                       const SimulationGroups   *groups,
+                       const matrix              box,
+                       const gmx::MDLogger      &mdlog)
+{
+    if ((PAR(cr)) && !DOMAINDECOMP(cr))
+    {
+        gmx_fatal(FARGS, "Position swapping is only implemented for domain decomposition!");
+    }
+
+    // TODO: Check this in readir
+    if (groups->numberOfGroupNumbers(FLOW_SWAP_GROUP) < 2)
+    {
+        gmx_fatal(FARGS, "Number of user2-grps is less than 2");
+    }
+
+    // TODO: Get these from ir
+    constexpr real zone_width = 2.0;        // sigma
+    constexpr real zone_thickness = 1.5; 
+    constexpr size_t ref_max_atoms = 1;
+    constexpr uint64_t nstswap = 5;
+    const std::vector<double> at_heights { 0.25, 0.75 }; // relative to system box size
+
+    std::vector<CoupledSwapZones> coupled_zones;
+
+    for (const auto height : at_heights)
+    {
+        coupled_zones.push_back(create_swap_zones_at_height(height, zone_width, zone_thickness, box));
+    }
+
+    const auto swap_group = create_swap_group(0, top_global, atom_sets, groups);
+    const auto fill_group = create_swap_group(1, top_global, atom_sets, groups);
+
+    // If we are using domain decompositioning, we must update the local and global
+    // atom indices of the sets now that we have added new ones to the manager
+    if (DOMAINDECOMP(cr))
+    {
+        atom_sets->setIndicesInDomainDecomposition(*cr->dd->ga2la);
+    }
+
+    const FlowSwap flow_swap {
+        nstswap,
+        coupled_zones,
+        swap_group,
+        fill_group,
+        ref_max_atoms
+    };
+
+    log_flow_swap_info(flow_swap, mdlog);
+
+    return flow_swap;
 }
 
 gmx_bool do_flowswap(FlowSwap         &flow_swap,
                      t_state          *state,
                      const t_commrec  *cr,
                      const t_inputrec *ir,
-                     gmx_wallcycle    *wcycle)
+                     gmx_wallcycle    *wcycle,
+                     const int64_t     step,
+                     const gmx_bool    bVerbose)
 {
     wallcycle_start(wcycle, ewcSWAP);
 
@@ -603,7 +674,14 @@ gmx_bool do_flowswap(FlowSwap         &flow_swap,
     if (bNeedSwap)
     {
         collect_group_positions_from_ranks(flow_swap.fill, cr, xs_local, state->box);
-        do_swap(xs_local, flow_swap, mols_in_low_compartment, state->box, cr);
+
+        const auto num_swaps = do_swap(
+            xs_local, flow_swap, mols_in_low_compartment, state->box, cr);
+        
+        if (bVerbose && (num_swaps > 0)) 
+        {
+            fprintf(stderr, "Performed %d swap%s in step %lu.\n", num_swaps, num_swaps > 0 ? "s" : "", step);
+        }
     }
 
     wallcycle_stop(wcycle, ewcSWAP);

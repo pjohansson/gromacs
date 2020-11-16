@@ -104,6 +104,8 @@ gmx_bool do_flowswap(FlowSwap         &flow_swap,
                      t_state          *state,
                      const t_commrec  *cr,
                      const t_inputrec *ir,
-                     gmx_wallcycle    *wcycle);
+                     gmx_wallcycle    *wcycle,
+                     const int64_t     step,
+                     const gmx_bool    bVerbose);
 
 #endif // FLOW_SWAP_H
