@@ -40,6 +40,7 @@
 #include <cstdio>
 
 #include <memory>
+#include <vector>
 
 #include "gromacs/math/vectypes.h"
 #include "gromacs/mdtypes/md_enums.h"
@@ -74,7 +75,7 @@ struct t_grpopts
     int ngener;
     //! Number of degrees of freedom in a group
     real* nrdf;
-    //! Coupling temperature	per group
+    //! Coupling temperature per group
     real* ref_t;
     //! No/simple/periodic simulated annealing for each group
     int* annealing;
@@ -324,6 +325,21 @@ struct t_swapcoords
     t_swapGroup* grp;
 };
 
+// [FLOW_FIELD] Swap atoms to create gradient
+struct t_flowswap
+{
+    bool do_swap;
+
+    int nstswap,
+        ref_num_atoms;
+
+    real zone_size,
+         zone_width;
+        
+    int num_positions;
+    real* zone_positions;
+};
+
 struct t_inputrec // NOLINT (clang-analyzer-optin.performance.Padding)
 {
     t_inputrec();
@@ -544,6 +560,9 @@ struct t_inputrec // NOLINT (clang-analyzer-optin.performance.Padding)
     int eSwapCoords;
     //! Swap data structure.
     t_swapcoords* swap;
+
+    //! Whether to do gradient position exchanges (FlowSwap)
+    t_flowswap* flow_swap;
 
     //! Whether the tpr makes an interactive MD session possible.
     gmx_bool bIMD;

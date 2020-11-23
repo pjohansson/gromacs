@@ -1402,6 +1402,40 @@ void check_ir(const char*                   mdparin,
     {
         gmx_fatal(FARGS, "AdResS simulations are no longer supported");
     }
+
+    // [FLOW_FIELD]
+    if (ir->flow_swap->do_swap)
+    {
+        if (ir->flow_swap->nstswap <= 0)
+        {
+            snprintf(warn_buf, STRLEN, "flow-nstswap must be positive (was %d)", ir->flow_swap->nstswap);
+            warning_error(wi, warn_buf);
+        }
+
+        if (ir->flow_swap->ref_num_atoms < 0)
+        {
+            snprintf(warn_buf, STRLEN, "flow-swap-ref-num-mol must be non-negative (was %d)", ir->flow_swap->ref_num_atoms);
+            warning_error(wi, warn_buf);
+        }
+
+        if (ir->flow_swap->num_positions <= 0)
+        {
+            snprintf(warn_buf, STRLEN, "no swapping positions were designated with flow-swap-zone-positions");
+            warning_error(wi, warn_buf);
+        }
+
+        if (ir->flow_swap->zone_size <= 0.0)
+        {
+            snprintf(warn_buf, STRLEN, "flow-swap-zone-size must be larger than 0.0 (was %f)", ir->flow_swap->zone_size);
+            warning_error(wi, warn_buf);
+        }
+
+        if (ir->flow_swap->zone_width <= 0.0)
+        {
+            snprintf(warn_buf, STRLEN, "flow-swap-zone-width must be larger than 0.0 (was %f)", ir->flow_swap->zone_width);
+            warning_error(wi, warn_buf);
+        }
+    }
 }
 
 /* interpret a number of doubles from a string and put them in an array,
@@ -1889,6 +1923,10 @@ void get_ir(const char*     mdparin,
     replace_inp_entry(inp, "xtc-precision", "compressed-x-precision");
     replace_inp_entry(inp, "pull-print-com1", "pull-print-com");
 
+    /* [FLOW_FIELD] Rebind user2-grps to use for swapping
+        This is likely easier than trying to create an entire new group */
+    replace_inp_entry(inp, "user2-grps", "flow-swap-grps");
+
     printStringNewline(&inp, "VARIOUS PREPROCESSING OPTIONS");
     printStringNoNewline(&inp, "Preprocessor information: use cpp syntax.");
     printStringNoNewline(&inp, "e.g.: -I/home/joe/doe -I/home/mary/roe");
@@ -2266,6 +2304,50 @@ void get_ir(const char*     mdparin,
         mdModules->adjustInputrecBasedOnModules(ir);
         errorHandler.setBackMapping(result.backMapping());
         mdModules->assignOptionsToModules(*ir->params, &errorHandler);
+    }
+
+    // [FLOW_FIELD] Swapping
+    {
+        if (ir->flow_swap == nullptr)
+        {
+            snew(ir->flow_swap, 1);
+        }
+
+        printStringNewline(&inp, "ATOM SWAPPING FOR GRADIENT CREATION (UNOFFICIAL)");
+        printStringNoNewline(&inp, "Do swapping of atoms");
+        ir->flow_swap->do_swap = (get_eeenum(&inp, "flow-swap", yesno_names, wi) != 0);
+
+        printStringNoNewline(&inp, "Swap attempt frequency");
+        ir->flow_swap->nstswap = get_ereal(&inp, "flow-nstswap", 0, wi);
+        printStringNoNewline(&inp, "Maximum number of swap molecules in edge area");
+        ir->flow_swap->ref_num_atoms = get_ereal(&inp, "flow-swap-ref-num-mol", 0, wi);
+        printStringNoNewline(&inp, "Size of swapping zones along swap axis (X) (nm)");
+        ir->flow_swap->zone_size = get_ereal(&inp, "flow-swap-zone-size", 0.0, wi);
+        printStringNoNewline(&inp, "Width of swapping zones along the positional axis (Z) (nm)");
+        ir->flow_swap->zone_width = get_ereal(&inp, "flow-swap-zone-width", 0.0, wi);
+
+        printStringNoNewline(&inp, "Positions along the positional axis (Z) at which to swap ");
+        printStringNoNewline(&inp, "in (relative to box size)");
+        char strbuf[STRLEN];
+        setStringEntry(&inp, "flow-swap-zone-positions", strbuf, "");
+
+        const auto zone_position_values = gmx::splitString(strbuf);
+
+        ir->flow_swap->num_positions = zone_position_values.size();
+        snew(ir->flow_swap->zone_positions, ir->flow_swap->num_positions);
+
+        convertReals(
+            wi, 
+            zone_position_values, 
+            "flow-swap-zone-positions", 
+            ir->flow_swap->zone_positions
+        );
+
+        printStringNoNewline(&inp, "Groups to swap and fill with: must be 1 or 2, the first group is ");
+        printStringNoNewline(&inp, "the swapped molecules and the second the replacements (will be ");
+        printStringNoNewline(&inp, "the rest group if only one group is specified)");
+        printStringNoNewline(&inp, "Note: this replaces user2-grps");
+        setStringEntry(&inp, "flow-swap-grps", is->user2, nullptr);
     }
 
     /* Ion/water position swapping ("computational electrophysiology") */
@@ -4447,6 +4529,24 @@ void triple_check(const char* mdparin, t_inputrec* ir, gmx_mtop_t* sys, warninp_
     }
 
     check_disre(sys);
+
+    // [FLOW_FIELD] Verify that we have the required groups for swapping
+    const auto num_swap_groups = sys->groups.groups[SimulationAtomGroupType::User2].size();
+
+    if (ir->flow_swap->do_swap && (num_swap_groups < 2))
+    {
+        if (num_swap_groups == 0)
+        {
+            snprintf(warn_buf, STRLEN, "no group to swap for was specified (flow-swap-grps)");
+            warning_error(wi, warn_buf);
+        }
+        
+        if (num_swap_groups == 1)
+        {
+            snprintf(warn_buf, STRLEN, "no group to replace the swapped molecules with was specified (flow-swap-grps)");
+            warning_error(wi, warn_buf);
+        }
+    }
 }
 
 void double_check(t_inputrec* ir, matrix box, bool bHasNormalConstraints, bool bHasAnyConstraints, warninp_t wi)

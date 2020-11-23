@@ -130,6 +130,7 @@ enum tpxv
     tpxv_GenericInternalParameters, /**< Added internal parameters for mdrun modules*/
     tpxv_VSite2FD,                  /**< Added 2FD type virtual site */
     tpxv_AddSizeField, /**< Added field with information about the size of the serialized tpr file in bytes, excluding the header */
+    tpxv_FlowField, /**< [FLOW_FIELD] Added options for flow field writing and manipulation */
     tpxv_Count         /**< the total number of tpxv versions */
 };
 
@@ -1618,6 +1619,29 @@ static void do_inputrec(gmx::ISerializer* serializer, t_inputrec* ir, int file_v
             }
             do_swapcoords_tpx(serializer, ir->swap, file_version);
         }
+    }
+
+    /* [FLOW_FIELD] */
+    if (file_version >= tpxv_FlowField)
+    {
+        if (serializer->reading())
+        {
+            snew(ir->flow_swap, 1);
+        }
+
+        serializer->doBool(&ir->flow_swap->do_swap);
+        serializer->doInt(&ir->flow_swap->nstswap);
+        serializer->doInt(&ir->flow_swap->ref_num_atoms);
+        serializer->doReal(&ir->flow_swap->zone_size);
+        serializer->doReal(&ir->flow_swap->zone_width);
+        serializer->doInt(&ir->flow_swap->num_positions);
+
+        if (serializer->reading())
+        {
+            snew(ir->flow_swap->zone_positions, ir->flow_swap->num_positions);
+        }
+
+        serializer->doRealArray(ir->flow_swap->zone_positions, ir->flow_swap->num_positions);
     }
 
     /* QMMM stuff */

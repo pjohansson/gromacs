@@ -312,6 +312,9 @@ void done_inputrec(t_inputrec* ir)
     sfree(ir->expandedvals);
     sfree(ir->simtempvals);
 
+    // [FLOW_FIELD]
+    sfree(ir->flow_swap);
+
     if (ir->pull)
     {
         done_pull_params(ir->pull);
@@ -795,6 +798,36 @@ static void pr_swap(FILE* fp, int indent, const t_swapcoords* swap)
 }
 
 
+// [FLOW_FIELD]
+void pr_flowswap(FILE* fp, int indent, const t_flowswap* flow_swap)
+{
+    if (flow_swap != nullptr)
+    {
+        PS("flow-swap", EBOOL(flow_swap->do_swap));
+
+        if (flow_swap->do_swap)
+        {
+            PI("flow-nstswap", flow_swap->nstswap);
+            PI("flow-swap-ref-num-mol", flow_swap->ref_num_atoms);
+            PR("flow-swap-zone-size", flow_swap->zone_size);
+            PR("flow-swap-zone-width", flow_swap->zone_width);
+
+            pr_rvec(
+                fp, indent, 
+                "flow-swap-zone-positions", 
+                flow_swap->zone_positions,
+                flow_swap->num_positions,
+                TRUE
+            );
+        }
+    }
+    else 
+    {
+        PS("flow-swap", "no");
+    }
+}
+
+
 static void pr_imd(FILE* fp, int indent, const t_IMD* imd)
 {
     PI("IMD-atoms", imd->nat);
@@ -1021,6 +1054,9 @@ void pr_inputrec(FILE* fp, int indent, const char* title, const t_inputrec* ir, 
         {
             pr_swap(fp, indent, ir->swap);
         }
+
+        // [FLOW_FIELD] Swapping
+        pr_flowswap(fp, indent, ir->flow_swap);
 
         /* USER-DEFINED THINGIES */
         PI("userint1", ir->userint1);

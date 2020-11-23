@@ -60,6 +60,21 @@ void SwapZone::get_center(rvec center) const
     }
 }
 
+/**< Construct a dummy `FlowSwap` object
+ * 
+ * There is no empty constructor for `LocalAtomSet` handles, which means 
+ * that we have to construct them for our `SwapGroup` objects.
+ */
+FlowSwap init_empty_flow_swap(gmx::LocalAtomSetManager *atom_sets)
+{
+    const std::vector<int> inds { 0 };
+
+    const SwapGroup swap { atom_sets->add(inds) };
+    const SwapGroup fill { atom_sets->add(inds) };
+
+    return FlowSwap { swap, fill };
+}
+
 
 /*************************
  * Group and zone set-up *
@@ -99,18 +114,18 @@ static int get_atoms_per_mol_for_group(const std::vector<int> &atom_inds,
 }
 
 static SwapZone create_center_zone(const real   at_height,
-                                   const real   zone_width, 
-                                   const real   zone_thickness,
+                                   const real   zone_size, 
+                                   const real   zone_width,
                                    const matrix box)
 {
     const real xmid = box[XX][XX] / 2.0;
     const real zmid = box[ZZ][ZZ] * at_height;
 
-    const real x0 = xmid - zone_width / 2.0;
-    const real x1 = xmid + zone_width / 2.0;
+    const real x0 = xmid - zone_size / 2.0;
+    const real x1 = xmid + zone_size / 2.0;
 
-    const real z0 = zmid - zone_thickness / 2.0;
-    const real z1 = zmid + zone_thickness / 2.0;
+    const real z0 = zmid - zone_width / 2.0;
+    const real z1 = zmid + zone_width / 2.0;
 
     const real y0 = 0.0;
     const real y1 = box[YY][YY];
@@ -119,17 +134,17 @@ static SwapZone create_center_zone(const real   at_height,
 }
 
 static SwapZone create_edge_zone(const real   at_height,
-                                 const real   zone_width, 
-                                 const real   zone_thickness,
+                                 const real   zone_size, 
+                                 const real   zone_width,
                                  const matrix box)
 {
     const real zmid = box[ZZ][ZZ] * at_height;
 
-    const real x1 = zone_width / 2.0;
-    const real x2 = box[XX][XX] - zone_width / 2.0;
+    const real x1 = zone_size / 2.0;
+    const real x2 = box[XX][XX] - zone_size / 2.0;
 
-    const real z0 = zmid - zone_thickness / 2.0;
-    const real z1 = zmid + zone_thickness / 2.0;
+    const real z0 = zmid - zone_width / 2.0;
+    const real z1 = zmid + zone_width / 2.0;
 
     const real y0 = 0.0;
     const real y1 = box[YY][YY];
@@ -141,12 +156,12 @@ static SwapZone create_edge_zone(const real   at_height,
 }
 
 static CoupledSwapZones create_swap_zones_at_height(const real   at_height,
+                                                    const real   zone_size,
                                                     const real   zone_width,
-                                                    const real   zone_thickness,
                                                     const matrix box)
 {
-    const auto min = create_edge_zone(at_height, zone_width, zone_thickness, box);
-    const auto max = create_center_zone(at_height, zone_width, zone_thickness, box);
+    const auto min = create_edge_zone(at_height, zone_size, zone_width, box);
+    const auto max = create_center_zone(at_height, zone_size, zone_width, box);
 
     return CoupledSwapZones { min, max };
 }
@@ -596,29 +611,32 @@ FlowSwap init_flowswap(t_commrec                *cr,
                        const matrix              box,
                        const gmx::MDLogger      &mdlog)
 {
+    if (!ir->flow_swap->do_swap)
+    {
+        // const FlowSwap flow_swap { atom_sets };
+
+        return init_empty_flow_swap(atom_sets);
+    }
+
     if ((PAR(cr)) && !DOMAINDECOMP(cr))
     {
         gmx_fatal(FARGS, "Position swapping is only implemented for domain decomposition!");
     }
 
-    // TODO: Check this in readir
-    if (groups->numberOfGroupNumbers(FLOW_SWAP_GROUP) < 2)
-    {
-        gmx_fatal(FARGS, "Number of user2-grps is less than 2");
-    }
-
-    // TODO: Get these from ir
-    constexpr real zone_width = 2.0;        // sigma
-    constexpr real zone_thickness = 1.5; 
-    constexpr size_t ref_max_atoms = 1;
-    constexpr uint64_t nstswap = 5;
-    const std::vector<double> at_heights { 0.25, 0.75 }; // relative to system box size
+    const auto zone_size = ir->flow_swap->zone_size;
+    const auto zone_width = ir->flow_swap->zone_width;
+    const auto ref_num_mols = ir->flow_swap->ref_num_atoms;
+    const auto nstswap = static_cast<uint64_t>(ir->flow_swap->nstswap);
 
     std::vector<CoupledSwapZones> coupled_zones;
 
-    for (const auto height : at_heights)
+    for (int i = 0; i < ir->flow_swap->num_positions; i++)
     {
-        coupled_zones.push_back(create_swap_zones_at_height(height, zone_width, zone_thickness, box));
+        const auto height = ir->flow_swap->zone_positions[i];
+
+        coupled_zones.push_back(
+            create_swap_zones_at_height(height, zone_size, zone_width, box)
+        );
     }
 
     const auto swap_group = create_swap_group(0, top_global, atom_sets, groups);
@@ -636,7 +654,7 @@ FlowSwap init_flowswap(t_commrec                *cr,
         coupled_zones,
         swap_group,
         fill_group,
-        ref_max_atoms
+        ref_num_mols
     };
 
     log_flow_swap_info(flow_swap, mdlog);

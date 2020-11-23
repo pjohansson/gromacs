@@ -40,7 +40,11 @@ struct SwapZone {
 
 // A swap group consists of a set of molecules of identical type.
 struct SwapGroup {
-    SwapGroup();
+    /**< Dummy constructor for when no swapping is done */
+    SwapGroup(const gmx::LocalAtomSet atom_set)
+    :atom_set { atom_set } {}
+
+    /**< Full constructor of object */
     SwapGroup(std::string name, size_t atoms_per_mol, gmx::LocalAtomSet atom_set)
     :name{name},
      atoms_per_mol{atoms_per_mol},
@@ -62,8 +66,12 @@ struct CoupledSwapZones {
 };
 
 struct FlowSwap {
-    FlowSwap();
+    /**< Dummy constructor for when no swapping is done */
+    FlowSwap(const SwapGroup swap, const SwapGroup fill)
+    :swap { swap },
+     fill { fill } {}
 
+    /**< Full constructor of object */
     FlowSwap(const uint64_t nstswap, 
              const std::vector<CoupledSwapZones> coupled_zones, 
              const SwapGroup swap, 
