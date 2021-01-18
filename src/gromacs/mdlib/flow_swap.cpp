@@ -698,7 +698,7 @@ gmx_bool do_flowswap(FlowSwap         &flow_swap,
         
         if (bVerbose && (num_swaps > 0)) 
         {
-            fprintf(stderr, "Performed %d swap%s in step %lu.\n", num_swaps, num_swaps > 0 ? "s" : "", step);
+            fprintf(stderr, "Performed %d swap%s in step %lu.\n", num_swaps, num_swaps != 1 ? "s" : "", step);
         }
     }
 
