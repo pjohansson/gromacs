@@ -124,7 +124,9 @@ public:
                                           { efXVG, "-swap", "swapions", ffOPTWR },
                                           // [FLOW_FIELD] 
                                           // Add flow field output file name
-                                          { efDAT, "-flow", "flow", ffOPTWR } } };
+                                          { efDAT, "-flow", "flow", ffOPTWR },
+                                          // [PETTER] [REMD] Logging of momentum exchange for REMD
+                                          { efXVG, "-pexchange", "momentum-exchange", ffOPTWR } } };
 
     //! Print a warning if any force is larger than this (in kJ/mol nm).
     real pforce = -1;

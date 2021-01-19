@@ -146,6 +146,7 @@
 #include "shellfc.h"
 
 // [FLOW_FIELD]
+#include "gromacs/utility/futil.h"
 #include "gromacs/mdlib/flow_field.h"
 #include "md_shear_coupling.h"
 
@@ -622,9 +623,10 @@ void gmx::LegacySimulator::do_md()
        for non-trotter temperature control */
     auto trotter_seq = init_npt_vars(ir, state, &MassQ, bTrotter);
 
-    /* [PETTER] SHEAR COUPLING SETUP */
+    /* [PETTER] [REMD] SHEAR COUPLING SETUP */
     const gmx_bool bShearCoupling = ir->bShearCoupling;
-    const auto shear_velocity_coupling_opts = init_shear_velocity_coupling_opts(ir, state->box, groups, cr, mdlog);
+    const auto shear_velocity_coupling_opts = init_shear_velocity_coupling_opts(
+        ir, state->box, groups, cr, opt2fn("-pexchange", nfile, fnm), oenv, mdlog);
 
     if (MASTER(cr))
     {
@@ -1229,10 +1231,10 @@ void gmx::LegacySimulator::do_md()
             checkpointHandler->setSignal(walltime_accounting);
         }
 
-        /* #########   PETTER   ######### */
+        /* #########   [PETTER] [REMD]   ######### */
         if (bShearCoupling && do_per_step(step, shear_velocity_coupling_opts.step))
         {
-            do_shear_velocity_coupling(state, mdatoms, step, shear_velocity_coupling_opts, groups, cr);
+            do_shear_velocity_coupling(state, mdatoms, step, t, shear_velocity_coupling_opts, groups, cr);
         }
 
         /* #########   START SECOND UPDATE STEP ################# */
@@ -1698,6 +1700,12 @@ void gmx::LegacySimulator::do_md()
         imdSession->updateEnergyRecordAndSendPositionsAndEnergies(bInteractiveMDstep, step, bCalcEner);
     }
     /* End of main MD loop */
+
+    // [PETTER] [REMD] Close open files
+    if (shear_velocity_coupling_opts.log_pexchange != nullptr)
+    {
+        gmx_ffclose(shear_velocity_coupling_opts.log_pexchange);
+    }
 
     /* Closing TNG files can include compressing data. Therefore it is good to do that
      * before stopping the time measurements. */

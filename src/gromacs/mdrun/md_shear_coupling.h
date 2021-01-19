@@ -23,6 +23,8 @@ enum class Axis {
 };
 
 struct ShearVelOpts {
+    FILE *log_pexchange;          /* Opened file to log momentum exchange into */
+
     Axis axis,                    /* Axis along which the areas that are coupled are defined */
          direction;               /* Directional axis of the velocity */ 
         
@@ -46,11 +48,14 @@ ShearVelOpts init_shear_velocity_coupling_opts(const t_inputrec       *ir,
                                                const matrix            box,
                                                const SimulationGroups *groups,
                                                const t_commrec        *cr,
+                                               const char             *fnlog,
+                                               const struct gmx_output_env_t *oenv,
                                                const gmx::MDLogger    &mdlog);
 
 void do_shear_velocity_coupling(t_state                *state,
                                 const t_mdatoms        *mdatoms,
                                 const int64_t           current_step,
+                                const double            current_time,
                                 const ShearVelOpts     &opts,
                                 const SimulationGroups *groups,
                                 const t_commrec        *cr);

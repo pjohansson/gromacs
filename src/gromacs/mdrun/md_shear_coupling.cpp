@@ -1,5 +1,11 @@
 #include "gromacs/mdrun/md_shear_coupling.h"
 
+#include "gromacs/fileio/oenv.h"
+#include "gromacs/fileio/xvgr.h"
+#include "gromacs/math/units.h"
+#include "gromacs/utility/cstringutil.h"
+#include "gromacs/utility/futil.h"
+
 #include <array>
 #include <cstring>
 #include <vector>
@@ -52,7 +58,7 @@
  *                              and top edges and area1 is in the center       *
  *   shear-tcoupl         = time, perform the coupling at multiples of this    *
  *   shear-area-size      = size, extent of area0 and area1 along the axis     *
- *   shear-area-zadj      = size, move areas towards the center of the box     *
+ *   shear-zadj           = size, move areas towards the center of the box     *
  *                          by this amount (useful with walls)                 *
  *   shear-ref-velocity   = vel, target velocity reference for areas:          *
  *                            area0: -shear-ref-velocity                       *
@@ -162,7 +168,7 @@ struct ExchangeAreaCounter {
 /*! \brief Return the name, i.e. x, y, or z, of the  \p axis */
 constexpr static const char* get_axis_name(const Axis& axis) 
 {
-    constexpr std::array<const char*, DIM + 1> axis_names { "X", "Y", "Z", "null" };
+    constexpr std::array<const char*, DIM + 1> axis_names { "x", "y", "z", "null" };
     return axis_names[static_cast<size_t>(axis)];
 }
 
@@ -963,6 +969,20 @@ static void log_shear_coupling_info(const ShearVelOpts     &opts,
     GMX_LOG(mdlog.info).appendText("");
 }
 
+/* Log momentum exchange information along the flow direction */
+static void log_exchange(FILE                  *fp,
+                         const double           time,
+                         const ExchangeCounter &counter0,
+                         const ExchangeCounter &counter1,
+                         const Axis             direction)
+{
+    const auto d = static_cast<size_t>(direction);
+    const auto p0 = counter0.atom_mass * counter0.velocity_max_vector.at(d);
+    const auto p1 = counter1.atom_mass * counter1.velocity_max_vector.at(d);
+
+    fprintf(fp, "%12.5e %12.5e\n", time, p1 - p0);
+}
+
 #ifdef MPI_SHEAR_DEBUG
 static void print_shear_area_info(const ExchangeArea     &area,
                                   const size_t            i,
@@ -1086,6 +1106,8 @@ ShearVelOpts init_shear_velocity_coupling_opts(const t_inputrec       *ir,
                                                const matrix            box,
                                                const SimulationGroups *groups,
                                                const t_commrec        *cr,
+                                               const char             *fnlog,
+                                               const struct gmx_output_env_t *oenv,
                                                const gmx::MDLogger    &mdlog)
 {
     const gmx_bool bShearCoupl = ir->bShearCoupling;
@@ -1100,9 +1122,37 @@ ShearVelOpts init_shear_velocity_coupling_opts(const t_inputrec       *ir,
             tcoupl, ir->delta_t, static_cast<double>(nstcoupl) * ir->delta_t);
     }
 
+    const auto axis = get_axis(static_cast<ShearAxis_axis>(ir->shear_axis));
+    const auto direction = get_direction(static_cast<ShearAxis_direction>(ir->shear_direction));
+
+    FILE *fp = nullptr;
+    if (bShearCoupl)
+    {
+        char xaxis[STRLEN], 
+             yaxis[STRLEN],
+             subtitle[STRLEN];
+
+        snprintf(xaxis, STRLEN, 
+                 "t (%s)", 
+                 unit_time);
+
+        snprintf(yaxis, STRLEN, 
+                 "\\Deltap\\s%s\\N (%s %s %s\\S-1\\N)", 
+                 get_axis_name(direction),
+                 unit_mass, unit_length, unit_time);
+
+        fp = xvgropen_type(fnlog, "Momentum exchange", xaxis, yaxis, exvggtNONE, oenv);
+
+        snprintf(subtitle, STRLEN,
+                 "From area 1 to area 0 (p\\s%s,1\\N - p\\s%s,0\\N)",
+                 get_axis_name(direction), get_axis_name(direction));
+        xvgr_subtitle(fp, subtitle, oenv);
+    }
+
     const ShearVelOpts opts {
-        get_axis(static_cast<ShearAxis_axis>(ir->shear_axis)),
-        get_direction(static_cast<ShearAxis_direction>(ir->shear_direction)),
+        fp,
+        axis,
+        direction,
         static_cast<ShearCouplStrategy>(ir->shear_strategy),
         get_num_groups(groups),
         nstcoupl,
@@ -1111,7 +1161,7 @@ ShearVelOpts init_shear_velocity_coupling_opts(const t_inputrec       *ir,
         ir->shear_ref_velocity
     };
 
-    if (ir->bShearCoupling)
+    if (bShearCoupl)
     {
         if (MASTER(cr))
         {
@@ -1150,6 +1200,7 @@ ShearVelOpts init_shear_velocity_coupling_opts(const t_inputrec       *ir,
 void do_shear_velocity_coupling(t_state                *state,
                                 const t_mdatoms        *mdatoms,
                                 const int64_t           current_step,
+                                const double            current_time,
                                 const ShearVelOpts     &opts,
                                 const SimulationGroups *groups,
                                 const t_commrec        *cr)
@@ -1207,5 +1258,15 @@ void do_shear_velocity_coupling(t_state                *state,
             system_area_counter0.counter, 
             system_area_counter1.counter,
             cr);
+
+        if (MASTER(cr))
+        {
+            log_exchange(
+                opts.log_pexchange,
+                current_time,
+                system_area_counter0.counter, 
+                system_area_counter1.counter,
+                opts.direction);
+        }
     }
 }
