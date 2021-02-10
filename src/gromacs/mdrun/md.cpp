@@ -150,10 +150,6 @@
 #include "gromacs/mdlib/flow_field.h"
 #include "md_shear_coupling.h"
 
-#if GMX_FAHCORE
-#    include "corewrap.h"
-#endif
-
 using gmx::SimulationSignaller;
 
 void gmx::LegacySimulator::do_md()
@@ -677,15 +673,6 @@ void gmx::LegacySimulator::do_md()
     walltime_accounting_start_time(walltime_accounting);
     wallcycle_start(wcycle, ewcRUN);
     print_start(fplog, cr, walltime_accounting, "mdrun");
-
-#if GMX_FAHCORE
-    /* safest point to do file checkpointing is here.  More general point would be immediately before integrator call */
-    int chkpt_ret = fcCheckPointParallel(cr->nodeid, NULL, 0);
-    if (chkpt_ret == 0)
-    {
-        gmx_fatal(3, __FILE__, __LINE__, "Checkpoint error on step %d\n", 0);
-    }
-#endif
 
     /***********************************************************
      *
@@ -1692,6 +1679,13 @@ void gmx::LegacySimulator::do_md()
         /* increase the MD step number */
         step++;
         step_rel++;
+
+#if GMX_FAHCORE
+        if (MASTER(cr))
+        {
+            fcReportProgress(ir->nsteps + ir->init_step, step);
+        }
+#endif
 
         resetHandler->resetCounters(step, step_rel, mdlog, fplog, cr, fr->nbv.get(), nrnb,
                                     fr->pmedata, pme_loadbal, wcycle, walltime_accounting);
