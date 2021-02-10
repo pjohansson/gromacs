@@ -672,7 +672,7 @@ gmx_bool do_flowswap(FlowSwap         &flow_swap,
 {
     wallcycle_start(wcycle, ewcSWAP);
 
-    set_pbc(flow_swap.pbc, ir->ePBC, state->box);
+    set_pbc(flow_swap.pbc, ir->pbcType, state->box);
 
     // Collect data to all ranks and do swaps locally. If a swap is made, we will later
     // repartition the dd in the md loop.
