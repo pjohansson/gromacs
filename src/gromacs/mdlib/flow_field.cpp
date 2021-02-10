@@ -64,6 +64,7 @@ init_flow_container(const int               nfile,
     const auto nz = static_cast<size_t>(ir->userint4);
 
     const auto dx = static_cast<double>(state->box[XX][XX]) / static_cast<double>(nx);
+    const auto dy = static_cast<double>(state->box[YY][YY]);
     const auto dz = static_cast<double>(state->box[ZZ][ZZ]) / static_cast<double>(nz);
 
     // Control userargs, although this should be done during pre-processing
@@ -138,7 +139,7 @@ init_flow_container(const int               nfile,
         }
     }
 
-    return FlowData(fnbase, group_names, nx , nz, dx, dz, step_collect, step_output);
+    return FlowData(fnbase, group_names, nx, nz, dx, dy, dz, step_collect, step_output);
 }
 
 
@@ -252,14 +253,14 @@ struct FlowBinData {
 
 struct FlowDataOutput {
     std::vector<uint64_t> ix, iy;
-    std::vector<float> mass, num_atoms, temp, us, vs;
+    std::vector<float> mass_density, num_density, temp, us, vs;
 
     FlowDataOutput(const size_t num_elements) 
     {
         ix.reserve(num_elements);
         iy.reserve(num_elements);
-        mass.reserve(num_elements);
-        num_atoms.reserve(num_elements);
+        mass_density.reserve(num_elements);
+        num_density.reserve(num_elements);
         temp.reserve(num_elements);
         us.reserve(num_elements);
         vs.reserve(num_elements);
@@ -306,6 +307,7 @@ static void
 add_bin_if_non_empty(FlowDataOutput    &data,
                      const size_t       ix,
                      const size_t       iy,
+                     const double       bin_volume,
                      const FlowBinData &bin_data)
 {
     if (bin_data.mass > 0.0) 
@@ -313,8 +315,8 @@ add_bin_if_non_empty(FlowDataOutput    &data,
         data.ix.push_back(static_cast<uint64_t>(ix));
         data.iy.push_back(static_cast<uint64_t>(iy));
 
-        data.mass.push_back(bin_data.mass);
-        data.num_atoms.push_back(bin_data.num_atoms);
+        data.mass_density.push_back(bin_data.mass / bin_volume);
+        data.num_density.push_back(bin_data.num_atoms / bin_volume);
         data.temp.push_back(bin_data.temp);
         data.us.push_back(bin_data.u);
         data.vs.push_back(bin_data.v);
@@ -340,12 +342,13 @@ write_header(FILE        *fp,
     buf << "FIELDS IX IY N T M U V\n";
     buf << "COMMENT Grid is regular but only non-empty bins are output\n";
     buf << "COMMENT There are 'NUMDATA' non-empty bins and that many values are stored for each field\n";
+    buf << "COMMENT Origin and spacing is given in units of nm\n";
     buf << "COMMENT 'FIELDS' is the different fields for each bin:\n";
     buf << "COMMENT 'IX' and 'IY' are bin indices along x and y respectively\n";
-    buf << "COMMENT 'N' is the average number of atoms\n";
-    buf << "COMMENT 'M' is the average mass\n";
-    buf << "COMMENT 'T' is the temperature\n";
-    buf << "COMMENT 'U' and 'V' is the mass flow along x and y respectively\n";
+    buf << "COMMENT 'N' is the average atom number density (1/nm^3)\n";
+    buf << "COMMENT 'M' is the average mass density (amu/nm^3)\n";
+    buf << "COMMENT 'T' is the temperature (K)\n";
+    buf << "COMMENT 'U' and 'V' is the mass-averaged flow along x and y respectively (nm/ps)\n";
     buf << "COMMENT Data is stored as 'NUMDATA' counts for each field in 'FIELDS', in order\n";
     buf << "COMMENT 'IX' and 'IY' are 64-bit unsigned integers\n";
     buf << "COMMENT Other fields are 32-bit floating point numbers\n";
@@ -378,13 +381,13 @@ write_flow_data(const std::string    &fnbase,
     const size_t num_elements = data.ix.size();
     write_header(fp, nx, ny, dx, dy, num_elements);
 
-    fwrite(data.ix.data(),        sizeof(uint64_t), num_elements, fp);
-    fwrite(data.iy.data(),        sizeof(uint64_t), num_elements, fp);
-    fwrite(data.num_atoms.data(), sizeof(float),    num_elements, fp);
-    fwrite(data.temp.data(),      sizeof(float),    num_elements, fp);
-    fwrite(data.mass.data(),      sizeof(float),    num_elements, fp);
-    fwrite(data.us.data(),        sizeof(float),    num_elements, fp);
-    fwrite(data.vs.data(),        sizeof(float),    num_elements, fp);
+    fwrite(data.ix.data(),              sizeof(uint64_t), num_elements, fp);
+    fwrite(data.iy.data(),              sizeof(uint64_t), num_elements, fp);
+    fwrite(data.num_density.data(),     sizeof(float),    num_elements, fp);
+    fwrite(data.temp.data(),            sizeof(float),    num_elements, fp);
+    fwrite(data.mass_density.data(),    sizeof(float),    num_elements, fp);
+    fwrite(data.us.data(),              sizeof(float),    num_elements, fp);
+    fwrite(data.vs.data(),              sizeof(float),    num_elements, fp);
 
     gmx_ffclose(fp);
 }
@@ -451,7 +454,7 @@ output_flow_data(FlowData               &flowcr,
             {
                 const auto bin = flowcr.get_1d_index(ix, iz);
                 const auto bin_data = calc_values_in_bin(flowcr.data, bin, flowcr.step_ratio);
-                add_bin_if_non_empty(system_bin_data, ix, iz, bin_data);
+                add_bin_if_non_empty(system_bin_data, ix, iz, flowcr.bin_volume, bin_data);
 
                 for (size_t i = 0; i < flowcr.group_data.size(); ++i)
                 {
@@ -459,7 +462,7 @@ output_flow_data(FlowData               &flowcr,
                     auto& group_data = separate_group_bin_data.at(i);
 
                     const auto group_bin_data = calc_values_in_bin(data, bin, flowcr.step_ratio);
-                    add_bin_if_non_empty(group_data, ix, iz, group_bin_data);
+                    add_bin_if_non_empty(group_data, ix, iz, flowcr.bin_volume, group_bin_data);
                 }
             }
         }

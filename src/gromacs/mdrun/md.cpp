@@ -164,7 +164,7 @@ void gmx::LegacySimulator::do_md()
     int64_t      step, step_rel;
     double       t, t0 = ir->init_t, lam0[efptNR];
     gmx_bool     bGStatEveryStep, bGStat, bCalcVir, bCalcEnerStep, bCalcEner;
-    gmx_bool     bNS, bNStList, bStopCM, bFirstStep, bInitStep, bLastStep = FALSE;
+    gmx_bool     bNS = FALSE, bNStList, bStopCM, bFirstStep, bInitStep, bLastStep = FALSE;
     gmx_bool     bDoDHDL = FALSE, bDoFEP = FALSE, bDoExpanded = FALSE;
     gmx_bool     do_ene, do_log, do_verbose;
     gmx_bool     bMasterState;
@@ -702,6 +702,9 @@ void gmx::LegacySimulator::do_md()
         }
     }
 
+    step     = ir->init_step;
+    step_rel = 0;
+
     auto stopHandler = stopHandlerBuilder->getStopHandlerMD(
             compat::not_null<SimulationSignal*>(&signals[eglsSTOPCOND]), simulationsShareState,
             MASTER(cr), ir->nstlist, mdrunOptions.reproducible, nstSignalComm,
@@ -719,9 +722,6 @@ void gmx::LegacySimulator::do_md()
             mdrunOptions.maximumHoursToRun, mdlog, wcycle, walltime_accounting);
 
     const DDBalanceRegionHandler ddBalanceRegionHandler(cr);
-
-    step     = ir->init_step;
-    step_rel = 0;
 
     // TODO extract this to new multi-simulation module
     if (MASTER(cr) && isMultiSim(ms) && !useReplicaExchange)
@@ -1086,7 +1086,7 @@ void gmx::LegacySimulator::do_md()
                         copy_mat(shake_vir, state->svir_prev);
                         copy_mat(force_vir, state->fvir_prev);
                     }
-                    if (inputrecNvtTrotter(ir) && ir->eI == eiVV)
+                    if ((inputrecNptTrotter(ir) || inputrecNvtTrotter(ir)) && ir->eI == eiVV)
                     {
                         /* update temperature and kinetic energy now that step is over - this is the v(t+dt) point */
                         enerd->term[F_TEMP] =
