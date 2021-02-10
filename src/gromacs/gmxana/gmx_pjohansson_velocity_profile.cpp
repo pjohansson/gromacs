@@ -118,7 +118,8 @@ calc_profile(const char*             fn,
              const int               gnx[],
              const size_t            num_slices,
              t_topology*             top,
-             const int               ePBC,
+            //  const int               ePBC,
+             const PbcType          *ePBC,
              const int               axis,
              const int               velaxis,
              const int               num_groups,
@@ -149,7 +150,7 @@ calc_profile(const char*             fn,
         gmx_fatal(FARGS, "Could not read coordinates from statusfile\n");
     }
 
-    gpbc = gmx_rmpbc_init(&top->idef, ePBC, top->atoms.nr);
+    gpbc = gmx_rmpbc_init(&top->idef, *ePBC, top->atoms.nr);
 
     /* Set-up containers for collecting velocity profile data and weighting */
     std::vector<std::vector<double>> profile_per_group (
@@ -384,7 +385,7 @@ int gmx_velocity_profile(int argc, char* argv[])
     int         ncenter;        /* size of centering group    */
     int*        ngx;            /* sizes of groups            */
     t_topology* top;            /* topology               */
-    int         ePBC;
+    // int         ePBC;
     int*        index_center; /* index for centering group  */
     int**       index;        /* indices for all groups     */
 
@@ -415,7 +416,8 @@ int gmx_velocity_profile(int argc, char* argv[])
     axis = toupper(axtitle[0]) - 'X';
     velaxis = toupper(velaxtitle[0]) - 'X';
 
-    top = read_top(ftp2fn(efTPR, NFILE, fnm), &ePBC); /* read topology file */
+    PbcType *ePBC;
+    top = read_top(ftp2fn(efTPR, NFILE, fnm), ePBC); /* read topology file */
     snew(grpname, ngrps);
     snew(index, ngrps);
     snew(ngx, ngrps);
