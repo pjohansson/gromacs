@@ -153,7 +153,7 @@
 
 // [FLOW_FIELD]
 #include "gromacs/mdlib/flow_field.h"
-#include "gromacs/mdlib/flow_swap.h"
+#include "gromacs/flow/swap.h"
 
 using gmx::SimulationSignaller;
 

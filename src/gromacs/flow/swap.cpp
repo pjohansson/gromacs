@@ -10,7 +10,7 @@
 #include "gromacs/utility/fatalerror.h"
 #include "gromacs/utility/gmxassert.h"
 
-#include "flow_swap.h"
+#include "swap.h"
 
 // #define FLOW_SWAP_DEBUG
 
@@ -623,8 +623,8 @@ FlowSwap init_flowswap(t_commrec                *cr,
         gmx_fatal(FARGS, "Position swapping is only implemented for domain decomposition!");
     }
 
-    const auto zone_size = ir->flow_swap->zone_size;
-    const auto zone_width = ir->flow_swap->zone_width;
+    const auto zone_size = ir->flow_swap->zone_size[XX];
+    const auto zone_width = ir->flow_swap->zone_size[ZZ];
     const auto ref_num_mols = ir->flow_swap->ref_num_atoms;
     const auto nstswap = static_cast<uint64_t>(ir->flow_swap->nstswap);
 
