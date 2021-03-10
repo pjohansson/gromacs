@@ -2430,7 +2430,7 @@ void get_ir(const char*     mdparin,
         }
 
         printStringNoNewline(&inp, "Define zones along direction: X, Y, Z");
-        const auto zone_position_axis = get_eeenum(&inp, "flow-zone-position-axis", eFlowSwapPositionAxisTypes_names, wi);
+        const auto zone_position_axis = get_eeenum(&inp, "flow-swap-zone-position-axis", eFlowSwapPositionAxisTypes_names, wi);
 
         switch (zone_position_axis) {
             case eFlowSwapPositionAxisX: 

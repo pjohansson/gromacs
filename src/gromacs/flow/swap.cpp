@@ -49,24 +49,12 @@ constexpr SimulationAtomGroupType FLOW_SWAP_GROUP = SimulationAtomGroupType::Use
  * Class implementations *
  *************************/
 
-void SwapZone::get_center(rvec center) const 
-{
-    rvec_add(rmin, rmax, center);
-    svmul(0.5, center, center);
-
-    // Treat split zones as being centered at the edge
-    if (is_split)
-    {
-        center[XX] = 0.0;
-    }
-}
-
 /**< Construct a dummy `FlowSwap` object
  * 
  * There is no empty constructor for `LocalAtomSet` handles, which means 
  * that we have to construct them for our `SwapGroup` objects.
  */
-FlowSwap init_empty_flow_swap(gmx::LocalAtomSetManager *atom_sets)
+static FlowSwap init_empty_flow_swap(gmx::LocalAtomSetManager *atom_sets)
 {
     const std::vector<int> inds { 0 };
 
@@ -114,91 +102,44 @@ static int get_atoms_per_mol_for_group(const std::vector<int> &atom_inds,
     return mtop->moleculeBlockIndices.at(mol_block_index).numAtomsPerMolecule;
 }
 
-// static SwapZone create_zone(const real at_zone_position,
-//                             const real at_swap_position,
-//                             const rvec zone_size,
-//                             const matrix box)
-// {
-//     const size_t position_axis = ZZ;
-//     const size_t swap_axis = XX;
-
-//     const auto dx = zone_size[XX];
-//     const auto dy = zone_size[YY];
-//     const auto dz = zone_size[ZZ];
-
-//     rvec r0 = {0.0, 0.0, 0.0};
-
-//     r0[position_axis] = at_zone_position * box[position_axis][position_axis];
-//     r0[swap_axis] = at_swap_position * box[swap_axis][swap_axis];
-
-//     for (size_t i = 0; i < DIM; i++)
-//     {
-//         if ((i =! position_axis) && (i != swap_axis))
-//         {
-//             r0[i] = 0.5 * box[i][i];
-//         }
-//     }
-
-
-
-
-// }
-
-static SwapZone create_center_zone(const real   at_height,
-                                   const rvec   zone_size,
-                                   const matrix box)
-{
-    const auto dx = zone_size[XX];
-    const auto dz = zone_size[ZZ];
-
-    const real xmid = box[XX][XX] / 2.0;
-    const real zmid = box[ZZ][ZZ] * at_height;
-
-    const real x0 = xmid - dx / 2.0;
-    const real x1 = xmid + dx / 2.0;
-
-    const real z0 = zmid - dz / 2.0;
-    const real z1 = zmid + dz / 2.0;
-
-    const real y0 = 0.0;
-    const real y1 = box[YY][YY];
-
-    return SwapZone { gmx::RVec {x0, y0, z0}, gmx::RVec {x1, y1, z1} };
-}
-
-static SwapZone create_edge_zone(const real   at_position,
-                                 const rvec   zone_size,
+static gmx::RVec get_zone_center(const real   swap_position,
+                                 const real   zone_position, 
+                                 const size_t swap_axis,
+                                 const size_t zone_position_axis,
                                  const matrix box)
 {
-    const auto dx = zone_size[XX];
-    const auto dz = zone_size[ZZ];
+    gmx::RVec r = { 0.0, 0.0, 0.0 };
 
-    const real zmid = box[ZZ][ZZ] * at_position;
+    for (size_t i = 0; i < DIM; i++)
+    {
+        if (i == swap_axis)
+        {
+            r[i] = swap_position * box[i][i];
+        }
+        else if (i == zone_position_axis)
+        {
+            r[i] = zone_position * box[i][i];
+        }
+        else
+        {
+            r[i] = box[i][i] / 2.0;
+        }
+    }
 
-    const real x1 = dx / 2.0;
-    const real x2 = box[XX][XX] - dx / 2.0;
-
-    const real z0 = zmid - dz / 2.0;
-    const real z1 = zmid + dz / 2.0;
-
-    const real y0 = 0.0;
-    const real y1 = box[YY][YY];
-
-    return SwapZone { 
-        gmx::RVec { 0.0, y0, z0 }, gmx::RVec { x1,          y1, z1 }, 
-        gmx::RVec { x2,  y0, z0 }, gmx::RVec { box[XX][XX], y1, z1 } 
-    };
+    return r;
 }
 
 static CoupledSwapZones create_swap_zones_at_height(const real   at_height,
+                                                    const real   from_swap_position,
+                                                    const real   to_swap_position,
+                                                    const size_t swap_axis,
+                                                    const size_t zone_position_axis,
                                                     const matrix box)
 {
-    // const auto from = create_edge_zone(at_height, zone_size, box);
-    // const auto to = create_center_zone(at_height, zone_size, box);
-
-    gmx::RVec from = { 0.0, box[YY][YY], at_height * box[ZZ][ZZ] },
-              to = { 0.5 * box[XX][XX], box[YY][YY], at_height * box[ZZ][ZZ] };
-
+    const auto from = get_zone_center(
+        from_swap_position, at_height, swap_axis, zone_position_axis, box);
+    const auto to = get_zone_center(
+        to_swap_position, at_height, swap_axis, zone_position_axis, box);
 
     return CoupledSwapZones { from, to };
 }
@@ -266,13 +207,12 @@ static void log_single_zone_info(const gmx::RVec     &position,
         );
 }
 
-static void log_swap_zone_info(const std::vector<CoupledSwapZones> &coupled_zones,
-                               const gmx::RVec                     &max_distance,
-                               const gmx::MDLogger                 &mdlog)
+static void log_swap_zone_info(const FlowSwap      &flow_swap,
+                               const gmx::MDLogger &mdlog)
 {
     int i = 1;
 
-    for (const auto& zones : coupled_zones)
+    for (const auto& zones : flow_swap.coupled_zones)
     {
         GMX_LOG(mdlog.warning)
             .appendTextFormatted(
@@ -282,14 +222,14 @@ static void log_swap_zone_info(const std::vector<CoupledSwapZones> &coupled_zone
                 i
             );
         
-        log_single_zone_info(zones.from, max_distance, mdlog);
+        log_single_zone_info(zones.from, flow_swap.max_distance, mdlog);
 
         GMX_LOG(mdlog.warning)
             .appendText(
                 "    To zone:"
             );
 
-        log_single_zone_info(zones.to, max_distance, mdlog);
+        log_single_zone_info(zones.to, flow_swap.max_distance, mdlog);
         
         i++;
     }
@@ -305,8 +245,8 @@ static void log_flow_swap_info(const FlowSwap      &flow_swap,
             "Swapping is turned on.\n"
             "  Frequency:                 %lu\n"
             "  Reference minimum atoms:   %lu\n"
-            "  Zone size:                 { %g, %g, %g }\n"
-            "  Max dist:                  { %g, %g, %g }\n",
+            "  Zone size:                 [%g, %g, %g]\n"
+            "  Max dist:                  [%g, %g, %g]\n",
             flow_swap.nstswap,
             flow_swap.ref_num_atoms,
             flow_swap.zone_size[XX],
@@ -319,7 +259,7 @@ static void log_flow_swap_info(const FlowSwap      &flow_swap,
     
     log_swap_group_info(flow_swap.swap, "Swap", mdlog);
     log_swap_group_info(flow_swap.fill, "Fill", mdlog);
-    log_swap_zone_info(flow_swap.coupled_zones, flow_swap.max_distance, mdlog);
+    log_swap_zone_info(flow_swap, mdlog);
 }
 
 static void print_swap_info(FILE *fp,
@@ -635,7 +575,13 @@ FlowSwap init_flowswap(t_commrec                *cr,
         const auto height = ir->flow_swap->zone_positions[i];
 
         coupled_zones.push_back(
-            create_swap_zones_at_height(height, box)
+            create_swap_zones_at_height(
+                height, 
+                0.0, 
+                0.5, 
+                static_cast<size_t>(ir->flow_swap->swap_axis),
+                static_cast<size_t>(ir->flow_swap->zone_position_axis),
+                box)
         );
     }
 

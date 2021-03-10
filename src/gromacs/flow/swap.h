@@ -19,45 +19,6 @@
 #include "gromacs/utility/logger.h"
 #include "gromacs/utility/real.h"
 
-struct SwapZone {
-    SwapZone(const gmx::RVec rmin, const gmx::RVec rmax) 
-    :rmin{rmin}, 
-     rmax{rmax} {
-        for (size_t i = 0; i < DIM; i++)
-        {
-            r0[i] = (rmin[i] + rmax[i]) / 2.0; 
-            max_distance[i] = (rmax[i] - rmin[i]) / 2.0;
-
-            if (i == YY)
-            {
-                max_distance[i] = rmax[i] - rmin[i];
-            }
-        }
-     }
-
-    SwapZone(const gmx::RVec rmin, const gmx::RVec rmax, const gmx::RVec rmin2, const gmx::RVec rmax2)
-    :is_split{true},
-     rmin{rmin},
-     rmax{rmax},
-     rmin2{rmin2},
-     rmax2{rmax2} {
-        r0[XX] = rmin[XX];
-        r0[YY] = rmin[YY];
-        r0[ZZ] = (rmin[ZZ] + rmax[ZZ]) / 2.0;
-
-        max_distance[XX] = rmax[XX];
-        max_distance[YY] = rmax[YY];
-        max_distance[ZZ] = (rmax[ZZ] - rmin[ZZ]) / 2.0;
-     }
-    
-    void get_center(rvec center) const;
-
-    bool is_split = false;
-    gmx::RVec rmin, rmax,   // Minimum and maximum coordinates defining the zone
-              rmin2, rmax2, // Coordinates for other zone (if split)
-              r0, max_distance;
-};
-
 // A swap group consists of a set of molecules of identical type.
 struct SwapGroup {
     /**< Dummy constructor for when no swapping is done */
@@ -111,7 +72,7 @@ struct FlowSwap {
         {
             if (zone_size[i] < 0.0)
             {
-                max_distance[i] = box[i][i];
+                max_distance[i] = box[i][i] / 2.0;
             }
             else 
             {
