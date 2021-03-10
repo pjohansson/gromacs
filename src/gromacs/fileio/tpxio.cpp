@@ -1654,8 +1654,9 @@ static void do_inputrec(gmx::ISerializer* serializer, t_inputrec* ir, int file_v
         serializer->doBool(&ir->flow_swap->do_swap);
         serializer->doInt(&ir->flow_swap->nstswap);
         serializer->doInt(&ir->flow_swap->ref_num_atoms);
-        serializer->doReal(&ir->flow_swap->zone_size);
-        serializer->doReal(&ir->flow_swap->zone_width);
+        serializer->doInt(&ir->flow_swap->swap_axis);
+        serializer->doInt(&ir->flow_swap->zone_position_axis);
+        serializer->doRvec(&ir->flow_swap->zone_size);
         serializer->doInt(&ir->flow_swap->num_positions);
 
         if (serializer->reading())

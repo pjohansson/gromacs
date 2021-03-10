@@ -22,20 +22,40 @@
 struct SwapZone {
     SwapZone(const gmx::RVec rmin, const gmx::RVec rmax) 
     :rmin{rmin}, 
-     rmax{rmax} {}
+     rmax{rmax} {
+        for (size_t i = 0; i < DIM; i++)
+        {
+            r0[i] = (rmin[i] + rmax[i]) / 2.0; 
+            max_distance[i] = (rmax[i] - rmin[i]) / 2.0;
+
+            if (i == YY)
+            {
+                max_distance[i] = rmax[i] - rmin[i];
+            }
+        }
+     }
 
     SwapZone(const gmx::RVec rmin, const gmx::RVec rmax, const gmx::RVec rmin2, const gmx::RVec rmax2)
     :is_split{true},
      rmin{rmin},
      rmax{rmax},
      rmin2{rmin2},
-     rmax2{rmax2} {}
+     rmax2{rmax2} {
+        r0[XX] = rmin[XX];
+        r0[YY] = rmin[YY];
+        r0[ZZ] = (rmin[ZZ] + rmax[ZZ]) / 2.0;
+
+        max_distance[XX] = rmax[XX];
+        max_distance[YY] = rmax[YY];
+        max_distance[ZZ] = (rmax[ZZ] - rmin[ZZ]) / 2.0;
+     }
     
     void get_center(rvec center) const;
 
     bool is_split = false;
     gmx::RVec rmin, rmax,   // Minimum and maximum coordinates defining the zone
-              rmin2, rmax2; // Coordinates for other zone (if split)
+              rmin2, rmax2, // Coordinates for other zone (if split)
+              r0, max_distance;
 };
 
 // A swap group consists of a set of molecules of identical type.
@@ -62,7 +82,7 @@ struct SwapGroup {
 };
 
 struct CoupledSwapZones {
-    SwapZone min, max;
+    gmx::RVec from, to;
 };
 
 struct FlowSwap {
@@ -73,30 +93,60 @@ struct FlowSwap {
 
     /**< Full constructor of object */
     FlowSwap(const uint64_t nstswap, 
+             const gmx::RVec zone_size,
              const std::vector<CoupledSwapZones> coupled_zones, 
              const SwapGroup swap, 
              const SwapGroup fill, 
-             const size_t ref_num_atoms)
+             const size_t ref_num_atoms,
+             const matrix box)
     :do_swap{true},
      nstswap{nstswap},
+     zone_size{zone_size},
      coupled_zones{coupled_zones},
      swap{swap},
      fill{fill},
      ref_num_atoms{ref_num_atoms} 
     {
+        for (size_t i = 0; i < DIM; i++)
+        {
+            if (zone_size[i] < 0.0)
+            {
+                max_distance[i] = box[i][i];
+            }
+            else 
+            {
+                max_distance[i] = zone_size[i] / 2.0;
+            }
+        }
+
         // The pbc struct will be filled in at every iteration for the current 
         // box, so just allocate the memory
         snew(pbc, 1);
     }
 
+    //! Whether or not to do swapping
     gmx_bool do_swap = false;
+
+    //! How often to swap
     uint64_t nstswap = 0;
+
+    //! Size of swap zones (if < 0: span the entire box)
+    gmx::RVec zone_size;
+
+    //! Maximum distance from zone center for an atom to be inside (ie. half the zone size in each direction)
+    gmx::RVec max_distance;
+
+    //! Pairs of from-to coupled zone definitions
     std::vector<CoupledSwapZones> coupled_zones;
 
+    //! Index group of molecules to swap and replace (fill) with
     SwapGroup swap, 
               fill;
     
+    //! Minimum number of molecules inside the from zone to activate a swap
     size_t ref_num_atoms = 0;
+
+    //! Periodic boundary condition information, updated every frame
     t_pbc *pbc = nullptr;
 };
 

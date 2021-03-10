@@ -90,6 +90,9 @@
 #include "gromacs/utility/stringutil.h"
 #include "gromacs/utility/textwriter.h"
 
+// [FLOW]
+#include "gromacs/flow/enums.h"
+
 #define MAXPTR 254
 #define NOGID 255
 
@@ -1528,17 +1531,17 @@ void check_ir(const char*                   mdparin,
             warning_error(wi, warn_buf);
         }
 
-        if (ir->flow_swap->zone_size <= 0.0)
-        {
-            snprintf(warn_buf, STRLEN, "flow-swap-zone-size must be larger than 0.0 (was %f)", ir->flow_swap->zone_size);
-            warning_error(wi, warn_buf);
-        }
+        // if (ir->flow_swap->zone_size <= 0.0)
+        // {
+        //     snprintf(warn_buf, STRLEN, "flow-swap-zone-size must be larger than 0.0 (was %f)", ir->flow_swap->zone_size);
+        //     warning_error(wi, warn_buf);
+        // }
 
-        if (ir->flow_swap->zone_width <= 0.0)
-        {
-            snprintf(warn_buf, STRLEN, "flow-swap-zone-width must be larger than 0.0 (was %f)", ir->flow_swap->zone_width);
-            warning_error(wi, warn_buf);
-        }
+        // if (ir->flow_swap->zone_width <= 0.0)
+        // {
+        //     snprintf(warn_buf, STRLEN, "flow-swap-zone-width must be larger than 0.0 (was %f)", ir->flow_swap->zone_width);
+        //     warning_error(wi, warn_buf);
+        // }
     }
 }
 
@@ -2399,27 +2402,76 @@ void get_ir(const char*     mdparin,
 
     // [FLOW_FIELD] Swapping
     {
+        char strbuf[STRLEN];
+
         if (ir->flow_swap == nullptr)
         {
             snew(ir->flow_swap, 1);
         }
 
         printStringNewline(&inp, "ATOM SWAPPING FOR GRADIENT CREATION (UNOFFICIAL)");
-        printStringNoNewline(&inp, "Do swapping of atoms");
-        ir->flow_swap->do_swap = (get_eeenum(&inp, "flow-swap", yesno_names, wi) != 0);
+
+        printStringNoNewline(&inp, "Do molecule swapping");
+        ir->flow_swap->do_swap = get_eeenum(&inp, "flow-swap", yesno_names, wi) != 0;
+
+        printStringNoNewline(&inp, "Swap positions of atoms along direction: X, Y, Z");
+        const auto swap_axis = get_eeenum(&inp, "flow-swap-axis", eFlowSwapAxisTypes_names, wi);
+
+        switch (swap_axis) {
+            case eFlowSwapAxisX: 
+                ir->flow_swap->swap_axis = XX;
+                break;
+            case eFlowSwapAxisY: 
+                ir->flow_swap->swap_axis = YY;
+                break;
+            case eFlowSwapAxisZ: 
+                ir->flow_swap->swap_axis = ZZ;
+                break;
+        }
+
+        printStringNoNewline(&inp, "Define zones along direction: X, Y, Z");
+        const auto zone_position_axis = get_eeenum(&inp, "flow-zone-position-axis", eFlowSwapPositionAxisTypes_names, wi);
+
+        switch (zone_position_axis) {
+            case eFlowSwapPositionAxisX: 
+                ir->flow_swap->zone_position_axis = XX;
+                break;
+            case eFlowSwapPositionAxisY: 
+                ir->flow_swap->zone_position_axis = YY;
+                break;
+            case eFlowSwapPositionAxisZ: 
+                ir->flow_swap->zone_position_axis = ZZ;
+                break;
+        }
 
         printStringNoNewline(&inp, "Swap attempt frequency");
         ir->flow_swap->nstswap = get_ereal(&inp, "flow-nstswap", 0, wi);
         printStringNoNewline(&inp, "Maximum number of swap molecules in edge area");
         ir->flow_swap->ref_num_atoms = get_ereal(&inp, "flow-swap-ref-num-mol", 0, wi);
-        printStringNoNewline(&inp, "Size of swapping zones along swap axis (X) (nm)");
-        ir->flow_swap->zone_size = get_ereal(&inp, "flow-swap-zone-size", 0.0, wi);
-        printStringNoNewline(&inp, "Width of swapping zones along the positional axis (Z) (nm)");
-        ir->flow_swap->zone_width = get_ereal(&inp, "flow-swap-zone-width", 0.0, wi);
 
-        printStringNoNewline(&inp, "Positions along the positional axis (Z) at which to swap ");
+        printStringNoNewline(&inp, "Absolute size of swapping zones along along each direction");
+        printStringNoNewline(&inp, "(-1 is full width)");
+        setStringEntry(&inp, "flow-swap-zone-size", strbuf, "");
+        auto zone_size_entries = gmx::splitString(strbuf);
+
+        if (zone_size_entries.size() != DIM)
+        {
+            gmx_fatal(FARGS, 
+                      "Invalid flow-swap input: requires %d zone size values (got %lu)", 
+                      DIM, zone_size_entries.size());
+        }
+        else 
+        {
+            convertReals(
+                wi, 
+                zone_size_entries, 
+                "flow-swap-zone-size", 
+                ir->flow_swap->zone_size
+            );
+        }
+
+        printStringNoNewline(&inp, "Positions along the swap axis at which to set zones ");
         printStringNoNewline(&inp, "in (relative to box size)");
-        char strbuf[STRLEN];
         setStringEntry(&inp, "flow-swap-zone-positions", strbuf, "");
 
         const auto zone_position_values = gmx::splitString(strbuf);

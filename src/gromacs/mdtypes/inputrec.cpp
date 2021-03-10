@@ -798,9 +798,16 @@ void pr_flowswap(FILE* fp, int indent, const t_flowswap* flow_swap)
         {
             PI("flow-nstswap", flow_swap->nstswap);
             PI("flow-swap-ref-num-mol", flow_swap->ref_num_atoms);
-            PR("flow-swap-zone-size", flow_swap->zone_size);
-            PR("flow-swap-zone-width", flow_swap->zone_width);
+            PI("flow-swap-axis", flow_swap->swap_axis);
+            PI("flow-swap-zone-position-axis", flow_swap->zone_position_axis);
 
+            pr_rvec(
+                fp, indent,
+                "flow-swap-zone-size",
+                flow_swap->zone_size,
+                DIM,
+                TRUE
+            );
             pr_rvec(
                 fp, indent, 
                 "flow-swap-zone-positions", 

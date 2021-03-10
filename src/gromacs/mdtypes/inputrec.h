@@ -312,15 +312,28 @@ struct t_swapcoords
 // [FLOW_FIELD] Swap atoms to create gradient
 struct t_flowswap
 {
+    //! Do swapping
     bool do_swap;
 
-    int nstswap,
-        ref_num_atoms;
+    //! How often to perform the swap
+    int nstswap;
 
-    real zone_size,
-         zone_width;
+    //! Minimum number of atoms in from-zone for swap
+    int ref_num_atoms;
+
+    //! Axis along which to define the zones
+    int zone_position_axis;
+
+    //! Axis along which to perform swaps
+    int swap_axis;
+
+    //! Size of the zones (-1 is full width)
+    rvec zone_size;
         
+    //! Number of zones along the swap axis
     int num_positions;
+
+    //! Zone center positions along the position axis
     real* zone_positions;
 };
 
@@ -549,7 +562,7 @@ struct t_inputrec // NOLINT (clang-analyzer-optin.performance.Padding)
     //! Swap data structure.
     t_swapcoords* swap;
 
-    //! Whether to do gradient position exchanges (FlowSwap)
+    //! [FLOW] Whether to do gradient position exchanges (FlowSwap)
     t_flowswap* flow_swap;
 
     //! Whether the tpr makes an interactive MD session possible.

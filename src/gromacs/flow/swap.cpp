@@ -1,4 +1,5 @@
 #include <algorithm>
+#include <cmath>
 #include <iterator>
 
 #include "gromacs/domdec/domdec_struct.h"
@@ -113,19 +114,51 @@ static int get_atoms_per_mol_for_group(const std::vector<int> &atom_inds,
     return mtop->moleculeBlockIndices.at(mol_block_index).numAtomsPerMolecule;
 }
 
+// static SwapZone create_zone(const real at_zone_position,
+//                             const real at_swap_position,
+//                             const rvec zone_size,
+//                             const matrix box)
+// {
+//     const size_t position_axis = ZZ;
+//     const size_t swap_axis = XX;
+
+//     const auto dx = zone_size[XX];
+//     const auto dy = zone_size[YY];
+//     const auto dz = zone_size[ZZ];
+
+//     rvec r0 = {0.0, 0.0, 0.0};
+
+//     r0[position_axis] = at_zone_position * box[position_axis][position_axis];
+//     r0[swap_axis] = at_swap_position * box[swap_axis][swap_axis];
+
+//     for (size_t i = 0; i < DIM; i++)
+//     {
+//         if ((i =! position_axis) && (i != swap_axis))
+//         {
+//             r0[i] = 0.5 * box[i][i];
+//         }
+//     }
+
+
+
+
+// }
+
 static SwapZone create_center_zone(const real   at_height,
-                                   const real   zone_size, 
-                                   const real   zone_width,
+                                   const rvec   zone_size,
                                    const matrix box)
 {
+    const auto dx = zone_size[XX];
+    const auto dz = zone_size[ZZ];
+
     const real xmid = box[XX][XX] / 2.0;
     const real zmid = box[ZZ][ZZ] * at_height;
 
-    const real x0 = xmid - zone_size / 2.0;
-    const real x1 = xmid + zone_size / 2.0;
+    const real x0 = xmid - dx / 2.0;
+    const real x1 = xmid + dx / 2.0;
 
-    const real z0 = zmid - zone_width / 2.0;
-    const real z1 = zmid + zone_width / 2.0;
+    const real z0 = zmid - dz / 2.0;
+    const real z1 = zmid + dz / 2.0;
 
     const real y0 = 0.0;
     const real y1 = box[YY][YY];
@@ -133,18 +166,20 @@ static SwapZone create_center_zone(const real   at_height,
     return SwapZone { gmx::RVec {x0, y0, z0}, gmx::RVec {x1, y1, z1} };
 }
 
-static SwapZone create_edge_zone(const real   at_height,
-                                 const real   zone_size, 
-                                 const real   zone_width,
+static SwapZone create_edge_zone(const real   at_position,
+                                 const rvec   zone_size,
                                  const matrix box)
 {
-    const real zmid = box[ZZ][ZZ] * at_height;
+    const auto dx = zone_size[XX];
+    const auto dz = zone_size[ZZ];
 
-    const real x1 = zone_size / 2.0;
-    const real x2 = box[XX][XX] - zone_size / 2.0;
+    const real zmid = box[ZZ][ZZ] * at_position;
 
-    const real z0 = zmid - zone_width / 2.0;
-    const real z1 = zmid + zone_width / 2.0;
+    const real x1 = dx / 2.0;
+    const real x2 = box[XX][XX] - dx / 2.0;
+
+    const real z0 = zmid - dz / 2.0;
+    const real z1 = zmid + dz / 2.0;
 
     const real y0 = 0.0;
     const real y1 = box[YY][YY];
@@ -156,23 +191,25 @@ static SwapZone create_edge_zone(const real   at_height,
 }
 
 static CoupledSwapZones create_swap_zones_at_height(const real   at_height,
-                                                    const real   zone_size,
-                                                    const real   zone_width,
                                                     const matrix box)
 {
-    const auto min = create_edge_zone(at_height, zone_size, zone_width, box);
-    const auto max = create_center_zone(at_height, zone_size, zone_width, box);
+    // const auto from = create_edge_zone(at_height, zone_size, box);
+    // const auto to = create_center_zone(at_height, zone_size, box);
 
-    return CoupledSwapZones { min, max };
+    gmx::RVec from = { 0.0, box[YY][YY], at_height * box[ZZ][ZZ] },
+              to = { 0.5 * box[XX][XX], box[YY][YY], at_height * box[ZZ][ZZ] };
+
+
+    return CoupledSwapZones { from, to };
 }
 
-static SwapGroup create_swap_group(const int               group_index,
-                                   const gmx_mtop_t       *mtop,
+static SwapGroup create_swap_group(const int                 group_index,
+                                   const gmx_mtop_t         *mtop,
                                    gmx::LocalAtomSetManager *atom_sets,
-                                   const SimulationGroups *groups)
+                                   const SimulationGroups   *groups)
 {
     // The group index in User2 is used (later) to check whether atoms belong to the group,
-    // but the *global* group index is used to get the name of the group 
+    // but the *global* group index is used here to get the name of the group 
     const int global_group_index = groups->groups[FLOW_SWAP_GROUP].at(group_index);
     const std::string group_name { *groups->groupNames.at(global_group_index) };
 
@@ -212,34 +249,25 @@ static void log_swap_group_info(const SwapGroup     &group,
         );
 }
 
-static void log_single_zone_info(const SwapZone      &zone, 
+static void log_single_zone_info(const gmx::RVec     &position, 
+                                 const gmx::RVec     &max_distance,
                                  const gmx::MDLogger &mdlog)
 {
-    if (!zone.is_split)
-    {
-        GMX_LOG(mdlog.warning)
-            .appendTextFormatted(
-                "      Begin:           [%g, %g, %g]\n"
-                "      End:             [%g, %g, %g]\n",
-                zone.rmin[XX], zone.rmin[YY], zone.rmin[ZZ],
-                zone.rmax[XX], zone.rmax[YY], zone.rmax[ZZ]
-            );
-    }
-    else
-    {
-        GMX_LOG(mdlog.warning)
-            .appendTextFormatted(
-                "      Begin:           [%g, %g, %g] & [%g, %g, %g]\n"
-                "      End:             [%g, %g, %g] & [%g, %g, %g]\n",
-                zone.rmin[XX], zone.rmin[YY], zone.rmin[ZZ],
-                zone.rmin2[XX], zone.rmin2[YY], zone.rmin2[ZZ],
-                zone.rmax[XX], zone.rmax[YY], zone.rmax[ZZ],
-                zone.rmax2[XX], zone.rmax2[YY], zone.rmax2[ZZ]
-            );
-    }
+    gmx::RVec rmin, rmax;
+    rvec_sub(position, max_distance, rmin);
+    rvec_add(position, max_distance, rmax);
+
+    GMX_LOG(mdlog.warning)
+        .appendTextFormatted(
+            "      Begin:           [%g, %g, %g]\n"
+            "      End:             [%g, %g, %g]\n",
+            rmin[XX], rmin[YY], rmin[ZZ],
+            rmax[XX], rmax[YY], rmax[ZZ]
+        );
 }
 
 static void log_swap_zone_info(const std::vector<CoupledSwapZones> &coupled_zones,
+                               const gmx::RVec                     &max_distance,
                                const gmx::MDLogger                 &mdlog)
 {
     int i = 1;
@@ -254,14 +282,14 @@ static void log_swap_zone_info(const std::vector<CoupledSwapZones> &coupled_zone
                 i
             );
         
-        log_single_zone_info(zones.min, mdlog);
+        log_single_zone_info(zones.from, max_distance, mdlog);
 
         GMX_LOG(mdlog.warning)
             .appendText(
                 "    To zone:"
             );
 
-        log_single_zone_info(zones.max, mdlog);
+        log_single_zone_info(zones.to, max_distance, mdlog);
         
         i++;
     }
@@ -276,14 +304,22 @@ static void log_flow_swap_info(const FlowSwap      &flow_swap,
         .appendTextFormatted(
             "Swapping is turned on.\n"
             "  Frequency:                 %lu\n"
-            "  Reference minimum atoms:   %lu\n",
+            "  Reference minimum atoms:   %lu\n"
+            "  Zone size:                 { %g, %g, %g }\n"
+            "  Max dist:                  { %g, %g, %g }\n",
             flow_swap.nstswap,
-            flow_swap.ref_num_atoms
+            flow_swap.ref_num_atoms,
+            flow_swap.zone_size[XX],
+            flow_swap.zone_size[YY],
+            flow_swap.zone_size[ZZ],
+            flow_swap.max_distance[XX],
+            flow_swap.max_distance[YY],
+            flow_swap.max_distance[ZZ] 
         );
     
     log_swap_group_info(flow_swap.swap, "Swap", mdlog);
     log_swap_group_info(flow_swap.fill, "Fill", mdlog);
-    log_swap_zone_info(flow_swap.coupled_zones, mdlog);
+    log_swap_zone_info(flow_swap.coupled_zones, flow_swap.max_distance, mdlog);
 }
 
 static void print_swap_info(FILE *fp,
@@ -308,33 +344,6 @@ static void print_swap_info(FILE *fp,
  * Position utils *
  ******************/
 
-static bool position_is_within_box(const rvec x, const gmx::RVec &xmin, const gmx::RVec &xmax)
-{
-    // Check position along each dimension and immediately return false if outside
-    for (size_t i = 0; i < DIM; i++)
-    {
-        if ((x[i] < xmin[i]) || (x[i] > xmax[i]))
-        {
-            return false;
-        }
-    }
-
-    return true;
-}
-
-static void get_position_in_box(const rvec x, rvec x_in_box, const matrix box)
-{
-    for (int d = 0; d < DIM; d++)
-    {
-        x_in_box[d] = fmod(x[d], box[d][d]);
-
-        while (x_in_box[d] < 0)
-        {
-            x_in_box[d] += box[d][d];
-        }
-    }
-}
-
 static real get_distance_pbc(const rvec x1, const rvec x2, const t_pbc *pbc)
 {
     rvec dx;
@@ -348,16 +357,23 @@ static real get_distance_pbc(const rvec x1, const rvec x2, const t_pbc *pbc)
  * Zone and compartment checking *
  *********************************/
 
-static bool zone_contains_atom(const rvec x, const SwapZone &zone)
+static bool zone_contains_atom(const rvec       x, 
+                               const gmx::RVec &position, 
+                               const gmx::RVec &max_distance, 
+                               const t_pbc     *pbc)
 {
-    bool is_within = position_is_within_box(x, zone.rmin, zone.rmax);
+    gmx::RVec dx;
+    pbc_dx(pbc, x, position, dx);
 
-    if (zone.is_split)
+    for (size_t i = 0; i < DIM; i++)
     {
-        is_within = is_within || position_is_within_box(x, zone.rmin2, zone.rmax2);
+        if (fabs(dx[i]) > max_distance[i])
+        {
+            return false;
+        }
     }
 
-    return is_within;
+    return true;
 }
 
 static void collect_group_positions_from_ranks(SwapGroup       &group,
@@ -374,17 +390,15 @@ static void collect_group_positions_from_ranks(SwapGroup       &group,
 
 // Return the collective indices (in group.xs) of all group atoms in the compartment.
 static std::vector<int> find_molecules_in_compartment(const SwapGroup &group,
-                                                      const SwapZone  &zone,
-                                                      const matrix     box)
+                                                      const gmx::RVec &position,
+                                                      const gmx::RVec &max_distance,
+                                                      const t_pbc     *pbc)
 {
     std::vector<int> head_atoms_in_compartment;
-    rvec x_in_box;
 
     for (size_t i = 0; i < group.atom_set.numAtomsGlobal(); i += group.atoms_per_mol)
     {
-        get_position_in_box(group.xs[i], x_in_box, box);
-
-        if (zone_contains_atom(x_in_box, zone))
+        if (zone_contains_atom(group.xs[i], position, max_distance, pbc))
         {
             head_atoms_in_compartment.push_back(i);
         }
@@ -421,12 +435,9 @@ static bool check_for_swap(const std::vector<std::vector<int>> &mols_in_low_comp
 
 static int get_swap_molecule_index(const rvec              xs[],
                                    const std::vector<int> &inds,
-                                   const SwapZone         &zone,
+                                   const gmx::RVec        &zone_center,
                                    const t_pbc            *pbc)
 {
-    rvec zone_center;
-    zone.get_center(zone_center);
-
     auto i = inds.cbegin();
 
     auto best_index = *i;
@@ -445,8 +456,6 @@ static int get_swap_molecule_index(const rvec              xs[],
         ++i;
     }
 
-    // fprintf(stderr, "best_index: %d [%f, %f, %f]\n", best_index, xs[best_index][XX], xs[best_index][YY], xs[best_index][ZZ]);
-
     return best_index;
 }
 
@@ -454,7 +463,7 @@ static void add_swapped_inds_to_list(const int         head_index,
                                      const size_t      atoms_per_mol,
                                      std::vector<int> &inds)
 {
-    for (int i = head_index; i < head_index + atoms_per_mol; i++)
+    for (int i = head_index; i < head_index + static_cast<int>(atoms_per_mol); i++)
     {
         inds.push_back(i);
     }
@@ -498,8 +507,7 @@ static void swap_molecules_com(rvec xs1[],
                                rvec xs2[],
                                const int i2,
                                const size_t atoms_per_mol_2,
-                               const t_pbc *pbc,
-                               const t_commrec *cr)
+                               const t_pbc *pbc)
 {
     rvec com_swap, com_fill;
 
@@ -538,9 +546,7 @@ static void swap_molecules_atom_pos(rvec xs1[],
                         
 static uint16_t do_swap(rvec                                 xs_local[],
                         const FlowSwap                      &flow_swap,
-                        const std::vector<std::vector<int>> &swap_mols_in_low_department,
-                        const matrix                         box,
-                        const t_commrec                     *cr)
+                        const std::vector<std::vector<int>> &swap_mols_in_low_department)
 {
     GMX_RELEASE_ASSERT(flow_swap.coupled_zones.size() == swap_mols_in_low_department.size(),
         "Inconsistency.");
@@ -555,23 +561,21 @@ static uint16_t do_swap(rvec                                 xs_local[],
 
     while (zones != flow_swap.coupled_zones.cend())
     {
-        AtomGroupIndices fill_mols;
-
         if (check_compartment_condition(*swap_mols, flow_swap))
         {
-            fill_mols = find_molecules_in_compartment(flow_swap.fill, (*zones).max, box);
+            const auto fill_mols = find_molecules_in_compartment(flow_swap.fill, (*zones).to, flow_swap.max_distance, flow_swap.pbc);
 
             if (!fill_mols.empty()) {
                 const auto swap_index = get_swap_molecule_index(
-                    flow_swap.swap.xs, *swap_mols, (*zones).min, flow_swap.pbc);
+                    flow_swap.swap.xs, *swap_mols, (*zones).from, flow_swap.pbc);
 
                 const auto fill_index = get_swap_molecule_index(
-                    flow_swap.fill.xs,  fill_mols, (*zones).max, flow_swap.pbc);
+                    flow_swap.fill.xs,  fill_mols, (*zones).to, flow_swap.pbc);
 
                 // swap_molecules_com(
                 //     flow_swap.swap.xs, swap_index, flow_swap.swap.atoms_per_mol, 
                 //     flow_swap.fill.xs, fill_index, flow_swap.fill.atoms_per_mol, 
-                //     flow_swap.pbc, cr);
+                //     flow_swap.pbc);
 
                 swap_molecules_atom_pos(
                     flow_swap.swap.xs, swap_index, 
@@ -613,8 +617,6 @@ FlowSwap init_flowswap(t_commrec                *cr,
 {
     if (!ir->flow_swap->do_swap)
     {
-        // const FlowSwap flow_swap { atom_sets };
-
         return init_empty_flow_swap(atom_sets);
     }
 
@@ -623,8 +625,6 @@ FlowSwap init_flowswap(t_commrec                *cr,
         gmx_fatal(FARGS, "Position swapping is only implemented for domain decomposition!");
     }
 
-    const auto zone_size = ir->flow_swap->zone_size[XX];
-    const auto zone_width = ir->flow_swap->zone_size[ZZ];
     const auto ref_num_mols = ir->flow_swap->ref_num_atoms;
     const auto nstswap = static_cast<uint64_t>(ir->flow_swap->nstswap);
 
@@ -635,7 +635,7 @@ FlowSwap init_flowswap(t_commrec                *cr,
         const auto height = ir->flow_swap->zone_positions[i];
 
         coupled_zones.push_back(
-            create_swap_zones_at_height(height, zone_size, zone_width, box)
+            create_swap_zones_at_height(height, box)
         );
     }
 
@@ -651,10 +651,12 @@ FlowSwap init_flowswap(t_commrec                *cr,
 
     const FlowSwap flow_swap {
         nstswap,
+        ir->flow_swap->zone_size,
         coupled_zones,
         swap_group,
         fill_group,
-        ref_num_mols
+        static_cast<size_t>(ref_num_mols),
+        box
     };
 
     log_flow_swap_info(flow_swap, mdlog);
@@ -685,7 +687,7 @@ gmx_bool do_flowswap(FlowSwap         &flow_swap,
     for (const auto& zones : flow_swap.coupled_zones)
     {
         mols_in_low_compartment.push_back(
-            find_molecules_in_compartment(flow_swap.swap, zones.min, state->box));
+            find_molecules_in_compartment(flow_swap.swap, zones.from, flow_swap.max_distance, flow_swap.pbc));
     }
 
     const bool bNeedSwap = check_for_swap(mols_in_low_compartment, flow_swap);
@@ -694,7 +696,7 @@ gmx_bool do_flowswap(FlowSwap         &flow_swap,
         collect_group_positions_from_ranks(flow_swap.fill, cr, xs_local, state->box);
 
         const auto num_swaps = do_swap(
-            xs_local, flow_swap, mols_in_low_compartment, state->box, cr);
+            xs_local, flow_swap, mols_in_low_compartment);
         
         if (bVerbose && (num_swaps > 0)) 
         {
