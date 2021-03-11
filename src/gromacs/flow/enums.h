@@ -1,16 +1,18 @@
-/*! \brief Direction along which to define something
- */
-enum eFlowAxis
+#ifndef FLOW_ENUMS_H
+#define FLOW_ENUMS_H
+
+#include <cstddef>
+
+//! \brief Method for specifying zone positions along the swap axis
+enum class eFlowSwapMethod 
 {
-    eFlowAxisX,
-    eFlowAxisY,
-    eFlowAxisZ,
-    eFlowAxisTypesNR
+    CenterEdge,
+    PositionsRelative,
+    PositionsAbsolute,
+    NR,
 };
-//! Names for swapping
-extern const char* eFlowAxisTypes_names[eFlowAxisTypesNR + 1];
-//! Macro for swapping string
-#define EFLOWAXISTYPE(e) enum_name(e, eFlowAxisTypesNR, eFlowAxisTypes_names)
+extern const char* eFlowSwapMethodTypes_names[static_cast<size_t>(eFlowSwapMethod::NR) + 1];
+#define EFLOWSWAPMETHODTYPE(e) enum_name(static_cast<int>(e), static_cast<int>(eFlowSwapMethod::NR), eFlowSwapMethodTypes_names)
 
 /*! \brief Direction along which to construct swap zones
  */
@@ -23,8 +25,7 @@ enum eFlowSwapPositionAxis
 };
 //! Names for swapping
 extern const char* eFlowSwapPositionAxisTypes_names[eFlowSwapPositionAxisTypesNR + 1];
-//! Macro for swapping string
-#define EFLOWSWAPPOSITIONAXISTYPE(e) enum_name(e, eFlowSwapPositionAxisTypesNR, eFlowSwapPositionAxisTypes_names)
+const char* eFlowSwapPosition2String(const int axis);
 
 /*! \brief Direction along which to swap molecules
  */
@@ -39,3 +40,5 @@ enum eFlowSwapAxis
 extern const char* eFlowSwapAxisTypes_names[eFlowSwapAxisTypesNR + 1];
 //! Macro for swapping string
 #define EFLOWSWAPAXISTYPE(e) enum_name(e, eFlowSwapAxisTypesNR, eFlowSwapAxisTypes_names)
+
+#endif // FLOW_ENUMS_H

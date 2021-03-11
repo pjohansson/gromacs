@@ -114,11 +114,11 @@ static gmx::RVec get_zone_center(const real   swap_position,
     {
         if (i == swap_axis)
         {
-            r[i] = swap_position * box[i][i];
+            r[i] = swap_position;
         }
         else if (i == zone_position_axis)
         {
-            r[i] = zone_position * box[i][i];
+            r[i] = zone_position;
         }
         else
         {
@@ -129,17 +129,17 @@ static gmx::RVec get_zone_center(const real   swap_position,
     return r;
 }
 
-static CoupledSwapZones create_swap_zones_at_height(const real   at_height,
-                                                    const real   from_swap_position,
-                                                    const real   to_swap_position,
-                                                    const size_t swap_axis,
-                                                    const size_t zone_position_axis,
-                                                    const matrix box)
+static CoupledSwapZones 
+create_swap_zones_at_height(const real                 at_height,
+                            const std::array<real, 2> &swap_positions,
+                            const size_t               swap_axis,
+                            const size_t               zone_position_axis,
+                            const matrix               box)
 {
     const auto from = get_zone_center(
-        from_swap_position, at_height, swap_axis, zone_position_axis, box);
+        swap_positions[0], at_height, swap_axis, zone_position_axis, box);
     const auto to = get_zone_center(
-        to_swap_position, at_height, swap_axis, zone_position_axis, box);
+        swap_positions[1], at_height, swap_axis, zone_position_axis, box);
 
     return CoupledSwapZones { from, to };
 }
@@ -166,6 +166,95 @@ static SwapGroup create_swap_group(const int                 group_index,
         static_cast<size_t>(atoms_per_mol),
         atom_set
     };
+}
+
+static std::array<real, 2> 
+get_positions_from_reals(const real    from_position,
+                         const real    to_position,
+                         const bool    is_relative,
+                         const size_t  swap_axis,
+                         const matrix  box)
+{
+    std::array<real, 2> positions = { from_position, to_position };
+
+    if (is_relative)
+    {
+        for (auto& v : positions)
+        {
+            v *= box[swap_axis][swap_axis];
+        }
+    }
+
+    return positions;
+}
+
+//! Create an array of swap axis positions corresponding to the swap method
+//!
+//! Note: Assumes that the given array has exactly two values,
+//! which we check in either readir or before calling this.
+static std::array<real, 2> 
+get_swap_positions_array(const t_flowswap *flow_swap,
+                         const matrix      box)
+{
+    real from_position = 0.0,
+         to_position   = 0.0;
+    bool is_relative = false;
+
+    switch (flow_swap->swap_method)
+    {
+        case eFlowSwapMethod::CenterEdge:
+            is_relative = true;
+            from_position = 0.0;
+            to_position = 0.5;
+            break;
+
+        case eFlowSwapMethod::PositionsRelative:
+            is_relative = true;
+            from_position = flow_swap->swap_positions[0]; 
+            to_position   = flow_swap->swap_positions[1];
+            break;
+
+        case eFlowSwapMethod::PositionsAbsolute:
+            is_relative = false;
+            from_position = flow_swap->swap_positions[0]; 
+            to_position   = flow_swap->swap_positions[1];
+            break;
+        
+        default:
+            gmx_fatal(FARGS, "swap: unexpected 'flow-swap-method'");
+            break;
+    }
+
+    return get_positions_from_reals(
+        from_position, to_position, is_relative, flow_swap->swap_axis, box
+    );
+}
+
+//! Create from-to zone pairs for each position along the positional axis
+static std::vector<CoupledSwapZones> 
+create_coupled_swap_zones(const t_flowswap *flow_swap,
+                          const matrix       box)
+{
+    std::vector<CoupledSwapZones> coupled_zones;
+
+    const auto swap_positions = get_swap_positions_array(flow_swap, box);
+
+    for (int i = 0; i < flow_swap->num_positions; i++)
+    {
+        const auto position_axis = flow_swap->zone_position_axis;
+        const auto height = flow_swap->zone_positions[i] * box[position_axis][position_axis];
+
+        coupled_zones.push_back(
+            create_swap_zones_at_height(
+                height, 
+                swap_positions,
+                static_cast<size_t>(flow_swap->swap_axis),
+                static_cast<size_t>(flow_swap->zone_position_axis),
+                box)
+        );
+    }
+
+    return coupled_zones;
 }
 
 
@@ -568,22 +657,7 @@ FlowSwap init_flowswap(t_commrec                *cr,
     const auto ref_num_mols = ir->flow_swap->ref_num_atoms;
     const auto nstswap = static_cast<uint64_t>(ir->flow_swap->nstswap);
 
-    std::vector<CoupledSwapZones> coupled_zones;
-
-    for (int i = 0; i < ir->flow_swap->num_positions; i++)
-    {
-        const auto height = ir->flow_swap->zone_positions[i];
-
-        coupled_zones.push_back(
-            create_swap_zones_at_height(
-                height, 
-                0.0, 
-                0.5, 
-                static_cast<size_t>(ir->flow_swap->swap_axis),
-                static_cast<size_t>(ir->flow_swap->zone_position_axis),
-                box)
-        );
-    }
+    const auto coupled_zones = create_coupled_swap_zones(ir->flow_swap, box);
 
     const auto swap_group = create_swap_group(0, top_global, atom_sets, groups);
     const auto fill_group = create_swap_group(1, top_global, atom_sets, groups);

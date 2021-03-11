@@ -48,6 +48,9 @@
 #include "gromacs/utility/basedefinitions.h"
 #include "gromacs/utility/real.h"
 
+// [FLOW]
+#include "gromacs/flow/enums.h"
+
 #define EGP_EXCL (1 << 0)
 #define EGP_TABLE (1 << 1)
 
@@ -321,6 +324,9 @@ struct t_flowswap
     //! Minimum number of atoms in from-zone for swap
     int ref_num_atoms;
 
+    //! Method for defining zones along the swap axis
+    eFlowSwapMethod swap_method;
+
     //! Axis along which to define the zones
     int zone_position_axis;
 
@@ -335,6 +341,12 @@ struct t_flowswap
 
     //! Zone center positions along the position axis
     real* zone_positions;
+
+    //! Number of zone values along the swap axis (should be either 0 or 2)
+    int num_swap_zone_values;
+
+    //! Zone center positions along the swap axis (not for center-edge)
+    real* swap_positions;
 };
 
 struct t_inputrec // NOLINT (clang-analyzer-optin.performance.Padding)

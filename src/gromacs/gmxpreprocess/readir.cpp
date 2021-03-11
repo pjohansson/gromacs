@@ -1531,17 +1531,19 @@ void check_ir(const char*                   mdparin,
             warning_error(wi, warn_buf);
         }
 
-        // if (ir->flow_swap->zone_size <= 0.0)
-        // {
-        //     snprintf(warn_buf, STRLEN, "flow-swap-zone-size must be larger than 0.0 (was %f)", ir->flow_swap->zone_size);
-        //     warning_error(wi, warn_buf);
-        // }
-
-        // if (ir->flow_swap->zone_width <= 0.0)
-        // {
-        //     snprintf(warn_buf, STRLEN, "flow-swap-zone-width must be larger than 0.0 (was %f)", ir->flow_swap->zone_width);
-        //     warning_error(wi, warn_buf);
-        // }
+        if ((ir->flow_swap->swap_method != eFlowSwapMethod::CenterEdge)
+            && (ir->flow_swap->num_swap_zone_values != 2))
+        {
+            snprintf(
+                warn_buf, 
+                STRLEN, 
+                "flow-swap-method is '%s' which requires 2 values for flow-swap-swap-positions, but %d %s given",
+                EFLOWSWAPMETHODTYPE(ir->flow_swap->swap_method),
+                ir->flow_swap->num_swap_zone_values,
+                ir->flow_swap->num_swap_zone_values == 1 ? "was" : "were"
+            );
+            warning_error(wi, warn_buf);
+        }
     }
 }
 
@@ -2414,6 +2416,13 @@ void get_ir(const char*     mdparin,
         printStringNoNewline(&inp, "Do molecule swapping");
         ir->flow_swap->do_swap = get_eeenum(&inp, "flow-swap", yesno_names, wi) != 0;
 
+        printStringNoNewline(&inp, "Method for setting zone positions along swap axis:");
+        printStringNoNewline(&inp, " - center-edge: move from the edges to the center");
+        printStringNoNewline(&inp, " - positions-relative: specify two zones in relative coordinates");
+        printStringNoNewline(&inp, " - positions-absolute: specify two zones in absolute coordinates");
+        ir->flow_swap->swap_method = static_cast<eFlowSwapMethod>(
+            get_eeenum(&inp, "flow-swap-method", eFlowSwapMethodTypes_names, wi));
+
         printStringNoNewline(&inp, "Swap positions of atoms along direction: X, Y, Z");
         const auto swap_axis = get_eeenum(&inp, "flow-swap-axis", eFlowSwapAxisTypes_names, wi);
 
@@ -2470,7 +2479,7 @@ void get_ir(const char*     mdparin,
             );
         }
 
-        printStringNoNewline(&inp, "Positions along the swap axis at which to set zones ");
+        printStringNoNewline(&inp, "Positions along the positional axis at which to set zones ");
         printStringNoNewline(&inp, "in (relative to box size)");
         setStringEntry(&inp, "flow-swap-zone-positions", strbuf, "");
 
@@ -2484,6 +2493,22 @@ void get_ir(const char*     mdparin,
             zone_position_values, 
             "flow-swap-zone-positions", 
             ir->flow_swap->zone_positions
+        );
+
+        printStringNoNewline(&inp, "Positions along the swap axis at which to set zones ");
+        printStringNoNewline(&inp, "in (if flow-swap-method is not center-edge)");
+        setStringEntry(&inp, "flow-swap-swap-positions", strbuf, "");
+
+        const auto swap_position_values = gmx::splitString(strbuf);
+
+        ir->flow_swap->num_swap_zone_values = swap_position_values.size();
+        snew(ir->flow_swap->swap_positions, ir->flow_swap->num_swap_zone_values);
+
+        convertReals(
+            wi, 
+            swap_position_values, 
+            "flow-swap-swap-positions", 
+            ir->flow_swap->swap_positions
         );
 
         printStringNoNewline(&inp, "Groups to swap and fill with: must be 1 or 2, the first group is ");

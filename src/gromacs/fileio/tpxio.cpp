@@ -81,6 +81,9 @@
 #include "gromacs/utility/snprintf.h"
 #include "gromacs/utility/txtdump.h"
 
+// [FlOW]
+#include "gromacs/flow/enums.h"
+
 #define TPX_TAG_RELEASE "release"
 
 /*! \brief Tag string for the file format written to run input files
@@ -1655,16 +1658,25 @@ static void do_inputrec(gmx::ISerializer* serializer, t_inputrec* ir, int file_v
         serializer->doInt(&ir->flow_swap->nstswap);
         serializer->doInt(&ir->flow_swap->ref_num_atoms);
         serializer->doInt(&ir->flow_swap->swap_axis);
+
+        int swap_method = static_cast<int>(ir->flow_swap->swap_method);
+        serializer->doInt(&swap_method);
+
         serializer->doInt(&ir->flow_swap->zone_position_axis);
         serializer->doRvec(&ir->flow_swap->zone_size);
         serializer->doInt(&ir->flow_swap->num_positions);
+        serializer->doInt(&ir->flow_swap->num_swap_zone_values);
 
         if (serializer->reading())
         {
+            ir->flow_swap->swap_method = static_cast<eFlowSwapMethod>(swap_method);
+
             snew(ir->flow_swap->zone_positions, ir->flow_swap->num_positions);
+            snew(ir->flow_swap->swap_positions, ir->flow_swap->num_swap_zone_values);
         }
 
         serializer->doRealArray(ir->flow_swap->zone_positions, ir->flow_swap->num_positions);
+        serializer->doRealArray(ir->flow_swap->swap_positions, ir->flow_swap->num_swap_zone_values);
     }
 
     /* QMMM reading - despite defunct we require reading for backwards

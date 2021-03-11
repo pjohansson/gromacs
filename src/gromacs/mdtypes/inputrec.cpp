@@ -64,6 +64,9 @@
 #include "gromacs/utility/textwriter.h"
 #include "gromacs/utility/txtdump.h"
 
+// [FLOW]
+#include "gromacs/flow/enums.h"
+
 //! Macro to select a bool name
 #define EBOOL(e) gmx::boolToString(e)
 
@@ -788,7 +791,7 @@ static void pr_swap(FILE* fp, int indent, const t_swapcoords* swap)
 
 
 // [FLOW_FIELD]
-void pr_flowswap(FILE* fp, int indent, const t_flowswap* flow_swap)
+static void pr_flowswap(FILE* fp, int indent, const t_flowswap* flow_swap)
 {
     if (flow_swap != nullptr)
     {
@@ -797,9 +800,10 @@ void pr_flowswap(FILE* fp, int indent, const t_flowswap* flow_swap)
         if (flow_swap->do_swap)
         {
             PI("flow-nstswap", flow_swap->nstswap);
+            PS("flow-swap-method", EFLOWSWAPMETHODTYPE(flow_swap->swap_method));
             PI("flow-swap-ref-num-mol", flow_swap->ref_num_atoms);
-            PI("flow-swap-axis", flow_swap->swap_axis);
-            PI("flow-swap-zone-position-axis", flow_swap->zone_position_axis);
+            PS("flow-swap-axis", EFLOWSWAPAXISTYPE(flow_swap->swap_axis));
+            PS("flow-swap-zone-position-axis", eFlowSwapPosition2String(flow_swap->zone_position_axis));
 
             pr_rvec(
                 fp, indent,
@@ -813,6 +817,13 @@ void pr_flowswap(FILE* fp, int indent, const t_flowswap* flow_swap)
                 "flow-swap-zone-positions", 
                 flow_swap->zone_positions,
                 flow_swap->num_positions,
+                TRUE
+            );
+            pr_rvec(
+                fp, indent, 
+                "flow-swap-swap-positions", 
+                flow_swap->swap_positions,
+                flow_swap->num_swap_zone_values,
                 TRUE
             );
         }
