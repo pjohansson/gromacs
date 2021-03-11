@@ -152,6 +152,7 @@
 #include "shellfc.h"
 
 // [FLOW_FIELD]
+#include "gromacs/utility/futil.h"
 #include "gromacs/mdlib/flow_field.h"
 #include "gromacs/flow/swap.h"
 
@@ -719,7 +720,17 @@ void gmx::LegacySimulator::do_md()
         flow_swap_atom_sets = cr->dd->atomSets;
     }
 
-    auto flow_swap = init_flowswap(cr, flow_swap_atom_sets, ir, top_global, groups, state->box, mdlog);
+    auto flow_swap = init_flowswap(
+        flow_swap_atom_sets, 
+        cr, 
+        ir, 
+        top_global, 
+        groups, 
+        state->box, 
+        nfile, 
+        fnm, 
+        mdlog
+    );
 
     step     = ir->init_step;
     step_rel = 0;
@@ -1661,10 +1672,9 @@ void gmx::LegacySimulator::do_md()
         // [FLOW_FIELD]
         // Use same conditions as for the ion/water swapping code to ensure that we are consistent
         // with updating the state after a swap is made. In particular, bNeedPartition is used later.
-        // if (flow_swap.do_swap && (step > 0) && !bLastStep && do_per_step(step, flow_swap.nstswap))
         if (flow_swap.do_swap && !bLastStep && do_per_step(step, flow_swap.nstswap))
         {
-            bNeedRepartition = bNeedRepartition || do_flowswap(flow_swap, state, cr, ir, wcycle, step, MASTER(cr) && mdrunOptions.verbose);
+            bNeedRepartition = bNeedRepartition || do_flowswap(flow_swap, state, t, cr, ir, wcycle, step, MASTER(cr) && mdrunOptions.verbose);
 
             if (bNeedRepartition && DOMAINDECOMP(cr))
             {
@@ -1741,6 +1751,12 @@ void gmx::LegacySimulator::do_md()
         imdSession->updateEnergyRecordAndSendPositionsAndEnergies(bInteractiveMDstep, step, bCalcEner);
     }
     /* End of main MD loop */
+
+    // [FLOW_FIELD] Clean-up
+    if (flow_swap.fplog_zone != nullptr)
+    {
+        gmx_ffclose(flow_swap.fplog_zone);
+    }
 
     /* Closing TNG files can include compressing data. Therefore it is good to do that
      * before stopping the time measurements. */

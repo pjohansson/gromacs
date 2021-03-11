@@ -6,6 +6,7 @@
 #include <string>
 #include <vector>
 
+#include "gromacs/commandline/filenm.h"
 #include "gromacs/domdec/localatomset.h"
 #include "gromacs/domdec/localatomsetmanager.h"
 #include "gromacs/math/vectypes.h"
@@ -53,20 +54,22 @@ struct FlowSwap {
      fill { fill } {}
 
     /**< Full constructor of object */
-    FlowSwap(const uint64_t nstswap, 
+    FlowSwap(const uint64_t  nstswap, 
              const gmx::RVec zone_size,
              const std::vector<CoupledSwapZones> coupled_zones, 
              const SwapGroup swap, 
              const SwapGroup fill, 
-             const size_t ref_num_atoms,
-             const matrix box)
+             const size_t    ref_num_atoms,
+             FILE           *fp,
+             const matrix    box)
     :do_swap{true},
      nstswap{nstswap},
      zone_size{zone_size},
      coupled_zones{coupled_zones},
      swap{swap},
      fill{fill},
-     ref_num_atoms{ref_num_atoms} 
+     ref_num_atoms{ref_num_atoms},
+     fplog_zone{fp}
     {
         for (size_t i = 0; i < DIM; i++)
         {
@@ -109,18 +112,24 @@ struct FlowSwap {
 
     //! Periodic boundary condition information, updated every frame
     t_pbc *pbc = nullptr;
+
+    //! File for logging of zone positions
+    FILE *fplog_zone = nullptr;
 };
 
-FlowSwap init_flowswap(t_commrec              *cr,
-                       gmx::LocalAtomSetManager *atom_sets,
-                       const t_inputrec       *ir,
-                       const gmx_mtop_t       *top_global,
-                       const SimulationGroups *groups,
-                       const matrix            box,
-                       const gmx::MDLogger    &mdlog);
+FlowSwap init_flowswap(gmx::LocalAtomSetManager *atom_sets,
+                       t_commrec                *cr,
+                       const t_inputrec         *ir,
+                       const gmx_mtop_t         *top_global,
+                       const SimulationGroups   *groups,
+                       const matrix              box,
+                       const int                 nfile,
+                       const t_filenm            fnm[],
+                       const gmx::MDLogger      &mdlog);
 
 gmx_bool do_flowswap(FlowSwap         &flow_swap,
                      t_state          *state,
+                     double            time,
                      const t_commrec  *cr,
                      const t_inputrec *ir,
                      gmx_wallcycle    *wcycle,

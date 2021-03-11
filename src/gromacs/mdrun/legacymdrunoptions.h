@@ -130,7 +130,9 @@ public:
                                           { efXVG, "-swap", "swapions", ffOPTWR },
                                           // [FLOW_FIELD] 
                                           // Add flow field output file name
-                                          { efDAT, "-flow", "flow", ffOPTWR } } };
+                                          { efDAT, "-flow", "flow", ffOPTWR },
+                                          // Add logging of swap zone positions
+                                          { efDAT, "-flowswaplog", "swap-zone", ffOPTWR } } };
 
     //! Print a warning if any force is larger than this (in kJ/mol nm).
     real pforce = -1;

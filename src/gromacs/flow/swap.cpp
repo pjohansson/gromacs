@@ -9,6 +9,7 @@
 #include "gromacs/swap/swapcoords.h"
 #include "gromacs/topology/mtop_lookup.h"
 #include "gromacs/utility/fatalerror.h"
+#include "gromacs/utility/futil.h"
 #include "gromacs/utility/gmxassert.h"
 
 #include "swap.h"
@@ -351,6 +352,7 @@ static void log_flow_swap_info(const FlowSwap      &flow_swap,
     log_swap_zone_info(flow_swap, mdlog);
 }
 
+#ifdef FLOW_SWAP_DEBUG
 static void print_swap_info(FILE *fp,
                             const AtomGroupIndices &swap_mols,
                             const AtomGroupIndices &fill_mols,
@@ -366,6 +368,60 @@ static void print_swap_info(FILE *fp,
             strlen(comment) > 0 ? "# " : "", 
             comment);
     }
+}
+#endif
+
+static void print_single_zone_position(FILE *fp, const gmx::RVec position)
+{
+    for (size_t i = 0; i < DIM; i++)
+    {
+        fprintf(fp, "%9.3f ", position[i]);
+    }
+}
+
+//! Log the zone positions to a file as [time X Y Z X Y Z ...\n]
+//!
+//! Order is: from, to, from, to order for each defined pair
+static void print_zone_positions(FILE                                *fp,
+                                 const std::vector<CoupledSwapZones> &coupled_zones,
+                                 const double                         time)
+{
+    fprintf(fp, "%9.3g ", time);
+
+    for (const auto zones : coupled_zones)
+    {
+        print_single_zone_position(fp, zones.from);
+        print_single_zone_position(fp, zones.to);
+    }
+
+    fprintf(fp, "\n");
+}
+
+//! Log zone position header
+static void print_zone_position_header(FILE                                *fp,
+                                       const std::vector<CoupledSwapZones> &coupled_zones)
+{
+    fprintf(fp, "# Swap zone positions during a simulation\n");
+    fprintf(fp, "# \n");
+    fprintf(fp, "# For each time step, the current time and then the coordinates \n");
+    fprintf(fp, "# from each from-to pair is printed in order as \n");
+    fprintf(fp, "# 'X0 Y0 Z0 X1 Y1 Z1 X2 Y2 Z2 ...'\n");
+    fprintf(fp, "# where (0, 1) is the first (from, to) pair, (2, 3) the second, etc.\n");
+    fprintf(fp, "# \n");
+    fprintf(fp, "# A total of %lu coupled zone pairs are defined.\n", coupled_zones.size());
+    fprintf(fp, "# \n");
+
+    fprintf(fp, "# %-7s ", "time");
+
+    for (size_t n = 0; n < coupled_zones.size(); n++)
+    {
+        const auto i = 2 * n;
+        const auto j = i + 1;
+
+        fprintf(fp, "X%-8ld Y%-8ld Z%-8ld X%-8ld Y%-8ld Z%-8ld ", i, i, i, j, j, j);
+    }
+
+    fprintf(fp, "\n");
 }
 
 
@@ -636,12 +692,14 @@ static uint16_t do_swap(rvec                                 xs_local[],
  * Public functions *
  ********************/
 
-FlowSwap init_flowswap(t_commrec                *cr,
-                       gmx::LocalAtomSetManager *atom_sets,
+FlowSwap init_flowswap(gmx::LocalAtomSetManager *atom_sets,
+                       t_commrec                *cr,
                        const t_inputrec         *ir,
                        const gmx_mtop_t         *top_global,
                        const SimulationGroups   *groups,
                        const matrix              box,
+                       const int                 nfile,
+                       const t_filenm            fnm[],
                        const gmx::MDLogger      &mdlog)
 {
     if (!ir->flow_swap->do_swap)
@@ -669,6 +727,18 @@ FlowSwap init_flowswap(t_commrec                *cr,
         atom_sets->setIndicesInDomainDecomposition(*cr->dd->ga2la);
     }
 
+    // Check whether a file to log swap zone information into 
+    // was given and if so prepare it
+    FILE *fplog = nullptr;
+
+    if (opt2bSet("-flowswaplog", nfile, fnm))
+    {
+        const auto fn = opt2fn("-flowswaplog", nfile, fnm);
+
+        fplog = gmx_ffopen(fn, "w");
+        print_zone_position_header(fplog, coupled_zones);
+    }
+
     const FlowSwap flow_swap {
         nstswap,
         ir->flow_swap->zone_size,
@@ -676,6 +746,7 @@ FlowSwap init_flowswap(t_commrec                *cr,
         swap_group,
         fill_group,
         static_cast<size_t>(ref_num_mols),
+        fplog,
         box
     };
 
@@ -686,6 +757,7 @@ FlowSwap init_flowswap(t_commrec                *cr,
 
 gmx_bool do_flowswap(FlowSwap         &flow_swap,
                      t_state          *state,
+                     double            time,
                      const t_commrec  *cr,
                      const t_inputrec *ir,
                      gmx_wallcycle    *wcycle,
@@ -722,6 +794,11 @@ gmx_bool do_flowswap(FlowSwap         &flow_swap,
         {
             fprintf(stderr, "Performed %d swap%s in step %lu.\n", num_swaps, num_swaps != 1 ? "s" : "", step);
         }
+    }
+
+    if (flow_swap.fplog_zone != nullptr)
+    {
+        print_zone_positions(flow_swap.fplog_zone, flow_swap.coupled_zones, time);
     }
 
     wallcycle_stop(wcycle, ewcSWAP);
