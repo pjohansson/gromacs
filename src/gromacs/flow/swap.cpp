@@ -177,23 +177,32 @@ get_positions_from_reals(const real    from_position,
                          const matrix  box)
 {
     std::array<real, 2> positions = { from_position, to_position };
+    const auto box_size = box[swap_axis][swap_axis];
 
     if (is_relative)
     {
         for (auto& v : positions)
         {
-            v *= box[swap_axis][swap_axis];
+            v *= box_size;
         }
+    }
+
+    // Apply PBC to position
+    for (auto& v : positions)
+    {
+        v -= floor(v / box_size) * box_size;
     }
 
     return positions;
 }
 
-//! Create an array of swap axis positions corresponding to the swap method
-//!
+//! For every zone position, create an array of swap axis positions
+//! 
+//! The created swap axis positions correspond to the swap method.
+//! 
 //! Note: Assumes that the given array has exactly two values,
 //! which we check in either readir or before calling this.
-static std::array<real, 2> 
+static std::vector<std::array<real, 2>>
 get_swap_positions_array(const t_flowswap *flow_swap,
                          const matrix      box)
 {
@@ -201,34 +210,59 @@ get_swap_positions_array(const t_flowswap *flow_swap,
          to_position   = 0.0;
     bool is_relative = false;
 
-    switch (flow_swap->swap_method)
+    std::vector<std::array<real, 2>> swap_positions;
+
+    for (size_t n = 0; n < flow_swap->num_positions; n++)
     {
-        case eFlowSwapMethod::CenterEdge:
-            is_relative = true;
-            from_position = 0.0;
-            to_position = 0.5;
-            break;
+        size_t i, j;
 
-        case eFlowSwapMethod::PositionsRelative:
-            is_relative = true;
-            from_position = flow_swap->swap_positions[0]; 
-            to_position   = flow_swap->swap_positions[1];
-            break;
+        if (flow_swap->num_swap_zone_values == 2)
+        {
+            i = 0;
+            j = 1;
+        }
+        else
+        {
+            GMX_RELEASE_ASSERT(
+                flow_swap->num_swap_zone_values >= 2 * flow_swap->num_positions,
+                "did not get 2 swap zone positions per zone position");
 
-        case eFlowSwapMethod::PositionsAbsolute:
-            is_relative = false;
-            from_position = flow_swap->swap_positions[0]; 
-            to_position   = flow_swap->swap_positions[1];
-            break;
-        
-        default:
-            gmx_fatal(FARGS, "swap: unexpected 'flow-swap-method'");
-            break;
+            i = 2 * n;
+            j = i + 1;
+        }
+
+        switch (flow_swap->swap_method)
+        {
+            case eFlowSwapMethod::CenterEdge:
+                is_relative = true;
+                from_position = 0.0;
+                to_position = 0.5;
+                break;
+
+            case eFlowSwapMethod::PositionsRelative:
+                is_relative = true;
+                from_position = flow_swap->swap_positions[i]; 
+                to_position   = flow_swap->swap_positions[j];
+                break;
+
+            case eFlowSwapMethod::PositionsAbsolute:
+                is_relative = false;
+                from_position = flow_swap->swap_positions[i]; 
+                to_position   = flow_swap->swap_positions[j];
+                break;
+            
+            default:
+                gmx_fatal(FARGS, "swap: unexpected 'flow-swap-method'");
+                break;
+        }
+        const auto position = get_positions_from_reals(
+            from_position, to_position, is_relative, flow_swap->swap_axis, box
+        );
+
+        swap_positions.push_back(position);
     }
 
-    return get_positions_from_reals(
-        from_position, to_position, is_relative, flow_swap->swap_axis, box
-    );
+    return swap_positions;
 }
 
 //! Create from-to zone pairs for each position along the positional axis
@@ -248,7 +282,7 @@ create_coupled_swap_zones(const t_flowswap *flow_swap,
         coupled_zones.push_back(
             create_swap_zones_at_height(
                 height, 
-                swap_positions,
+                swap_positions.at(i),
                 static_cast<size_t>(flow_swap->swap_axis),
                 static_cast<size_t>(flow_swap->zone_position_axis),
                 box)

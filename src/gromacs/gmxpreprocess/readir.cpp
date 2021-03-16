@@ -1531,18 +1531,43 @@ void check_ir(const char*                   mdparin,
             warning_error(wi, warn_buf);
         }
 
-        if ((ir->flow_swap->swap_method != eFlowSwapMethod::CenterEdge)
-            && (ir->flow_swap->num_swap_zone_values != 2))
+        if ((ir->flow_swap->swap_method == eFlowSwapMethod::CenterEdge)
+            && (ir->flow_swap->num_swap_zone_values != 0))
         {
             snprintf(
                 warn_buf, 
                 STRLEN, 
-                "flow-swap-method is '%s' which requires 2 values for flow-swap-swap-positions, but %d %s given",
+                "flow-swap-method is '%s' but %d %s for flow-swap-swap-positions %s given: %s will not be used",
                 EFLOWSWAPMETHODTYPE(ir->flow_swap->swap_method),
                 ir->flow_swap->num_swap_zone_values,
-                ir->flow_swap->num_swap_zone_values == 1 ? "was" : "were"
+                ir->flow_swap->num_swap_zone_values == 1 ? "value" : "values",
+                ir->flow_swap->num_swap_zone_values == 1 ? "was" : "were",
+                ir->flow_swap->num_swap_zone_values == 1 ? "this" : "these"
             );
-            warning_error(wi, warn_buf);
+            warning(wi, warn_buf);
+        }
+
+        if (ir->flow_swap->swap_method != eFlowSwapMethod::CenterEdge)
+        {
+            const auto num_swap_zones = ir->flow_swap->num_swap_zone_values;
+
+            const bool has_enough_swap_positions = 
+                (num_swap_zones == 2) || (num_swap_zones == 2 * ir->flow_swap->num_positions);
+            
+            if (!has_enough_swap_positions)
+            {
+                snprintf(
+                    warn_buf, 
+                    STRLEN, 
+                    "flow-swap-method is '%s' for which flow-swap-swap-positions "
+                    "must be either 2 values or 2 values per value in flow-swap-zone-positions, "
+                    "but %d %s given",
+                    EFLOWSWAPMETHODTYPE(ir->flow_swap->swap_method),
+                    ir->flow_swap->num_swap_zone_values,
+                    ir->flow_swap->num_swap_zone_values == 1 ? "was" : "were"
+                );
+                warning_error(wi, warn_buf);
+            }
         }
     }
 }
