@@ -47,6 +47,57 @@ struct CoupledSwapZones {
     gmx::RVec from, to;
 };
 
+struct FlowSwapAxis {
+    //! Empty constructor when no swapping is performed.
+    FlowSwapAxis()
+    :swap{XX},
+     zone{ZZ},
+     normal{YY} {}
+    
+    //! Constructor for selected flow swap axis.
+    //!
+    //! Assumes to swap_axis != zone_axis (checked in readir.cpp).
+    FlowSwapAxis(const size_t swap_axis,
+                 const size_t zone_axis)
+    :swap{swap_axis},
+     zone{zone_axis}
+    {
+        // If swap != zone their sum will always be unique which means that 
+        // we can easily get the plane normal by checking it.
+        switch (swap + zone) 
+        {
+            case XX + YY: 
+                normal = ZZ;
+                break;
+
+            case XX + ZZ:
+                normal = YY;
+                break;
+
+            case YY + ZZ:
+                normal = XX;
+                break;
+            
+            default:
+                gmx_fatal(
+                    FARGS, 
+                    "could not compute normal axis from swap axis %lu and zone axis %lu", 
+                    swap, 
+                    zone
+                );
+        }
+    }
+
+    //! Axis along which swaps are performed
+    size_t swap;
+
+    //! Axis along which zones are defined
+    size_t zone;
+
+    //! Axis normal to the swap and zone position axis.
+    size_t normal;
+};
+
 struct FlowSwap {
     /**< Dummy constructor for when no swapping is done */
     FlowSwap(const SwapGroup swap, const SwapGroup fill)
@@ -57,17 +108,21 @@ struct FlowSwap {
     FlowSwap(const uint64_t  nstswap, 
              const gmx::RVec zone_size,
              const std::vector<CoupledSwapZones> coupled_zones, 
+             const gmx_bool do_track_contact_line,
              const SwapGroup swap, 
              const SwapGroup fill, 
+             const FlowSwapAxis axis,
              const size_t    ref_num_atoms,
              FILE           *fp,
              const matrix    box)
     :do_swap{true},
+     do_track_contact_line{do_track_contact_line},
      nstswap{nstswap},
      zone_size{zone_size},
-     coupled_zones{coupled_zones},
+     init_coupled_zones{coupled_zones},
      swap{swap},
      fill{fill},
+     axis{axis},
      ref_num_atoms{ref_num_atoms},
      fplog_zone{fp}
     {
@@ -91,6 +146,12 @@ struct FlowSwap {
     //! Whether or not to do swapping
     gmx_bool do_swap = false;
 
+    //! Whether or not to track the contact line
+    //! 
+    //! This is set by `eFlowSwapMethod::TwoPhaseContactLines` which requires
+    //! exactly two `CoupledSwapZones` to be defined.
+    gmx_bool do_track_contact_line = false;
+
     //! How often to swap
     uint64_t nstswap = 0;
 
@@ -101,11 +162,14 @@ struct FlowSwap {
     gmx::RVec max_distance;
 
     //! Pairs of from-to coupled zone definitions
-    std::vector<CoupledSwapZones> coupled_zones;
+    std::vector<CoupledSwapZones> init_coupled_zones;
 
     //! Index group of molecules to swap and replace (fill) with
     SwapGroup swap, 
               fill;
+
+    //! Axis definitions for swap zone positioning.
+    FlowSwapAxis axis;
     
     //! Minimum number of molecules inside the from zone to activate a swap
     size_t ref_num_atoms = 0;

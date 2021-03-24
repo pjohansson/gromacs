@@ -1662,6 +1662,7 @@ static void do_inputrec(gmx::ISerializer* serializer, t_inputrec* ir, int file_v
         int swap_method = static_cast<int>(ir->flow_swap->swap_method);
         serializer->doInt(&swap_method);
 
+        serializer->doBool(&ir->flow_swap->bRelativeSwapPositions);
         serializer->doInt(&ir->flow_swap->zone_position_axis);
         serializer->doRvec(&ir->flow_swap->zone_size);
         serializer->doInt(&ir->flow_swap->num_positions);

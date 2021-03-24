@@ -1531,23 +1531,40 @@ void check_ir(const char*                   mdparin,
             warning_error(wi, warn_buf);
         }
 
-        if ((ir->flow_swap->swap_method == eFlowSwapMethod::CenterEdge)
-            && (ir->flow_swap->num_swap_zone_values != 0))
+        const auto swap_method = ir->flow_swap->swap_method;
+        if (swap_method == eFlowSwapMethod::CenterEdge)
         {
-            snprintf(
-                warn_buf, 
-                STRLEN, 
-                "flow-swap-method is '%s' but %d %s for flow-swap-swap-positions %s given: %s will not be used",
-                EFLOWSWAPMETHODTYPE(ir->flow_swap->swap_method),
-                ir->flow_swap->num_swap_zone_values,
-                ir->flow_swap->num_swap_zone_values == 1 ? "value" : "values",
-                ir->flow_swap->num_swap_zone_values == 1 ? "was" : "were",
-                ir->flow_swap->num_swap_zone_values == 1 ? "this" : "these"
-            );
-            warning(wi, warn_buf);
+            if (ir->flow_swap->num_swap_zone_values != 0)
+            {
+                snprintf(
+                    warn_buf, 
+                    STRLEN, 
+                    "flow-swap-method is '%s' but %d %s for flow-swap-swap-positions %s given: %s will not be used",
+                    EFLOWSWAPMETHODTYPE(ir->flow_swap->swap_method),
+                    ir->flow_swap->num_swap_zone_values,
+                    ir->flow_swap->num_swap_zone_values == 1 ? "value" : "values",
+                    ir->flow_swap->num_swap_zone_values == 1 ? "was" : "were",
+                    ir->flow_swap->num_swap_zone_values == 1 ? "this" : "these"
+                );
+                warning(wi, warn_buf);
+            }
+
+            if (!ir->flow_swap->bRelativeSwapPositions)
+            {
+                ir->flow_swap->bRelativeSwapPositions = true;
+
+                snprintf(
+                    warn_buf, 
+                    STRLEN, 
+                    "setting flow-swap-zone-position-relative to 'yes' since flow-swap-method is '%s'",
+                    EFLOWSWAPMETHODTYPE(ir->flow_swap->swap_method)
+                );
+
+                warning_note(wi, warn_buf);
+            }
         }
 
-        if (ir->flow_swap->swap_method != eFlowSwapMethod::CenterEdge)
+        if (swap_method == eFlowSwapMethod::Positions)
         {
             const auto num_swap_zones = ir->flow_swap->num_swap_zone_values;
 
@@ -1568,6 +1585,51 @@ void check_ir(const char*                   mdparin,
                 );
                 warning_error(wi, warn_buf);
             }
+        }
+
+        if (swap_method == eFlowSwapMethod::TwoPhaseContactLines)
+        {
+            if (ir->flow_swap->num_swap_zone_values != 2)
+            {
+                snprintf(
+                    warn_buf, 
+                    STRLEN, 
+                    "flow-swap-method is '%s' for which flow-swap-swap-positions "
+                    "must be 2 values but %d %s given",
+                    EFLOWSWAPMETHODTYPE(ir->flow_swap->swap_method),
+                    ir->flow_swap->num_swap_zone_values,
+                    ir->flow_swap->num_swap_zone_values == 1 ? "was" : "were"
+                );
+                warning_error(wi, warn_buf);
+            }
+
+            if (ir->flow_swap->num_positions != 2)
+            {
+                snprintf(
+                    warn_buf, 
+                    STRLEN, 
+                    "flow-swap-method is '%s' for which flow-swap-zone-positions "
+                    "must be 2 values but %d %s given",
+                    EFLOWSWAPMETHODTYPE(ir->flow_swap->swap_method),
+                    ir->flow_swap->num_positions,
+                    ir->flow_swap->num_positions == 1 ? "was" : "were"
+                );
+                warning_error(wi, warn_buf);
+            }
+        }
+
+        if (ir->flow_swap->swap_axis == ir->flow_swap->zone_position_axis)
+        {
+            snprintf(
+                warn_buf, 
+                STRLEN, 
+                "flow-swap-zone-position-axis (%s) == flow-swap-axis (%s) is not allowed "
+                "for flow-swap-method '%s'",
+                eFlowSwapPosition2String(ir->flow_swap->zone_position_axis),
+                EFLOWSWAPAXISTYPE(ir->flow_swap->swap_axis),
+                EFLOWSWAPMETHODTYPE(ir->flow_swap->swap_method)
+            );
+            warning_error(wi, warn_buf);
         }
     }
 }
@@ -2462,6 +2524,10 @@ void get_ir(const char*     mdparin,
                 ir->flow_swap->swap_axis = ZZ;
                 break;
         }
+
+        printStringNoNewline(&inp, "Swap positions are relative to box size");
+        ir->flow_swap->bRelativeSwapPositions =
+            get_eeenum(&inp, "flow-swap-zone-positions-relative", yesno_names, wi) != 0;
 
         printStringNoNewline(&inp, "Define zones along direction: X, Y, Z");
         const auto zone_position_axis = get_eeenum(&inp, "flow-swap-zone-position-axis", eFlowSwapPositionAxisTypes_names, wi);

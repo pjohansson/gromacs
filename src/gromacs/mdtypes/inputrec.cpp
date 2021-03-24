@@ -803,6 +803,7 @@ static void pr_flowswap(FILE* fp, int indent, const t_flowswap* flow_swap)
             PS("flow-swap-method", EFLOWSWAPMETHODTYPE(flow_swap->swap_method));
             PI("flow-swap-ref-num-mol", flow_swap->ref_num_atoms);
             PS("flow-swap-axis", EFLOWSWAPAXISTYPE(flow_swap->swap_axis));
+            PS("flow-swap-zone-positions-relative", EBOOL(flow_swap->bRelativeSwapPositions));
             PS("flow-swap-zone-position-axis", eFlowSwapPosition2String(flow_swap->zone_position_axis));
 
             pr_rvec(

@@ -7,8 +7,8 @@
 enum class eFlowSwapMethod 
 {
     CenterEdge,
-    PositionsRelative,
-    PositionsAbsolute,
+    Positions,
+    TwoPhaseContactLines,
     NR,
 };
 extern const char* eFlowSwapMethodTypes_names[static_cast<size_t>(eFlowSwapMethod::NR) + 1];

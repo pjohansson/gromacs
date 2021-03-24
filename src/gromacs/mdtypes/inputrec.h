@@ -327,6 +327,9 @@ struct t_flowswap
     //! Method for defining zones along the swap axis
     eFlowSwapMethod swap_method;
 
+    //! Whether swap axis zone positions are relative to box size
+    bool bRelativeSwapPositions;
+
     //! Axis along which to define the zones
     int zone_position_axis;
 

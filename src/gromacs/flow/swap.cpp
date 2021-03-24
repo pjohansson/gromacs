@@ -1,6 +1,9 @@
 #include <algorithm>
 #include <cmath>
 #include <iterator>
+#include <string>
+#include <utility> // pair
+#include <tuple>   // tie
 
 #include "gromacs/domdec/domdec_struct.h"
 #include "gromacs/math/vec.h"
@@ -63,6 +66,511 @@ static FlowSwap init_empty_flow_swap(gmx::LocalAtomSetManager *atom_sets)
     const SwapGroup fill { atom_sets->add(inds) };
 
     return FlowSwap { swap, fill };
+}
+
+/*************************
+ * Contact Line Tracking *
+ *************************/
+
+using HistogramCounter = std::vector<double>;
+
+struct Histogram {
+    real dx;
+    HistogramCounter count; 
+};
+
+static void
+set_rvec_to_1dpos(rvec r, const real position, const size_t axis)
+{
+    for (size_t i = 0; i < DIM; i++)
+    {
+        if (i == axis)
+        {
+            r[i] = position;
+        }
+        else
+        {
+            r[i] = 0.0;
+        }
+    }
+}
+
+static bool
+check_if_position_is_within_range_1d(const rvec    r0,
+                                     const rvec    r1,
+                                     const real    drmax,
+                                     const size_t  axis,
+                                     const t_pbc  *pbc)
+{
+    rvec dr;
+    pbc_dx(pbc, r0, r1, dr);
+
+    return (fabs(dr[axis]) <= drmax);
+}
+
+static void
+add_atom_to_histogram_bins(HistogramCounter &count,
+                           const rvec        position,
+                           const size_t      axis,
+                           const real        inv_bin_size)
+{
+    const auto x = position[axis];
+    const auto bin = static_cast<size_t>(floor(x * inv_bin_size)) % count.size();
+
+    count.at(bin) += 1.0;
+}
+
+struct ContactLineAxis {
+    size_t contact_line;
+    size_t height;
+    size_t normal;
+};
+
+struct ContactLineDef {
+    ContactLineDef(const FlowSwap &flow_swap, const matrix box)
+    :axis{ flow_swap.axis.zone, flow_swap.axis.swap, flow_swap.axis.normal },
+     dhmax{ flow_swap.zone_size[axis.height] / 2.0 }
+    {
+        height0 = flow_swap.init_coupled_zones.at(0).from[axis.height];
+        height1 = flow_swap.init_coupled_zones.at(0).to[axis.height];
+        normal_center = flow_swap.init_coupled_zones.at(0).to[axis.normal];
+
+        if (dhmax < 0.0)
+        {
+            dhmax = box[axis.height][axis.height] / 4.0;
+        }
+    }
+
+    ContactLineAxis axis;
+
+    real height0, 
+         height1,
+         dhmax,
+         normal_center;
+};
+
+static std::pair<HistogramCounter, HistogramCounter>
+get_histogram_atom_counts(const ContactLineDef &cl_def,
+                          const real            length,
+                          const real            bin_size,
+                          const size_t          num_bins,
+                          const SwapGroup      &group, 
+                          const t_pbc          *pbc)
+{
+    const auto inv_length = 1.0 / length;
+    const auto inv_bin_size = 1.0 / bin_size;
+
+    HistogramCounter count0(num_bins, 0.0),
+                     count1(num_bins, 0.0);
+
+    rvec r0, r1;
+    set_rvec_to_1dpos(r0, cl_def.height0, cl_def.axis.height);
+    set_rvec_to_1dpos(r1, cl_def.height1, cl_def.axis.height);
+
+    for (size_t i = 0; i < group.atom_set.numAtomsGlobal(); i++)
+    {
+        const auto r = group.xs[i];
+
+        if (check_if_position_is_within_range_1d(r, r0, cl_def.dhmax, cl_def.axis.height, pbc))
+        {
+            add_atom_to_histogram_bins(count0, r, cl_def.axis.contact_line, inv_bin_size);
+        }
+
+        if (check_if_position_is_within_range_1d(r, r1, cl_def.dhmax, cl_def.axis.height, pbc))
+        {
+            add_atom_to_histogram_bins(count1, r, cl_def.axis.contact_line, inv_bin_size);
+        }
+    }
+
+    return std::pair(count0, count1);
+}
+
+static std::pair<Histogram, Histogram>
+create_atom_histograms(const ContactLineDef &cl_def,
+                       const real            target_resolution,
+                       const SwapGroup      &group,
+                       const t_pbc          *pbc,
+                       const matrix          box)
+{
+    const auto length = box[cl_def.axis.contact_line][cl_def.axis.contact_line];
+    const auto height = box[cl_def.axis.height][cl_def.axis.height];
+
+    const auto num_bins = static_cast<size_t>(roundf(fabs(length / target_resolution)));
+    const auto bin_size = length / static_cast<real>(num_bins);
+
+    HistogramCounter count0, count1;
+    std::tie(count0, count1) = 
+        get_histogram_atom_counts(cl_def, length, bin_size, num_bins, group, pbc);
+
+    const Histogram hist0 { bin_size, count0 },
+                    hist1 { bin_size, count1 };
+
+    return std::pair(hist0, hist1);
+}
+
+static void
+log_histogram(FILE            *fp,
+              const Histogram &hist)
+{
+    real x = 0.5 * hist.dx;
+
+    for (const auto& v : hist.count)
+    {
+        fprintf(fp, "%g %g\n", x, v);
+        x += hist.dx;
+    }
+}
+
+static void
+log_histogram_to_file(const std::string &fn,
+                      const Histogram   &hist)
+{
+    FILE *fp = gmx_ffopen(fn, "w");
+
+    log_histogram(fp, hist);
+
+    gmx_ffclose(fp);
+}
+
+static Histogram
+smooth_histogram(const Histogram &hist, const size_t num_smooth)
+{
+    const auto num_bins = hist.count.size();
+    const double window_size = 2.0 * static_cast<double>(num_smooth) + 1.0;
+
+    HistogramCounter smooth_count(num_bins, 0.0);
+
+    for (size_t i = 0; i < num_bins; i++)
+    {
+        for (int j = -static_cast<int>(num_smooth); j <= static_cast<int>(num_smooth); j++)
+        {
+            auto n = (static_cast<int>(i) + j) % static_cast<int>(num_bins);
+
+            while (n < 0)
+            {
+                n += num_bins;
+            }
+
+            smooth_count.at(static_cast<size_t>(n)) += hist.count.at(i);
+        }
+    }
+
+    for (auto& v : smooth_count)
+    {
+        v /= window_size;
+    }
+
+    return Histogram {
+        hist.dx,
+        smooth_count
+    };
+}
+
+struct HistRegion {
+    //! Beginning and end of region, half-open range ([begin, end)).
+    //! 
+    //! Note that for begin < 0 the region stretches across 
+    //! the periodic boundary.
+    int begin, end;
+
+    //! Accumulated counts inside region.
+    double total_counts;
+};
+
+static void 
+stitch_front_and_back_regions(std::vector<HistRegion> &regions,
+                              const Histogram         &hist)
+{
+    if (regions.size() < 2)
+    {
+        return;
+    }
+
+    auto& front = regions.front();
+    const auto& back = regions.back();
+
+    if ((front.begin == 0) && (back.end == hist.count.size()))
+    {
+        const auto diff = static_cast<int>(hist.count.size()) - back.begin;
+
+        front.begin = -diff;
+        front.total_counts += back.total_counts;
+
+        regions.pop_back();
+    }
+}
+
+static std::vector<HistRegion>
+find_hist_regions(const Histogram &hist,
+                  const double     cutoff)
+{
+    std::vector<HistRegion> regions;
+
+    int i = 0,
+        begin = 0;
+
+    double total_count = 0.0;
+    bool in_region = false;
+
+    for (const auto& v : hist.count)
+    {
+        if (v >= cutoff)
+        {
+            total_count += v;
+
+            if (!in_region)
+            {
+                in_region = true;
+                begin = i;
+            }
+        }
+        // If we are exiting a region we save it and reset the counters
+        else if (in_region)
+        {
+            regions.push_back(HistRegion { begin, i, total_count });
+
+            in_region = false;
+            total_count = 0.0;
+        }
+
+        i++;
+    }
+
+    if (in_region)
+    {
+        regions.push_back(HistRegion { begin, i, total_count });
+    }
+
+    stitch_front_and_back_regions(regions, hist);
+
+    return regions;
+}
+
+//! Return the two regions with largest total_counts.
+//!
+//! Assumes that the given vector has at least two elements. 
+//! Will panic if fewer elements are present.
+static std::pair<HistRegion, HistRegion>
+get_two_largest_hist_regions(std::vector<HistRegion> &regions)
+{
+    // Reminder: partial_sort ensures that the first N (here 2) elements
+    // of the entire range are the "minimum" values, but does not sort 
+    // the rest. Here, the "minimum" values are the largest counts so we 
+    // supply a custom lambda function that ensures that sorting. 
+    std::partial_sort(
+        regions.begin(), 
+        regions.begin() + 2, 
+        regions.end(),
+        [](HistRegion &reg0, HistRegion &reg1) {
+            return reg0.total_counts > reg1.total_counts;
+        }
+    );
+
+    return std::pair(regions.at(0), regions.at(1));
+}
+
+static size_t 
+get_hist_index_pbc(const int        i,
+                   const Histogram &hist)
+{
+    const auto num_bins = static_cast<int>(hist.count.size());
+
+    int n = i % num_bins;
+    while (n < 0)
+    {
+        n += num_bins;
+    }
+
+    return static_cast<size_t>(n);
+}
+
+static double
+get_hist_value(const int        i,
+               const Histogram &hist)
+{
+    return hist.count.at(get_hist_index_pbc(i, hist));
+}
+
+static double
+get_hist_region_mean_position(const HistRegion &region,
+                              const Histogram  &hist)
+{
+    double mean = 0.0;
+
+    for (auto i = region.begin; i < region.end; i++)
+    {
+        const auto weight = get_hist_value(i, hist);
+
+        mean += weight * static_cast<double>(i);
+    }
+
+    mean /= region.total_counts;
+
+    const auto length = static_cast<double>(hist.count.size());
+    while (mean < 0.0)
+    {
+        mean += length;
+    }
+
+    return fmod(mean, length) * hist.dx;
+}
+
+static std::pair<real, real>
+find_two_peaks(std::vector<HistRegion> &regions,
+               const Histogram         &hist)
+{
+    if (regions.size() < 2)
+    {
+        return std::pair(-1.0, -1.0);
+    }
+
+    HistRegion cl_region0, cl_region1;
+    std::tie(cl_region0, cl_region1) = get_two_largest_hist_regions(regions);
+
+    const auto x0 = get_hist_region_mean_position(cl_region0, hist);
+    const auto x1 = get_hist_region_mean_position(cl_region1, hist);
+
+    return std::pair(
+        static_cast<real>(x0), 
+        static_cast<real>(x1)
+    );
+}
+
+static std::pair<real, real>
+find_contact_lines_from_hist(const Histogram &hist)
+{
+    // To detect the contact lines we make the following assumptions: 
+    //  - The histogram has one peak for each contact line (the peak is a normal distribution)
+    //  - Each peak is separated from each other by a region with almost no counts
+    // 
+    // Thus we go through the histogram and detect continuous regions where 
+    // the number of counts exceed a cutoff (determined from the maximum histogram value).
+    // We then take the two contact lines regions as those with the highest integrated 
+    // number of counts, which gets rid of noise. 
+    // Finally, we get the average position in the regions.
+    constexpr double rel_cutoff = 0.10;
+    const auto max_value = *max_element(hist.count.cbegin(), hist.count.cend());
+    const auto cutoff = rel_cutoff * max_value;
+
+    auto regions = find_hist_regions(hist, cutoff);
+
+    return find_two_peaks(regions, hist);
+}
+
+static gmx::RVec 
+create_contact_line_zone_position(const real             contact_line_position,
+                                  const real             height,
+                                  const ContactLineDef  &cl_def)
+{
+    gmx::RVec r;
+
+    r[cl_def.axis.contact_line] = contact_line_position;
+    r[cl_def.axis.height]       = height;
+    r[cl_def.axis.normal]       = cl_def.normal_center;
+
+    return r;
+}
+
+static bool
+verify_all_contact_lines_detected(const real from0,
+                                  const real from1,
+                                  const real to0,
+                                  const real to1)
+{
+    return (from0 >= 0.0) && (from1 >= 0.0) && (to0 >= 0.0) && (to1 >= 0.0);
+}
+
+static void 
+set_bad_contact_line_at_default_zones(real                                &from0,
+                                      real                                &from1,
+                                      real                                &to0, 
+                                      real                                &to1,
+                                      const ContactLineAxis               &axis,
+                                      const std::vector<CoupledSwapZones> &default_zones)
+{
+    if (from0 < 0.0) {
+        from0 = default_zones.at(0).from[axis.contact_line];
+    }
+
+    if (from1 < 0.0) {
+        from1 = default_zones.at(1).from[axis.contact_line];
+    }
+
+    if (to0 < 0.0) {
+        to0 = default_zones.at(0).to[axis.contact_line];
+    }
+
+    if (to1 < 0.0) {
+        to1 = default_zones.at(1).to[axis.contact_line];
+    }
+}
+
+
+static std::vector<CoupledSwapZones>
+get_zones_at_contact_line_from_histograms(const Histogram                     &hist0, 
+                                          const Histogram                     &hist1,
+                                          const ContactLineDef                &cl_def,
+                                          const std::vector<CoupledSwapZones> &default_zones)
+{
+    real pos_from0, pos_from1,
+         pos_to0, pos_to1;
+
+    std::tie(pos_from0, pos_to1) = find_contact_lines_from_hist(hist0);
+    std::tie(pos_to0, pos_from1) = find_contact_lines_from_hist(hist1);
+
+    if (!verify_all_contact_lines_detected(pos_from0, pos_from1, pos_to0, pos_to1))
+    {
+        gmx_warning("could not detect 4 contact lines");
+
+        set_bad_contact_line_at_default_zones(
+            pos_from0, pos_from1, pos_to0, pos_to1, cl_def.axis, default_zones
+        );
+    }
+
+    // Order of contact lines: lower left, upper left, upper right, lower right 
+    // We are swapping across the lower-upper axis, and the right swap direction 
+    // is opposite to the left swap direction. Thus we order the from-to zones 
+    // exactly like that, with one from-zone being at height 0 and the other 
+    // at height 1, with opposite to-zones.
+    const auto from0 = create_contact_line_zone_position(pos_from0, cl_def.height0, cl_def);
+    const auto to0 = create_contact_line_zone_position(pos_to0, cl_def.height1, cl_def);
+    const auto from1 = create_contact_line_zone_position(pos_from1, cl_def.height1, cl_def);
+    const auto to1 = create_contact_line_zone_position(pos_to1, cl_def.height0, cl_def);
+
+    return std::vector<CoupledSwapZones> {
+        CoupledSwapZones { from0, to0 },
+        CoupledSwapZones { from1, to1 }
+    };
+}
+
+static std::vector<CoupledSwapZones> 
+get_zones_at_contact_lines(const FlowSwap &flow_swap,
+                           const matrix    box)
+{
+    constexpr size_t num_smooth = 10;
+    constexpr real histogram_resolution = 0.1;
+
+    const ContactLineDef cl_def(flow_swap, box);
+
+    Histogram hist0, hist1;
+    std::tie(hist0, hist1) = create_atom_histograms(
+        cl_def, histogram_resolution, flow_swap.swap, flow_swap.pbc, box);
+
+    // log_histogram_to_file("hist0.xvg", hist0);
+    // log_histogram_to_file("hist1.xvg", hist1);
+    
+    if (num_smooth > 0)
+    {
+        hist0 = smooth_histogram(hist0, num_smooth);
+        hist1 = smooth_histogram(hist1, num_smooth);
+
+        // log_histogram_to_file("smooth_hist0.xvg", hist0);
+        // log_histogram_to_file("smooth_hist1.xvg", hist1);
+    }
+
+    return get_zones_at_contact_line_from_histograms(
+        hist0, hist1, cl_def, flow_swap.init_coupled_zones
+    );
 }
 
 
@@ -234,19 +742,12 @@ get_swap_positions_array(const t_flowswap *flow_swap,
         switch (flow_swap->swap_method)
         {
             case eFlowSwapMethod::CenterEdge:
-                is_relative = true;
                 from_position = 0.0;
                 to_position = 0.5;
                 break;
 
-            case eFlowSwapMethod::PositionsRelative:
-                is_relative = true;
-                from_position = flow_swap->swap_positions[i]; 
-                to_position   = flow_swap->swap_positions[j];
-                break;
-
-            case eFlowSwapMethod::PositionsAbsolute:
-                is_relative = false;
+            case eFlowSwapMethod::Positions:
+            case eFlowSwapMethod::TwoPhaseContactLines:
                 from_position = flow_swap->swap_positions[i]; 
                 to_position   = flow_swap->swap_positions[j];
                 break;
@@ -256,7 +757,7 @@ get_swap_positions_array(const t_flowswap *flow_swap,
                 break;
         }
         const auto position = get_positions_from_reals(
-            from_position, to_position, is_relative, flow_swap->swap_axis, box
+            from_position, to_position, flow_swap->bRelativeSwapPositions, flow_swap->swap_axis, box
         );
 
         swap_positions.push_back(position);
@@ -268,7 +769,7 @@ get_swap_positions_array(const t_flowswap *flow_swap,
 //! Create from-to zone pairs for each position along the positional axis
 static std::vector<CoupledSwapZones> 
 create_coupled_swap_zones(const t_flowswap *flow_swap,
-                          const matrix       box)
+                          const matrix      box)
 {
     std::vector<CoupledSwapZones> coupled_zones;
 
@@ -336,7 +837,7 @@ static void log_swap_zone_info(const FlowSwap      &flow_swap,
 {
     int i = 1;
 
-    for (const auto& zones : flow_swap.coupled_zones)
+    for (const auto& zones : flow_swap.init_coupled_zones)
     {
         GMX_LOG(mdlog.warning)
             .appendTextFormatted(
@@ -665,12 +1166,13 @@ static void swap_molecules_atom_pos(rvec xs1[],
                         
 static uint16_t do_swap(rvec                                 xs_local[],
                         const FlowSwap                      &flow_swap,
+                        const std::vector<CoupledSwapZones> &coupled_zones,
                         const std::vector<std::vector<int>> &swap_mols_in_low_department)
 {
-    GMX_RELEASE_ASSERT(flow_swap.coupled_zones.size() == swap_mols_in_low_department.size(),
+    GMX_RELEASE_ASSERT(coupled_zones.size() == swap_mols_in_low_department.size(),
         "Inconsistency.");
 
-    auto zones = flow_swap.coupled_zones.cbegin();
+    auto zones = coupled_zones.cbegin();
     auto swap_mols = swap_mols_in_low_department.cbegin();
 
     std::vector<int> swap_atom_inds,
@@ -678,7 +1180,7 @@ static uint16_t do_swap(rvec                                 xs_local[],
     
     uint16_t num_swaps = 0;
 
-    while (zones != flow_swap.coupled_zones.cend())
+    while (zones != coupled_zones.cend())
     {
         if (check_compartment_condition(*swap_mols, flow_swap))
         {
@@ -777,8 +1279,13 @@ FlowSwap init_flowswap(gmx::LocalAtomSetManager *atom_sets,
         nstswap,
         ir->flow_swap->zone_size,
         coupled_zones,
+        ir->flow_swap->swap_method == eFlowSwapMethod::TwoPhaseContactLines,
         swap_group,
         fill_group,
+        FlowSwapAxis { 
+            static_cast<size_t>(ir->flow_swap->swap_axis), 
+            static_cast<size_t>(ir->flow_swap->zone_position_axis)
+        },
         static_cast<size_t>(ref_num_mols),
         fplog,
         box
@@ -803,26 +1310,38 @@ gmx_bool do_flowswap(FlowSwap         &flow_swap,
     set_pbc(flow_swap.pbc, ir->pbcType, state->box);
 
     // Collect data to all ranks and do swaps locally. If a swap is made, we will later
-    // repartition the dd in the md loop.
+    // repartition the dd in the md loop (this is returned as the boolean from this function).
+    //
+    // Reminder: for each MPI rank we first get the local atom positions for all atoms 
+    // in state->x, then collect all the group indices from *all ranks* into group.xs.
+    //
+    // Here, this is done for the swap group -- later on, we collect for the fill group
+    // if needed.
     auto xs_local_ref = gmx::ArrayRef<gmx::RVec>(state->x);
     auto xs_local = as_rvec_array(xs_local_ref.data());
-
     collect_group_positions_from_ranks(flow_swap.swap, cr, xs_local, state->box);
 
-    std::vector<std::vector<int>> mols_in_low_compartment;
-    for (const auto& zones : flow_swap.coupled_zones)
+    auto coupled_zones = flow_swap.init_coupled_zones;
+
+    if (flow_swap.do_track_contact_line)
     {
-        mols_in_low_compartment.push_back(
+        coupled_zones = get_zones_at_contact_lines(flow_swap, state->box);
+    }
+
+    std::vector<std::vector<int>> mols_in_from_zone_per_coupling;
+    for (const auto& zones : coupled_zones)
+    {
+        mols_in_from_zone_per_coupling.push_back(
             find_molecules_in_compartment(flow_swap.swap, zones.from, flow_swap.max_distance, flow_swap.pbc));
     }
 
-    const bool bNeedSwap = check_for_swap(mols_in_low_compartment, flow_swap);
+    const bool bNeedSwap = check_for_swap(mols_in_from_zone_per_coupling, flow_swap);
     if (bNeedSwap)
     {
         collect_group_positions_from_ranks(flow_swap.fill, cr, xs_local, state->box);
 
         const auto num_swaps = do_swap(
-            xs_local, flow_swap, mols_in_low_compartment);
+            xs_local, flow_swap, coupled_zones, mols_in_from_zone_per_coupling);
         
         if (bVerbose && (num_swaps > 0)) 
         {
@@ -832,7 +1351,7 @@ gmx_bool do_flowswap(FlowSwap         &flow_swap,
 
     if (flow_swap.fplog_zone != nullptr)
     {
-        print_zone_positions(flow_swap.fplog_zone, flow_swap.coupled_zones, time);
+        print_zone_positions(flow_swap.fplog_zone, coupled_zones, time);
     }
 
     wallcycle_stop(wcycle, ewcSWAP);
