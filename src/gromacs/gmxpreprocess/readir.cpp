@@ -1631,6 +1631,15 @@ void check_ir(const char*                   mdparin,
             );
             warning_error(wi, warn_buf);
         }
+
+        const auto num_zone_size_values = ir->flow_swap->num_input_zone_size_values;
+        if (num_zone_size_values != DIM)
+        {
+            snprintf(warn_buf, STRLEN, 
+                     "flow-swap-zone-size requires %d values, got %lu", 
+                     DIM, num_zone_size_values);
+            warning_error(wi, warn_buf);
+        }
     }
 }
 
@@ -2554,21 +2563,29 @@ void get_ir(const char*     mdparin,
         setStringEntry(&inp, "flow-swap-zone-size", strbuf, "");
         auto zone_size_entries = gmx::splitString(strbuf);
 
-        if (zone_size_entries.size() != DIM)
-        {
-            gmx_fatal(FARGS, 
-                      "Invalid flow-swap input: requires %d zone size values (got %lu)", 
-                      DIM, zone_size_entries.size());
-        }
-        else 
-        {
-            convertReals(
-                wi, 
-                zone_size_entries, 
-                "flow-swap-zone-size", 
-                ir->flow_swap->zone_size
-            );
-        }
+        ir->flow_swap->num_input_zone_size_values = static_cast<int>(zone_size_entries.size());
+
+        // if (zone_size_entries.size() != DIM)
+        // {
+        //     gmx_fatal(FARGS, 
+        //               "Invalid flow-swap input: requires %d zone size values (got %lu)", 
+        //               DIM, zone_size_entries.size());
+        // }
+        // else 
+        // {
+        //     convertReals(
+        //         wi, 
+        //         zone_size_entries, 
+        //         "flow-swap-zone-size", 
+        //         ir->flow_swap->zone_size
+        //     );
+        // }
+        convertReals(
+            wi, 
+            zone_size_entries, 
+            "flow-swap-zone-size", 
+            ir->flow_swap->zone_size
+        );
 
         printStringNoNewline(&inp, "Positions along the positional axis at which to set zones ");
         printStringNoNewline(&inp, "in (relative to box size)");
@@ -4747,25 +4764,29 @@ void triple_check(const char* mdparin, t_inputrec* ir, gmx_mtop_t* sys, warninp_
         }
     }
 
-    check_disre(sys);
-
-    // [FLOW_FIELD] Verify that we have the required groups for swapping
-    const auto num_swap_groups = sys->groups.groups[SimulationAtomGroupType::User2].size();
-
-    if (ir->flow_swap->do_swap && (num_swap_groups < 2))
+    // [FLOW_FIELD]
+    if (ir->flow_swap->do_swap) 
     {
-        if (num_swap_groups == 0)
+        // Verify that we have the required groups for swapping
+        const auto num_swap_groups = sys->groups.groups[SimulationAtomGroupType::User2].size();
+
+        if (num_swap_groups < 2)
         {
-            snprintf(warn_buf, STRLEN, "no group to swap for was specified (flow-swap-grps)");
-            warning_error(wi, warn_buf);
-        }
-        
-        if (num_swap_groups == 1)
-        {
-            snprintf(warn_buf, STRLEN, "no group to replace the swapped molecules with was specified (flow-swap-grps)");
-            warning_error(wi, warn_buf);
+            if (num_swap_groups == 0)
+            {
+                snprintf(warn_buf, STRLEN, "no group to swap for was specified (flow-swap-grps)");
+                warning_error(wi, warn_buf);
+            }
+            
+            if (num_swap_groups == 1)
+            {
+                snprintf(warn_buf, STRLEN, "no group to replace the swapped molecules with was specified (flow-swap-grps)");
+                warning_error(wi, warn_buf);
+            }
         }
     }
+
+    check_disre(sys);
 }
 
 void double_check(t_inputrec* ir, matrix box, bool bHasNormalConstraints, bool bHasAnyConstraints, warninp_t wi)

@@ -338,6 +338,9 @@ struct t_flowswap
 
     //! Size of the zones (-1 is full width)
     rvec zone_size;
+
+    //! Number of given values for zone_size in the .mdp file (used to verify == DIM)
+    int num_input_zone_size_values;
         
     //! Number of zones along the swap axis
     int num_positions;
